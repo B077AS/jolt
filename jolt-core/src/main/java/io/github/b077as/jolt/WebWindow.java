@@ -1,0 +1,109 @@
+package io.github.b077as.jolt;
+
+import java.util.concurrent.CompletableFuture;
+import java.util.function.Consumer;
+
+/**
+ * A native window hosting a web view. All methods are safe to call from any thread; calls made before the web
+ * view has finished initializing are queued and applied in order once {@link #ready()} completes.
+ *
+ * <p>Listeners and futures complete on the UI thread.
+ */
+public interface WebWindow {
+
+    /** Completes when the underlying web view is initialized, or fails if the platform web view is unavailable. */
+    CompletableFuture<Void> ready();
+
+    /**
+     * Navigates to {@code url}. With the default {@link SecurityPolicy} this only works for trusted origins; others are blocked
+     * and reported to {@link #onBlocked}.
+     */
+    void loadUrl(String url);
+
+    /** Navigates to a document built from {@code html}. The page gets the origin {@link SecurityPolicy#APP_ORIGIN}, which is always trusted. */
+    void loadHtml(String html);
+
+    /**
+     * Evaluates {@code script} in the page. The future completes with the JSON encoding of the script's
+     * completion value (for example {@code "42"}, {@code "\"text\""}, or {@code "null"}).
+     * Fails with {@link WindowClosedException} if the window is closed before the result arrives.
+     */
+    CompletableFuture<String> eval(String script);
+
+    /** Registers a script that runs in every document before the page's own scripts. */
+    void addInitScript(String script);
+
+    /**
+     * Registers a listener for strings the page sends with {@code window.jolt.postMessage(text)}.
+     * Runs on the UI thread.
+     */
+    void onMessage(Consumer<String> listener);
+
+    /** Delivers {@code message} to listeners registered with {@code window.jolt.onMessage(cb)}. */
+    void postMessage(String message);
+
+    void setTitle(String title);
+
+    /**
+     * Sets the window icon. {@code png} is PNG data (a square image of at least 256x256 pixels with a transparent
+     * background) or the bytes of a Windows {@code .ico} file with several sizes, which looks best on Windows because no
+     * image has to be scaled. Bad data is logged and ignored.
+     *
+     * <p>On Wayland, applications cannot set their own window icon: the compositor takes it from the application's
+     * desktop entry, so this has no visible effect there. On X11 and Windows it does.
+     */
+    void setIcon(byte[] png);
+
+    /**
+     * Makes the operating system draw this window's title bar light or dark. The page cannot do this itself, but it can
+     * ask Java to (see the guide: register a handler that calls this when the page's theme changes).
+     *
+     * <p>Windows 10 (2004 and later) and 11 honour it. On Linux it sets GTK's dark-theme preference for the whole
+     * application, which a desktop title bar follows when the window manager draws it; some desktops ignore it.
+     */
+    void setTitleBarScheme(ColorScheme scheme);
+
+    /**
+     * Gives the title bar an exact background and text colour ({@code 0xRRGGBB}), so it can match the page. Needs
+     * <b>Windows 11</b>; ignored on Windows 10 and on Linux, where the desktop owns the title bar.
+     */
+    void setTitleBarColors(int backgroundRgb, int textRgb);
+
+    /**
+     * Sets the colour ({@code 0xRRGGBB}) the web view shows before and behind the page. Use your page's background colour so
+     * a dark page does not flash white while it loads.
+     */
+    void setBackgroundColor(int rgb);
+
+    /** Sets the client-area size in logical (DPI-independent) pixels. */
+    void setSize(int width, int height);
+
+    void show();
+
+    void hide();
+
+    /** Opens the browser developer tools, if enabled in {@link WindowOptions}. */
+    void openDevTools();
+
+    /** The security policy currently in force. */
+    SecurityPolicy security();
+
+    /**
+     * Replaces the security policy. Takes effect for everything that happens from now on (navigations, messages,
+     * permission requests); a page that is already showing is not reloaded. Only {@link SecurityPolicy#bridgeInSubframes()}
+     * is fixed when the window is created.
+     */
+    void setSecurity(SecurityPolicy policy);
+
+    /**
+     * Registers a listener called when the policy stops something, for example to open a blocked link in the user's
+     * browser. Runs on the UI thread.
+     */
+    void onBlocked(Consumer<BlockedEvent> listener);
+
+    /** Registers a callback that runs once after the window has been destroyed. */
+    void onClosed(Runnable listener);
+
+    /** Closes the window. */
+    void close();
+}

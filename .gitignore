@@ -1,0 +1,13 @@
+target/
+.idea/
+*.iml
+.vscode/
+.DS_Store
+hs_err_pid*.log
+docker/linux-test/out/
+node_modules/
+examples/notes-app/frontend/dist/
+/docs/
+/tools/
+/docker/
+/CLAUDE.md

@@ -1,0 +1,57 @@
+@import "tailwindcss";
+
+/* `dark:` utilities apply when the page is in the dark theme. The theme is the data-theme attribute on <html>. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* Semantic colours: components say bg-surface or text-muted and never care which theme is active. */
+@theme {
+  --font-sans: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", sans-serif;
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-accent-a: var(--accent-a);
+  --color-accent-b: var(--accent-b);
+  --color-danger: var(--danger);
+  --shadow-card: var(--card-shadow);
+}
+
+/* The page and title bar colours below (--canvas and --ink) are repeated in src/theme.ts, because Java needs them to
+   colour the native title bar to match. Change them in both places. */
+:root {
+  --canvas: #fbf7f4; --surface: #ffffff; --ink: #221b18; --muted: #7b6f69; --line: #eadfd8;
+  --accent-a: #f2381f; --accent-b: #ff8a0f; --danger: #b4232c;
+  --card-shadow: 0 1px 2px rgba(70, 30, 10, .06), 0 8px 24px -12px rgba(70, 30, 10, .16);
+  color-scheme: light;
+}
+
+/* Dark: follow the operating system unless the user forced light, and always when forced dark. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --canvas: #15110f; --surface: #1e1917; --ink: #f4ede8; --muted: #a79a93; --line: #342b27;
+    --danger: #ff7b7b;
+    --card-shadow: 0 1px 2px rgba(0, 0, 0, .45), 0 8px 24px -12px rgba(0, 0, 0, .65);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --canvas: #15110f; --surface: #1e1917; --ink: #f4ede8; --muted: #a79a93; --line: #342b27;
+  --danger: #ff7b7b;
+  --card-shadow: 0 1px 2px rgba(0, 0, 0, .45), 0 8px 24px -12px rgba(0, 0, 0, .65);
+  color-scheme: dark;
+}
+
+body {
+  min-height: 100vh;
+  background-color: var(--canvas);
+  background-image: radial-gradient(900px 380px at 50% -140px, color-mix(in srgb, var(--accent-a) 16%, transparent), transparent);
+  background-repeat: no-repeat;
+  color: var(--ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
