@@ -4,7 +4,7 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <groupId>io.github.b077as.jolt</groupId>
+  <groupId>io.github.b077as</groupId>
   <artifactId>jolt-parent</artifactId>
   <version>0.1.0-SNAPSHOT</version>
   <packaging>pom</packaging>
@@ -52,24 +52,24 @@
   <dependencyManagement>
     <dependencies>
       <dependency>
-        <groupId>io.github.b077as.jolt</groupId>
+        <groupId>io.github.b077as</groupId>
         <artifactId>jolt-core</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>io.github.b077as.jolt</groupId>
+        <groupId>io.github.b077as</groupId>
         <artifactId>jolt-core</artifactId>
         <version>${project.version}</version>
         <type>test-jar</type>
         <scope>test</scope>
       </dependency>
       <dependency>
-        <groupId>io.github.b077as.jolt</groupId>
+        <groupId>io.github.b077as</groupId>
         <artifactId>jolt-win32</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>io.github.b077as.jolt</groupId>
+        <groupId>io.github.b077as</groupId>
         <artifactId>jolt-linux</artifactId>
         <version>${project.version}</version>
       </dependency>
@@ -178,7 +178,7 @@
           <plugin>
             <groupId>org.sonatype.central</groupId>
             <artifactId>central-publishing-maven-plugin</artifactId>
-            <version>0.8.0</version>
+            <version>0.12.0</version>
             <extensions>true</extensions>
             <configuration>
               <publishingServerId>central</publishingServerId>

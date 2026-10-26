@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <a href="https://central.sonatype.com/artifact/io.github.b077as.jolt/jolt-core"><img alt="Maven Central" src="https://img.shields.io/maven-central/v/io.github.b077as.jolt/jolt-core?label=Maven%20Central&color=C71A36"></a>
+  <a href="https://central.sonatype.com/artifact/io.github.b077as/jolt-core"><img alt="Maven Central" src="https://img.shields.io/maven-central/v/io.github.b077as/jolt-core?label=Maven%20Central&color=C71A36"></a>
   <img alt="Java 25" src="https://img.shields.io/badge/Java-25-orange?logo=openjdk&logoColor=white">
   <img alt="Foreign Function & Memory API" src="https://img.shields.io/badge/FFM%20API-no%20JNI-5382A1">
   <img alt="WebView2 | WebKitGTK" src="https://img.shields.io/badge/WebView2%20%7C%20WebKitGTK-system%20web%20view-0078D4">
@@ -108,7 +108,7 @@ between Java and the page, light and dark themes, and an optional React frontend
 
 ## Add Jolt to your project
 
-Jolt is published on Maven Central under the group id `io.github.b077as.jolt`. Add the API and both backends. Each backend
+Jolt is published on Maven Central under the group id `io.github.b077as`. Add the API and both backends. Each backend
 only activates on its own operating system, so one jar runs on both.
 
 ### Maven
@@ -121,17 +121,17 @@ only activates on its own operating system, so one jar runs on both.
 
 <dependencies>
   <dependency>
-    <groupId>io.github.b077as.jolt</groupId>
+    <groupId>io.github.b077as</groupId>
     <artifactId>jolt-core</artifactId>
     <version>${jolt.version}</version>
   </dependency>
   <dependency>
-    <groupId>io.github.b077as.jolt</groupId>
+    <groupId>io.github.b077as</groupId>
     <artifactId>jolt-win32</artifactId>
     <version>${jolt.version}</version>
   </dependency>
   <dependency>
-    <groupId>io.github.b077as.jolt</groupId>
+    <groupId>io.github.b077as</groupId>
     <artifactId>jolt-linux</artifactId>
     <version>${jolt.version}</version>
   </dependency>
@@ -165,9 +165,9 @@ Or pass `--enable-native-access=ALL-UNNAMED` on the `java` command line.
 
 ```kotlin
 dependencies {
-    implementation("io.github.b077as.jolt:jolt-core:0.1.0")
-    implementation("io.github.b077as.jolt:jolt-win32:0.1.0")
-    implementation("io.github.b077as.jolt:jolt-linux:0.1.0")
+    implementation("io.github.b077as:jolt-core:0.1.0")
+    implementation("io.github.b077as:jolt-win32:0.1.0")
+    implementation("io.github.b077as:jolt-linux:0.1.0")
 }
 
 java {
