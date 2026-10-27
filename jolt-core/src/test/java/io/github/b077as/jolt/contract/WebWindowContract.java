@@ -460,7 +460,12 @@ public abstract class WebWindowContract {
 
     // ---- loadResources: every test runs over the in-process transport and over the loopback fallback ----
 
-    private static String resourceApp(java.util.Map<String, String> files, io.github.b077as.jolt.RequestHandler handler, boolean loopback) {
+    protected static String resourceApp(java.util.Map<String, String> files, io.github.b077as.jolt.RequestHandler handler, boolean loopback) {
+        return resourceApp(files, handler, loopback, io.github.b077as.jolt.ResourceOptions.defaults());
+    }
+
+    private static String resourceApp(java.util.Map<String, String> files, io.github.b077as.jolt.RequestHandler handler, boolean loopback,
+                                      io.github.b077as.jolt.ResourceOptions options) {
         CompletableFuture<String> got = new CompletableFuture<>();
         runApp(40, app -> {
             WebWindow window = app.createWindow(WindowOptions.defaults().withSize(300, 200));
@@ -471,9 +476,9 @@ public abstract class WebWindowContract {
             io.github.b077as.jolt.AppResources resources =
                     path -> files.containsKey(path) ? files.get(path).getBytes(StandardCharsets.UTF_8) : null;
             if (loopback) {
-                window.loadResources(resources, handler, 0);
+                window.loadResourcesOverLoopback(resources, handler, options, 0);
             } else {
-                window.loadResources(resources, handler);
+                window.loadResources(resources, handler, options);
             }
         });
         return got.getNow(null);
@@ -669,6 +674,209 @@ public abstract class WebWindowContract {
         assertEquals(expected, resourceApp(files, router, true));
     }
 
+    // ---- multipart/form-data ----
+
+    private static String describeParts(io.github.b077as.jolt.AppRequest request) {
+        StringBuilder out = new StringBuilder();
+        for (io.github.b077as.jolt.AppRequest.Part part : request.parts()) {
+            long sum = 0;
+            for (byte b : part.content()) {
+                sum = (sum * 31 + (b & 0xff)) % 1000003;
+            }
+            out.append(out.length() == 0 ? "" : ";").append(part.name()).append(part.isFile()
+                    ? "(" + part.filename() + "," + part.size() + "," + sum + "," + part.contentType() + ")" : "=" + part.text());
+        }
+        return out.toString();
+    }
+
+    private static final io.github.b077as.jolt.RequestHandler UPLOAD_HANDLER = request ->
+            request.path().equals("/upload") && request.method().equals("POST")
+                    ? io.github.b077as.jolt.AppResponse.text(describeParts(request)) : null;
+
+    @Test
+    public void aMultipartFormWithAFileReachesTheHandlerIntact() {
+        assertEquals(expectedUpload(), resourceApp(UPLOAD_APP, UPLOAD_HANDLER, false));
+    }
+
+    @Test
+    public void aMultipartFormWithAFileReachesTheHandlerIntactOverLoopback() {
+        assertEquals(expectedUpload(), resourceApp(UPLOAD_APP, UPLOAD_HANDLER, true));
+    }
+
+    private static final java.util.Map<String, String> UPLOAD_APP = java.util.Map.of(
+            "index.html", "<script type=\"module\" src=\"app.js\"></script>",
+            "app.js", "const bytes = new Uint8Array(1000000);"
+                    + "for (let i = 0; i < bytes.length; i++) bytes[i] = (i * 7) % 251;"
+                    + "const form = new FormData();"
+                    + "form.append('title', 'Zed é \"quoted\"');"
+                    + "form.append('file', new Blob([bytes], { type: 'application/octet-stream' }), '../../evil name.bin');"
+                    + "form.append('empty', new Blob([]), 'nothing.txt');"
+                    + "const r = await fetch('/upload', { method: 'POST', body: form });"
+                    + "window.jolt.postMessage(r.status + ':' + await r.text());");
+
+    private static String expectedUpload() {
+        long sum = 0;
+        for (int i = 0; i < 1_000_000; i++) {
+            sum = (sum * 31 + (i * 7) % 251) % 1000003;
+        }
+        return "200:title=Zed é \"quoted\";file(evil name.bin," + 1_000_000 + "," + sum + ",application/octet-stream);empty(nothing.txt,0,0,application/octet-stream)";
+    }
+
+    private static final java.util.Map<String, String> MULTIPART_FORM_APP = java.util.Map.of(
+            "index.html", "<form id=\"f\" method=\"post\" action=\"/save\" enctype=\"multipart/form-data\">"
+                    + "<input name=\"a\" value=\"1 é\"><input type=\"file\" name=\"doc\"></form>"
+                    + "<script>document.getElementById('f').requestSubmit()</script>");
+
+    private static final io.github.b077as.jolt.RequestHandler MULTIPART_FORM_HANDLER = request ->
+            request.path().equals("/save") && request.method().equals("POST")
+                    ? io.github.b077as.jolt.AppResponse.html("<script>window.jolt.postMessage("
+                            + io.github.b077as.jolt.internal.JsLiteral.quote(describeParts(request)) + ")</script>")
+                    : null;
+
+    @Test
+    public void aPlainMultipartFormPostReachesTheHandler() {
+        // no file chosen: the browser still sends the part, with an empty file name
+        assertEquals("a=1 é;doc(,0,0,application/octet-stream)", resourceApp(MULTIPART_FORM_APP, MULTIPART_FORM_HANDLER, false));
+    }
+
+    @Test
+    public void aPlainMultipartFormPostReachesTheHandlerOverLoopback() {
+        // over a socket Jolt adds the secret to the form as a field and removes it again before the handler sees the parts
+        assertEquals("a=1 é;doc(,0,0,application/octet-stream)", resourceApp(MULTIPART_FORM_APP, MULTIPART_FORM_HANDLER, true));
+    }
+
+    private static final java.util.Map<String, String> BIG_UPLOAD_APP = java.util.Map.of(
+            "index.html", "<script type=\"module\" src=\"app.js\"></script>",
+            "app.js", "const form = new FormData();"
+                    + "form.append('file', new Blob([new Uint8Array(12 * 1024 * 1024)]), 'big.bin');"
+                    + "const r = await fetch('/upload', { method: 'POST', body: form });"
+                    + "window.jolt.postMessage(r.status + ':' + (r.status === 200 ? await r.text() : ''));");
+
+    @Test
+    public void aBodyOverTheDefaultLimitIsRefusedWith413() {
+        assertEquals("413:", resourceApp(BIG_UPLOAD_APP, UPLOAD_HANDLER, false));
+    }
+
+    @Test
+    public void aBodyOverTheDefaultLimitIsRefusedWith413OverLoopback() {
+        assertEquals("413:", resourceApp(BIG_UPLOAD_APP, UPLOAD_HANDLER, true));
+    }
+
+    @Test
+    public void aRaisedLimitLetsALargeUploadThrough() {
+        io.github.b077as.jolt.ResourceOptions roomy = io.github.b077as.jolt.ResourceOptions.defaults().withMaxRequestBytes(32 * 1024 * 1024);
+        String expected = "200:file(big.bin," + 12 * 1024 * 1024 + ",0,application/octet-stream)";
+        assertEquals(expected, resourceApp(BIG_UPLOAD_APP, UPLOAD_HANDLER, false, roomy));
+        assertEquals(expected, resourceApp(BIG_UPLOAD_APP, UPLOAD_HANDLER, true, roomy));
+    }
+
+    // Blob bodies: WebKitGTK aborts the process on them, so the Linux backend sends bytes instead. Everything here must behave the
+    // same on every platform and transport.
+
+    private static long checksum(byte[] data) {
+        long sum = 0;
+        for (byte b : data) {
+            sum = (sum * 31 + (b & 0xff)) % 1000003;
+        }
+        return sum;
+    }
+
+    private static byte[] pattern(int length, int step) {
+        byte[] data = new byte[length];
+        for (int i = 0; i < length; i++) {
+            data[i] = (byte) ((i * step) % 251);
+        }
+        return data;
+    }
+
+    private static java.util.Map<String, String> blobApp() {
+        return java.util.Map.of(
+                "index.html", "<script type=\"module\" src=\"app.js\"></script>",
+                "app.js", "const bytes = new Uint8Array(200000); for (let i = 0; i < bytes.length; i++) bytes[i] = (i * 13) % 251;"
+                        + "const blob = new Blob([bytes], { type: 'application/x-test' });"
+                        + "const out = [];"
+                        + "const show = async (label, request) => { const r = await request; out.push(label + '=' + r.status + ':' + await r.text()); };"
+                        + "const form = () => { const f = new FormData(); f.append('a', '1'); f.append('file', blob, 'x.bin'); return f; };"
+                        + "await show('fetch', fetch('/blob', { method: 'POST', body: blob }));"
+                        + "await show('fetch-form', fetch('/blob', { method: 'POST', body: form() }));"
+                        + "await show('request', fetch(new Request('/blob', { method: 'POST', body: blob })));"
+                        + "out.push(await new Promise(done => { const x = new XMLHttpRequest(); x.open('POST', '/blob');"
+                        + " if (window.joltCsrfToken) x.setRequestHeader('X-Jolt-Token', window.joltCsrfToken);" // raw XHR needs it over loopback only
+                        + " x.onloadend = () => done('xhr=' + x.status + ':' + x.responseText); x.send(form()); }));"
+                        + "navigator.sendBeacon('/beacon', new Blob([bytes.slice(0, 1000)], { type: 'application/x-test' }));" // beacons are limited to 64 KB
+                        + "await new Promise(done => setTimeout(done, 700));"
+                        + "await show('beacon', fetch('/beacon-result'));"
+                        + "window.jolt.postMessage(out.join(';'));");
+    }
+
+    private static io.github.b077as.jolt.RequestHandler blobHandler() {
+        java.util.concurrent.atomic.AtomicReference<String> beacon = new java.util.concurrent.atomic.AtomicReference<>("none");
+        return request -> switch (request.path()) {
+            case "/blob" -> io.github.b077as.jolt.AppResponse.text(request.isMultipart() ? describeParts(request)
+                    : "raw," + request.body().length + "," + checksum(request.body()) + "," + request.header("content-type"));
+            case "/beacon" -> {
+                beacon.set("raw," + request.body().length + "," + checksum(request.body()) + "," + request.header("content-type"));
+                yield io.github.b077as.jolt.AppResponse.status(204);
+            }
+            case "/beacon-result" -> io.github.b077as.jolt.AppResponse.text(beacon.get());
+            default -> null;
+        };
+    }
+
+    /** Over loopback a beacon is refused (it cannot carry the secret header), so the page finds nothing recorded. */
+    private static String expectedBlobs(boolean loopback) {
+        long sum = checksum(pattern(200000, 13));
+        String raw = "raw,200000," + sum + ",application/x-test";
+        String file = "file(x.bin,200000," + sum + ",application/x-test)";
+        String beacon = loopback ? "none" : "raw,1000," + checksum(pattern(1000, 13)) + ",application/x-test";
+        return "fetch=200:" + raw + ";fetch-form=200:a=1;" + file + ";request=200:" + raw + ";xhr=200:a=1;" + file + ";beacon=200:" + beacon;
+    }
+
+    @Test
+    public void blobBodiesFromFetchRequestsXhrAndBeaconsAreDelivered() {
+        assertEquals(expectedBlobs(false), resourceApp(blobApp(), blobHandler(), false));
+    }
+
+    @Test
+    public void blobBodiesFromFetchRequestsXhrAndBeaconsAreDeliveredOverLoopback() {
+        assertEquals(expectedBlobs(true), resourceApp(blobApp(), blobHandler(), true));
+    }
+
+    private static java.util.Map<String, String> fileFormApp(String submitCall) {
+        return java.util.Map.of("index.html", "<!doctype html><body><script>"
+                + "const f = document.createElement('form'); f.method = 'post'; f.action = '/save'; f.enctype = 'multipart/form-data';"
+                + "const text = document.createElement('input'); text.name = 'note'; text.value = 'hi'; f.append(text);"
+                + "const file = document.createElement('input'); file.type = 'file'; file.name = 'doc'; f.append(file);"
+                + "const bytes = new Uint8Array(5000); for (let n = 0; n < bytes.length; n++) bytes[n] = (n * 7) % 251;"
+                + "const transfer = new DataTransfer(); transfer.items.add(new File([bytes], 'up.bin', { type: 'application/x-test' }));"
+                + "file.files = transfer.files; document.body.append(f); f." + submitCall + ";</script>");
+    }
+
+    @Test
+    public void aFormHoldingAFileIsDeliveredWhicheverWayItIsSubmitted() {
+        String expected = "note=hi;doc(up.bin,5000," + checksum(pattern(5000, 7)) + ",application/x-test)";
+        for (boolean loopback : new boolean[] {false, true}) {
+            for (String call : new String[] {"requestSubmit()", "submit()"}) {
+                assertEquals(expected, resourceApp(fileFormApp(call), MULTIPART_FORM_HANDLER, loopback), "loopback=" + loopback + " " + call);
+            }
+        }
+    }
+
+    @Test
+    public void aFileFormAnsweredWithARedirectEndsOnTheNewAddress() {
+        io.github.b077as.jolt.RequestHandler handler = request -> {
+            if (request.path().equals("/save") && request.method().equals("POST")) {
+                return request.part("doc").size() == 5000 ? io.github.b077as.jolt.AppResponse.redirect("/done/") : io.github.b077as.jolt.AppResponse.status(400);
+            }
+            if (request.path().equals("/done/")) {
+                return io.github.b077as.jolt.AppResponse.html("<script>window.jolt.postMessage('done:' + location.pathname)</script>");
+            }
+            return null;
+        };
+        assertEquals("done:/done/", resourceApp(fileFormApp("requestSubmit()"), handler, false));
+        assertEquals("done:/done/", resourceApp(fileFormApp("requestSubmit()"), handler, true));
+    }
+
     @Test
     public void browserStorageSurvivesARestartOnTheInProcessOrigin() {
         java.util.Map<String, String> set = java.util.Map.of("index.html",
@@ -684,7 +892,8 @@ public abstract class WebWindowContract {
         for (boolean loopback : new boolean[] {false, true}) {
             java.util.concurrent.CountDownLatch finished = new java.util.concurrent.CountDownLatch(1);
             java.util.Map<String, String> files = java.util.Map.of("index.html",
-                    "<script>fetch('/slow'); window.jolt.postMessage('go')</script>");
+                    // closing at once could beat the web view to dispatching the request, so let it get under way first
+                    "<script>fetch('/slow'); setTimeout(() => window.jolt.postMessage('go'), 250)</script>");
             assertEquals("go", resourceApp(files, request -> {
                 if (request.path().equals("/slow")) {
                     try {

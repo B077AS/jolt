@@ -7,6 +7,7 @@ import io.github.b077as.jolt.SecurityPolicy;
 import io.github.b077as.jolt.WebWindow;
 import io.github.b077as.jolt.WindowClosedException;
 import io.github.b077as.jolt.WindowOptions;
+import io.github.b077as.jolt.internal.BlobBodyShim;
 import io.github.b077as.jolt.internal.BridgeScript;
 import io.github.b077as.jolt.internal.NativeResourceHost;
 import io.github.b077as.jolt.internal.ResourceService;
@@ -124,29 +125,31 @@ final class LinuxWindow implements WebWindow, NativeResourceHost {
         });
     }
 
-/**
- * Serves the app's files from inside WebKitGTK through a URI scheme of our own ({@code jolt://app}). The origin is added to
- * the window's trusted origins. Returns false on a system whose WebKitGTK is too old for that.
- */
-@Override
-public boolean loadResources(ResourceService service) {
-    if (!GtkResources.available()) {
-        return false;
-    }
-    app.dispatch(() -> {
-        if (destroyed) {
-            return;
+    /**
+     * Serves the app's files from inside WebKitGTK through a URI scheme of our own ({@code jolt://app}). The origin is added to
+     * the window's trusted origins. Returns false on a system whose WebKitGTK is too old for that.
+     */
+    @Override
+    public boolean loadResources(ResourceService service) {
+        if (!GtkResources.available()) {
+            return false;
         }
-        resourceService = service;
-        app.ensureResourceScheme();
-        guard.set(guard.policy().withTrustedOrigins(GtkResources.ORIGIN));
-        Gtk.loadUri(webView, GtkResources.ORIGIN + "/");
-    });
-    return true;
-}
+        app.dispatch(() -> {
+            if (destroyed) {
+                return;
+            }
+            resourceService = service;
+            app.ensureResourceScheme();
+            // WebKitGTK aborts the process on a request body that holds a Blob; the script sends bytes instead (see BlobBodyShim)
+            Gtk.addUserScript(contentManager, BlobBodyShim.script(GtkResources.ORIGIN));
+            guard.set(guard.policy().withTrustedOrigins(GtkResources.ORIGIN));
+            Gtk.loadUri(webView, GtkResources.ORIGIN + "/");
+        });
+        return true;
+    }
 
-@Override
-public CompletableFuture<String> eval(String script) {
+    @Override
+    public CompletableFuture<String> eval(String script) {
         CompletableFuture<String> result = new CompletableFuture<>();
         app.dispatch(() -> {
             if (destroyed) {
@@ -355,35 +358,39 @@ public CompletableFuture<String> eval(String script) {
         }
     }
 
-/**
- * A request for the app's own scheme. WebKitGTK asks on the UI thread and does not wait, so the answer is produced on a worker
- * thread (the handler may be slow) and put back here.
- */
-void onSchemeRequest(MemorySegment request, GtkResources.Incoming incoming) {
-    ResourceService service = resourceService;
-    int refused = service == null ? 404 : incoming.body() == null ? 413
-            : service.admit(incoming.method(), incoming.headers(), GtkResources.ORIGIN);
-    if (refused != 0) {
-        GtkResources.respond(request, refused, ResourceService.baseHeaders(), new byte[0]);
-        return;
-    }
-    GtkResources.ref(request); // the request must outlive this callback
-    boolean head = incoming.method().equals("HEAD");
-    service.serveAsyncFollowingRedirects(incoming.method(), incoming.uri(), incoming.headers(), incoming.body())
-            .thenAccept(response -> app.dispatch(() -> {
-                try {
-                    if (!destroyed) {
-                        GtkResources.respond(request, response.status(), response.headers(), head ? new byte[0] : response.body());
+    /**
+     * A request for the app's own scheme. WebKitGTK asks on the UI thread and does not wait, so the answer is produced on a worker
+     * thread (the handler may be slow) and put back here.
+     */
+    void onSchemeRequest(MemorySegment request) {
+        ResourceService service = resourceService;
+        if (service == null) {
+            GtkResources.respond(request, 404, ResourceService.baseHeaders(), new byte[0]);
+            return;
+        }
+        GtkResources.Incoming incoming = GtkResources.read(request, service.maxBody());
+        int refused = incoming.body() == null ? 413 : service.admit(incoming.method(), incoming.headers(), GtkResources.ORIGIN);
+        if (refused != 0) {
+            GtkResources.respond(request, refused, ResourceService.baseHeaders(), new byte[0]);
+            return;
+        }
+        GtkResources.ref(request); // the request must outlive this callback
+        boolean head = incoming.method().equals("HEAD");
+        service.serveAsyncFollowingRedirects(incoming.method(), incoming.uri(), incoming.headers(), incoming.body())
+                .thenAccept(response -> app.dispatch(() -> {
+                    try {
+                        if (!destroyed) {
+                            GtkResources.respond(request, response.status(), response.headers(), head ? new byte[0] : response.body());
+                        }
+                    } catch (RuntimeException e) {
+                        LOG.log(System.Logger.Level.ERROR, "answering a resource request failed", e);
+                    } finally {
+                        Gtk.unref(request);
                     }
-                } catch (RuntimeException e) {
-                    LOG.log(System.Logger.Level.ERROR, "answering a resource request failed", e);
-                } finally {
-                    Gtk.unref(request);
-                }
-            }));
-}
+                }));
+    }
 
-void onDestroyed() {
+    void onDestroyed() {
         if (destroyed) {
             return;
         }

@@ -634,7 +634,8 @@ window.loadResources(AppResources.classpath("ui"), request -> switch (request.pa
 `AppRequest` has the method, path, query, headers and body, with `formValue`, `queryParams` and `isHtmx()` helpers.
 `AppResponse` has `html`, `text`, `status`, `redirect`, `withHeader` and `withStatus`. Handlers run on worker threads (use
 `Application.dispatch` to touch windows). Escape anything user-supplied before putting it in HTML, and keep `GET` handlers free of
-side effects. Bodies over 8 MB get 413; an exception in a handler gives a bare 500 and the details go to the log, not the page.
+side effects. Bodies over 8 MB (configurable, see [Uploads](#uploads-multipartform-data)) get 413; an exception in a handler gives a
+bare 500 and the details go to the log, not the page.
 
 Redirects work everywhere: a form post answered with `AppResponse.redirect(...)` (Post/Redirect/Get) ends on the new address.
 WebKitGTK does not follow redirects from an in-process scheme itself, so on Linux Jolt does it: a page navigation gets a tiny page
@@ -673,6 +674,51 @@ window.loadResources(AppResources.classpath("ui"), router);
 - **Errors:** `onError` turns an exception from a filter or route into a response. Without it, or if it returns `null`, Jolt
   answers 500 and logs the cause.
 
+#### Uploads (multipart/form-data)
+
+A form with a file input, or `fetch` with a `FormData`, sends `multipart/form-data`. `AppRequest.parts()` reads it:
+
+```java
+.post("/documents", request -> {
+    String title = request.formValue("title");                 // the text fields work as usual
+    AppRequest.Part file = request.part("document");           // a file input
+    if (file == null || file.filename().isEmpty()) {           // an empty name: no file was chosen
+        return AppResponse.html("<p>Choose a file</p>").withStatus(422);
+    }
+    Files.write(uploads.resolve(UUID.randomUUID() + ".bin"), file.content());
+    log.info("stored {} ({} bytes, {})", file.filename(), file.size(), file.contentType());
+    return AppResponse.redirect("/documents");
+})
+```
+
+```html
+<form method="post" action="/documents" enctype="multipart/form-data">
+  <input name="title"> <input type="file" name="document"> <button>Upload</button>
+</form>
+```
+
+It works with plain forms, `fetch`, and htmx (`hx-post` with `hx-encoding="multipart/form-data"`), on both platforms and both
+transports. A `Part` has `name()`, `filename()` (`null` for an ordinary field), `contentType()`, `headers()`, `content()`,
+`text()` and `size()`. `parts()` throws `IllegalArgumentException` for a body that is not well formed, which `Router.onError` can
+turn into a 400.
+
+- **Treat the file as hostile.** `filename()` is cut down to its last path segment with control characters removed (so
+  `../../etc/passwd` becomes `passwd`), but it is still what the user's machine said; store files under a name you choose, as above.
+  `contentType()` is what the browser guessed from the extension, not a check of the contents.
+- **Size:** bodies are held in memory, 8 MB by default; a bigger one is answered with 413 and never reaches your handler. Raise it for
+  uploads with `window.loadResources(resources, handler, ResourceOptions.defaults().withMaxRequestBytes(64 * 1024 * 1024))`
+  (up to 1 GB, held in memory, so size it to what you need). Streaming a large file to disk is not supported.
+- **Linux:** WebKitGTK aborts the whole process when a request to an in-process scheme carries a body holding a `Blob` (any
+  `fetch` with a `Blob`, any `FormData` with a file in it, a multipart form with a file input), so Jolt's Linux backend turns
+  those bodies into plain bytes inside the page before they are sent. You don't have to do anything: `fetch`, `XMLHttpRequest`
+  (so htmx too), `Request` objects, `navigator.sendBeacon` and `<form>` submissions (`requestSubmit()` and `form.submit()` as well)
+  all work with files, and what your handler receives is identical on Windows and Linux. Two corners are outside its reach: a
+  *synchronous* `XMLHttpRequest` with a `Blob` throws a `NotSupportedError` (rather than crashing), and code in a Web Worker has to
+  send bytes (`ArrayBuffer`), not a `Blob`. A form holding a file is sent as a `fetch` and its answer replaces the page, which
+  looks like a normal navigation (a redirect included) except that the address does not change to the form's `action`.
+- Over the loopback fallback, Jolt adds its secret to multipart forms as a hidden field and removes it before your handler sees the
+  parts. `navigator.sendBeacon` cannot carry the secret there and is refused.
+
 #### Requirements and the loopback fallback
 
 The in-process transport needs WebView2 on Windows (always the case) and WebKitGTK 2.40 or newer on Linux (with libsoup 3, which
@@ -688,10 +734,9 @@ Any program on the machine, and any website the user has open in a browser, can 
 - **CSRF:** `POST`/`PUT`/`PATCH`/`DELETE` are refused unless they carry a random per-run secret in `X-Jolt-Token`. Jolt adds it
   to htmx requests and to `fetch` calls from your page, and only for URLs on its own server, so it never reaches another
   origin. Plain `<form method="post">` forms work too: Jolt adds the secret as a hidden `_jolt_token` field when the form is
-  submitted (for forms posting to its own server, urlencoded only) and removes it before your handler sees the body. It is also
-  available as `window.joltCsrfToken` for `XMLHttpRequest`. Not covered: `multipart/form-data` forms and `form.submit()` (which
-  fires no submit event); use `hx-post` (add `hx-encoding="multipart/form-data"` for uploads) or send the `X-Jolt-Token` header
-  yourself. The handler never sees the secret.
+  submitted (for forms posting to its own server, urlencoded or multipart) and removes it before your handler sees the body. It
+  is also available as `window.joltCsrfToken` for `XMLHttpRequest`. `form.submit()` is covered too. Other body types such as
+  `text/plain`, and `navigator.sendBeacon`, cannot carry the secret and are refused. The handler never sees the secret.
 - `Origin` must match if present, `Sec-Fetch-Site` must be `same-origin` or `none` (this also rejects a page served from another
   port on the same machine), and `Host` must name the server (DNS rebinding).
 - No CORS headers are sent and `OPTIONS` is refused, so another origin cannot read a response.

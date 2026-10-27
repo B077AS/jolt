@@ -4,9 +4,11 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import io.github.b077as.jolt.AppResources;
 import io.github.b077as.jolt.AppResponse;
+import io.github.b077as.jolt.ResourceOptions;
 import io.github.b077as.jolt.RequestHandler;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -37,7 +39,7 @@ import java.util.concurrent.Executors;
  *       {@code Origin}, if present, must be this server's;
  *   <li>no CORS headers are ever sent and {@code OPTIONS} is refused, so no other origin can read a response or get a
  *       preflight approved;
- *   <li>request bodies are capped at {@value #MAX_BODY} bytes.
+ *   <li>request bodies are capped at {@link ResourceOptions#maxRequestBytes()}.
  * </ul>
  */
 public final class AssetServer implements AutoCloseable {
@@ -46,6 +48,7 @@ public final class AssetServer implements AutoCloseable {
     /** The hidden form field Jolt adds to {@code <form method=post>} submissions, for requests that cannot set a header. */
     public static final String TOKEN_FIELD = "_jolt_token";
     static final int MAX_BODY = ResourceService.MAX_BODY;
+    private static final long DISCARD_LIMIT = 256L * 1024 * 1024;
 
     private static final Set<String> SAFE_METHODS = ResourceService.SAFE_METHODS;
     private static final Set<String> UNSAFE_METHODS = ResourceService.UNSAFE_METHODS;
@@ -64,7 +67,11 @@ public final class AssetServer implements AutoCloseable {
      * @param handler answers requests before the files do; may be {@code null} for a read-only file server
      */
     public AssetServer(AppResources resources, RequestHandler handler, int port) throws IOException {
-        this.service = new ResourceService(resources, handler);
+        this(resources, handler, ResourceOptions.defaults(), port);
+    }
+
+    public AssetServer(AppResources resources, RequestHandler handler, ResourceOptions options, int port) throws IOException {
+        this.service = new ResourceService(resources, handler, options);
         this.hasHandler = handler != null;
         byte[] secret = new byte[32];
         new SecureRandom().nextBytes(secret);
@@ -104,16 +111,19 @@ public final class AssetServer implements AutoCloseable {
                   document.addEventListener('htmx:configRequest', (e) => {
                     if (sameServer(e.detail.path)) e.detail.headers[H] = T;
                   });
-                  document.addEventListener('submit', (e) => {
-                    const form = e.target, by = e.submitter;
+                  const addField = (form, by) => {
                     const method = String((by && by.formMethod) || form.method || 'get').toUpperCase();
                     const enctype = String((by && by.formEnctype) || form.enctype || '').toLowerCase();
-                    if (method === 'GET' || method === 'DIALOG' || enctype !== 'application/x-www-form-urlencoded') return;
+                    if (method === 'GET' || method === 'DIALOG' || (enctype !== 'application/x-www-form-urlencoded' && enctype !== 'multipart/form-data')) return;
                     if (!sameServer((by && by.formAction) || form.action)) return;
                     let field = form.querySelector('input[type=hidden][name=' + F + ']');
                     if (!field) { field = document.createElement('input'); field.type = 'hidden'; field.name = F; form.appendChild(field); }
                     field.value = T;
-                  }, true);
+                  };
+                  document.addEventListener('submit', (e) => addField(e.target, e.submitter), true);
+                  // form.submit() fires no submit event, so it is wrapped as well
+                  const nativeSubmit = HTMLFormElement.prototype.submit;
+                  HTMLFormElement.prototype.submit = function () { addField(this, null); return nativeSubmit.call(this); };
                   const nativeFetch = window.fetch;
                   window.fetch = function (input, init) {
                     const request = new Request(input, init);
@@ -144,23 +154,44 @@ public final class AssetServer implements AutoCloseable {
                 String sent = exchange.getRequestHeaders().getFirst(TOKEN_HEADER);
                 boolean headerOk = unsafe && sent != null && tokenMatches(sent);
                 String type = String.valueOf(exchange.getRequestHeaders().getFirst("Content-Type")).toLowerCase(Locale.ROOT);
-                if (unsafe && !headerOk && !type.startsWith("application/x-www-form-urlencoded")) {
+                boolean urlencoded = type.startsWith("application/x-www-form-urlencoded");
+                String boundary = MultipartParser.boundary(exchange.getRequestHeaders().getFirst("Content-Type"));
+                if (unsafe && !headerOk && !urlencoded && boundary == null) {
                     send(exchange, 403, Map.of(), null, false);
                     return;
                 }
-                body = exchange.getRequestBody().readNBytes(MAX_BODY + 1);
-                if (body.length > MAX_BODY) {
+                int limit = service.maxBody();
+                body = exchange.getRequestBody().readNBytes(limit + 1);
+                if (body.length > limit) {
+                    discard(exchange); // read the rest, or the client sees a dropped connection instead of the 413
                     send(exchange, 413, Map.of(), null, false);
                     return;
                 }
                 if (unsafe) {
                     // a plain HTML form cannot set headers, so its secret travels as a field; either way the handler never sees it
-                    FormToken form = FormToken.split(body);
-                    if (!headerOk && (form.value == null || !tokenMatches(form.value))) {
+                    String secret = null;
+                    if (boundary != null) {
+                        try {
+                            MultipartParser.Stripped form = MultipartParser.stripField(body, boundary, TOKEN_FIELD);
+                            if (form != null) {
+                                secret = form.value();
+                                body = form.rest();
+                            }
+                        } catch (IllegalArgumentException malformed) {
+                            if (!headerOk) {
+                                send(exchange, 403, Map.of(), null, false);
+                                return;
+                            }
+                        }
+                    } else if (urlencoded) {
+                        FormToken form = FormToken.split(body);
+                        secret = form.value;
+                        body = form.rest;
+                    }
+                    if (!headerOk && (secret == null || !tokenMatches(secret))) {
                         send(exchange, 403, Map.of(), null, false);
                         return;
                     }
-                    body = form.rest;
                 }
             }
             AppResponse response = service.serve(method, exchange.getRequestURI(), headersOf(exchange), body);
@@ -189,6 +220,20 @@ public final class AssetServer implements AutoCloseable {
             }
         }
         return 0;
+    }
+
+    /** Reads and throws away what is left of a request body, up to {@value #DISCARD_LIMIT} bytes; beyond that the connection is dropped. */
+    private static void discard(HttpExchange exchange) {
+        byte[] sink = new byte[64 * 1024];
+        long total = 0;
+        try (InputStream in = exchange.getRequestBody()) {
+            int read;
+            while (total < DISCARD_LIMIT && (read = in.read(sink)) >= 0) {
+                total += read;
+            }
+        } catch (IOException e) {
+            // the client went away; nothing to answer
+        }
     }
 
     private boolean tokenMatches(String candidate) {

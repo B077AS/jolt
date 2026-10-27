@@ -688,7 +688,8 @@ public CompletableFuture<String> eval(String script) {
      * the {@link ResourceService} when loadResources is active, and anything else with a 404, never the network.
      */
     private void onResourceRequested(MemorySegment sender, MemorySegment args) {
-        ResourceRequests.Incoming request = ResourceRequests.read(args);
+        ResourceRequests.Incoming request = ResourceRequests.read(args,
+                resourceService != null ? resourceService.maxBody() : ResourceService.MAX_BODY);
         String uri = request == null ? null : request.uri();
         String path = uri == null || !uri.startsWith(VIRTUAL_ORIGIN) ? "" : uri.substring(VIRTUAL_ORIGIN.length());
         int cut = indexOfAny(path, '?', '#');

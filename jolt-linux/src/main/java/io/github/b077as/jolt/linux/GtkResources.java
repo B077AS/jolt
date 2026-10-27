@@ -120,12 +120,17 @@ final class GtkResources {
      * A request as the page made it.
      *
      * @param webView the view that made it, as an address (0 if none), to find the window
-     * @param body    the request body, empty if none, or {@code null} if it is larger than {@link ResourceService#MAX_BODY}
+     * @param body    the request body, empty if none, or {@code null} if it is larger than the limit given to {@link #read}
      */
     record Incoming(String method, String uri, Map<String, String> headers, byte[] body, long webView) {}
 
-    /** Reads method, address, headers and body from a {@code WebKitURISchemeRequest}. */
-    static Incoming read(MemorySegment request) {
+    /** The address of the web view that made the request, 0 if none. */
+    static long webViewOf(MemorySegment request) {
+        return ((MemorySegment) call(H.requestWebView, request)).address();
+    }
+
+    /** Reads method, address, headers and body (up to {@code maxBody} bytes) from a {@code WebKitURISchemeRequest}. */
+    static Incoming read(MemorySegment request, int maxBody) {
         String method = Gtk.readUtf8((MemorySegment) call(H.requestMethod, request));
         String uri = Gtk.readUtf8((MemorySegment) call(H.requestUri, request));
         MemorySegment view = (MemorySegment) call(H.requestWebView, request);
@@ -142,12 +147,12 @@ final class GtkResources {
                             (a, b) -> a + ", " + b);
                 }
             }
-            return new Incoming(method == null ? "GET" : method.toUpperCase(Locale.ROOT), uri, headers, body(request, arena),
+            return new Incoming(method == null ? "GET" : method.toUpperCase(Locale.ROOT), uri, headers, body(request, arena, maxBody),
                     view.address());
         }
     }
 
-    private static byte[] body(MemorySegment request, Arena arena) {
+    private static byte[] body(MemorySegment request, Arena arena, int maxBody) {
         MemorySegment stream = (MemorySegment) call(H.requestBody, request); // transfer full
         if (stream.equals(MemorySegment.NULL)) {
             return new byte[0];
@@ -161,7 +166,7 @@ final class GtkResources {
                     break;
                 }
                 bytes.write(chunk.asSlice(0, read).toArray(JAVA_BYTE), 0, (int) read);
-                if (bytes.size() > ResourceService.MAX_BODY) {
+                if (bytes.size() > maxBody) {
                     return null;
                 }
             }
