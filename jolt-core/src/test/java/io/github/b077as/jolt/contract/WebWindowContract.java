@@ -645,6 +645,31 @@ public abstract class WebWindowContract {
     }
 
     @Test
+    public void aRouterAnswersPageRequestsWithParametersFiltersAndFallThrough() {
+        io.github.b077as.jolt.Router router = io.github.b077as.jolt.Router.create()
+                .get("/items/{id}", request -> io.github.b077as.jolt.AppResponse.text("item " + request.param("id")))
+                .post("/items", request -> io.github.b077as.jolt.AppResponse.text("made " + request.formValue("name")).withStatus(201))
+                .group("/admin", admin -> admin
+                        .before(request -> io.github.b077as.jolt.AppResponse.status(403))
+                        .get("/panel", request -> io.github.b077as.jolt.AppResponse.text("never")));
+        java.util.Map<String, String> files = java.util.Map.of(
+                "index.html", "<script type=\"module\" src=\"app.js\"></script>",
+                "style.css", "body{}",
+                "app.js", "const out = [];"
+                        + "const show = async (label, request) => { const r = await request; out.push(label + '=' + r.status + ':' + (await r.text()).slice(0, 12)); };"
+                        + "await show('get', fetch('/items/a%20b'));"
+                        + "await show('post', fetch('/items', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'name=Zed' }));"
+                        + "await show('wrong', fetch('/items/1', { method: 'DELETE' }));"
+                        + "await show('filtered', fetch('/admin/panel'));"
+                        + "await show('file', fetch('/style.css'));"
+                        + "await show('missing', fetch('/nothing'));"
+                        + "window.jolt.postMessage(out.join(';'));");
+        String expected = "get=200:item a b;post=201:made Zed;wrong=405:;filtered=403:;file=200:body{};missing=404:";
+        assertEquals(expected, resourceApp(files, router, false));
+        assertEquals(expected, resourceApp(files, router, true));
+    }
+
+    @Test
     public void browserStorageSurvivesARestartOnTheInProcessOrigin() {
         java.util.Map<String, String> set = java.util.Map.of("index.html",
                 "<script>localStorage.setItem('jolt-test', 'kept'); window.jolt.postMessage('set')</script>");

@@ -641,6 +641,38 @@ WebKitGTK does not follow redirects from an in-process scheme itself, so on Linu
 that moves to the new address, and `fetch`/`XMLHttpRequest` get the target's answer directly (after a 301, 302 or 303 as a `GET`).
 Only same-origin redirects are followed that way.
 
+#### Routing
+
+A lambda with a `switch` is fine for a few routes. For more, use `Router`, which is a `RequestHandler`:
+
+```java
+Router router = Router.create()
+    .get("/", request -> AppResponse.html(pages.home()))
+    .get("/notes/{id}", request -> AppResponse.html(pages.note(request.param("id"))))
+    .post("/notes", request -> {
+        notes.add(request.formValue("text"));
+        return AppResponse.redirect("/notes");
+    })
+    .group("/admin", admin -> admin
+        .before(request -> loggedIn(request) ? null : AppResponse.redirect("/login"))   // null: carry on
+        .get("/users", request -> AppResponse.html(pages.users())))
+    .onError((request, error) -> AppResponse.html(pages.error(error)).withStatus(500));
+
+window.loadResources(AppResources.classpath("ui"), router);
+```
+
+- **Patterns:** `/notes/{id}` captures one segment (read it with `request.param("id")`, already URL-decoded); `/files/{*path}`
+  as the last segment captures the rest. Trailing slashes make no difference; plain segments are case-sensitive.
+- **Which route wins:** a plain segment beats `{id}`, which beats `{*rest}`, decided from the left; otherwise the route registered
+  first. Registering the same method and shape twice (even with different parameter names) throws.
+- **Fall-through:** a request no route matches goes to your files, so static assets need no routes. `HEAD` uses the `GET` route.
+  A `POST`, `PUT`, `PATCH` or `DELETE` to a path that only has other methods gets 405 with an `Allow` header; a `GET` there falls
+  through, so a `POST`-only route never hides a file.
+- **Filters** (`before`) run in order, outer groups first, only for requests that matched a route. Return a response to stop (a
+  login redirect, a 403) or `null` to continue.
+- **Errors:** `onError` turns an exception from a filter or route into a response. Without it, or if it returns `null`, Jolt
+  answers 500 and logs the cause.
+
 #### Requirements and the loopback fallback
 
 The in-process transport needs WebView2 on Windows (always the case) and WebKitGTK 2.40 or newer on Linux (with libsoup 3, which

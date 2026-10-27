@@ -18,8 +18,28 @@ import java.util.Map;
  * @param query   the raw query string without the {@code ?}, or an empty string
  * @param headers header values by lower-case name (multiple values joined with {@code ", "})
  * @param body    the request body, empty if none
+ * @param pathParams the values of the {@code {name}} parts of the {@link Router} route that matched, empty otherwise
  */
-public record AppRequest(String method, String path, String query, Map<String, String> headers, byte[] body) {
+public record AppRequest(String method, String path, String query, Map<String, String> headers, byte[] body,
+                         Map<String, String> pathParams) {
+
+    public AppRequest {
+        pathParams = pathParams == null ? Map.of() : Map.copyOf(pathParams);
+    }
+
+    public AppRequest(String method, String path, String query, Map<String, String> headers, byte[] body) {
+        this(method, path, query, headers, body, Map.of());
+    }
+
+    /** The value of the route's {@code {name}} part, decoded, or {@code null} if the route has no such part. */
+    public String param(String name) {
+        return pathParams.get(name);
+    }
+
+    /** A copy carrying these route parameters. */
+    public AppRequest withPathParams(Map<String, String> params) {
+        return new AppRequest(method, path, query, headers, body, params);
+    }
 
     /** The value of a header, or {@code null}. */
     public String header(String name) {
