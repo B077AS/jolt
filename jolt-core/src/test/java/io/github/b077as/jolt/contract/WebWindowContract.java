@@ -427,6 +427,158 @@ public abstract class WebWindowContract {
         assertEquals("2", result.getNow(null));
     }
 
+    /**
+     * A window created hidden and shown later must render its page. requestAnimationFrame only runs while the web view is
+     * really being painted, so the page itself is the witness that the web view woke up when the window appeared.
+     */
+    @Test
+    public void aWindowCreatedHiddenRendersItsPageOnceShown() {
+        CompletableFuture<String> frame = new CompletableFuture<>();
+        runApp(20, app -> {
+            WebWindow window = app.createWindow(WindowOptions.defaults().withSize(400, 300).withVisible(false));
+            window.onMessage(message -> {
+                if (message.equals("loaded")) {
+                    window.show();
+                } else if (message.startsWith("frame")) {
+                    frame.complete(message);
+                    window.close();
+                }
+            });
+            window.loadHtml("<script>window.jolt.postMessage('loaded');"
+                    + "addEventListener('load', () => requestAnimationFrame(() => window.jolt.postMessage('frame ' + document.visibilityState)));</script>");
+        });
+        assertEquals("frame visible", frame.getNow("the page never painted after the window was shown"));
+    }
+
+    /**
+     * Whether this environment honours a request to maximize. Windows always does; on Linux it takes a window manager or
+     * compositor, which a bare X server in a container lacks, so the Linux test class says what its display provides.
+     */
+    protected boolean maximizeIsHonoured() {
+        return true;
+    }
+
+    /** Polls on a helper thread (the test thread is the UI thread and has to stay free) until the condition holds or time runs out. */
+    protected static CompletableFuture<Boolean> eventually(java.util.function.BooleanSupplier condition, long timeoutMillis) {
+        CompletableFuture<Boolean> result = new CompletableFuture<>();
+        Thread poller = new Thread(() -> {
+            long deadline = System.nanoTime() + timeoutMillis * 1_000_000;
+            while (System.nanoTime() < deadline) {
+                if (condition.getAsBoolean()) {
+                    result.complete(true);
+                    return;
+                }
+                try {
+                    Thread.sleep(25);
+                } catch (InterruptedException e) {
+                    return;
+                }
+            }
+            result.complete(false);
+        }, "test-poller");
+        poller.setDaemon(true);
+        poller.start();
+        return result;
+    }
+
+    /**
+     * Whether this environment also honours a request to un-maximize. A kiosk compositor (the {@code cage} of the Wayland
+     * test run) keeps every window maximized, so there only maximizing can be checked.
+     */
+    protected boolean restoreIsHonoured() {
+        return maximizeIsHonoured();
+    }
+
+    @Test
+    public void aWindowCanBeMaximizedAndRestored() {
+        org.junit.jupiter.api.Assumptions.assumeTrue(maximizeIsHonoured(), "no window manager here to honour maximize");
+        List<String> steps = new ArrayList<>();
+        runApp(30, app -> {
+            WebWindow window = app.createWindow(WindowOptions.defaults().withSize(400, 300));
+            steps.add("initially " + window.isMaximized());
+            window.maximize();
+            eventually(window::isMaximized, 5000).thenCompose(maximized -> {
+                steps.add("after maximize " + maximized);
+                if (!restoreIsHonoured()) {
+                    return CompletableFuture.completedFuture(true); // nothing more can be checked here
+                }
+                window.restore();
+                return eventually(() -> !window.isMaximized(), 5000);
+            }).thenAccept(restored -> {
+                if (restoreIsHonoured()) {
+                    steps.add("after restore " + restored);
+                }
+                window.close();
+            });
+        });
+        assertEquals(restoreIsHonoured()
+                ? List.of("initially false", "after maximize true", "after restore true")
+                : List.of("initially false", "after maximize true"), steps);
+    }
+
+    @Test
+    public void aWindowCreatedMaximizedStartsMaximized() {
+        org.junit.jupiter.api.Assumptions.assumeTrue(maximizeIsHonoured(), "no window manager here to honour maximize");
+        CompletableFuture<Boolean> maximized = new CompletableFuture<>();
+        runApp(30, app -> {
+            WebWindow window = app.createWindow(WindowOptions.defaults().withSize(400, 300).withMaximized(true));
+            eventually(window::isMaximized, 5000).thenAccept(ok -> {
+                maximized.complete(ok);
+                window.close();
+            });
+        });
+        assertEquals(true, maximized.getNow(false));
+    }
+
+    @Test
+    public void aMaximizedWindowCreatedHiddenSaysSoAndIsMaximizedWhenShown() {
+        List<String> steps = new ArrayList<>();
+        runApp(30, app -> {
+            WebWindow window = app.createWindow(WindowOptions.defaults().withSize(400, 300).withVisible(false).withMaximized(true));
+            steps.add("hidden " + window.isMaximized());
+            window.show();
+            if (!maximizeIsHonoured()) {
+                // without a window manager the request cannot take effect; what must hold is that nothing broke
+                window.eval("1 + 1").whenComplete((r, e) -> {
+                    steps.add("shown " + (e == null ? "ok" : "error"));
+                    window.close();
+                });
+                return;
+            }
+            eventually(window::isMaximized, 5000).thenAccept(ok -> {
+                steps.add("shown " + ok);
+                window.close();
+            });
+        });
+        assertEquals(maximizeIsHonoured() ? List.of("hidden true", "shown true") : List.of("hidden true", "shown ok"), steps);
+    }
+
+    /** A hidden window shown maximized must render its page, and at the maximized size, not the size it was created with. */
+    @Test
+    public void aWindowShownMaximizedRendersItsPageAtTheFullSize() {
+        org.junit.jupiter.api.Assumptions.assumeTrue(maximizeIsHonoured(), "no window manager here to honour maximize");
+        CompletableFuture<String> frame = new CompletableFuture<>();
+        runApp(20, app -> {
+            WebWindow window = app.createWindow(WindowOptions.defaults().withSize(400, 300).withVisible(false).withMaximized(true));
+            window.onMessage(message -> {
+                if (message.equals("loaded")) {
+                    window.show();
+                } else if (message.startsWith("frame")) {
+                    frame.complete(message);
+                    window.close();
+                }
+            });
+            // wait a moment after the first frame so the maximize has settled, then report the size the page really has
+            window.loadHtml("<script>window.jolt.postMessage('loaded');"
+                    + "addEventListener('load', () => requestAnimationFrame(() => setTimeout(() => requestAnimationFrame(() =>"
+                    + " window.jolt.postMessage('frame ' + innerWidth + 'x' + innerHeight)), 600)));</script>");
+        });
+        String message = frame.getNow("the page never painted after the window was shown maximized");
+        assertTrue(message.startsWith("frame "), message);
+        int width = Integer.parseInt(message.substring("frame ".length()).split("x")[0]);
+        assertTrue(width > 600, "the page should see the maximized width, not the 400 it was created with: " + message);
+    }
+
     @Test
     public void scriptThatThrowsFailsTheEval() {
         CompletableFuture<Throwable> failure = new CompletableFuture<>();

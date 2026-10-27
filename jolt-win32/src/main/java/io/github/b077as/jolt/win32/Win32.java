@@ -28,6 +28,8 @@ final class Win32 {
     static final int WM_SIZE = 0x0005;
     static final int WM_SETFOCUS = 0x0007;
     static final int WM_CLOSE = 0x0010;
+    static final int WM_ERASEBKGND = 0x0014;
+    static final int WM_SHOWWINDOW = 0x0018;
     static final int WM_SETICON = 0x0080;
     static final int WM_GETICON = 0x007F;
     static final int ICON_SMALL = 0;
@@ -55,7 +57,12 @@ final class Win32 {
     static final int CW_USEDEFAULT = 0x80000000;
 
     static final int SW_HIDE = 0;
+    static final int SW_SHOWMAXIMIZED = 3;
     static final int SW_SHOW = 5;
+    static final int SW_RESTORE = 9;
+
+    /** {@code MONITOR_DEFAULTTONEAREST}: the monitor closest to the window if it is on none. */
+    static final int MONITOR_DEFAULTTONEAREST = 2;
 
     static final int SWP_NOSIZE = 0x0001;
     static final int SWP_NOMOVE = 0x0002;
@@ -72,6 +79,10 @@ final class Win32 {
     static final StructLayout RECT = MemoryLayout.structLayout(
             JAVA_INT.withName("left"), JAVA_INT.withName("top"),
             JAVA_INT.withName("right"), JAVA_INT.withName("bottom"));
+
+    /** MONITORINFO: DWORD cbSize, RECT rcMonitor, RECT rcWork, DWORD dwFlags (40 bytes). rcWork excludes the taskbar. */
+    static final long MONITORINFO_SIZE = 40;
+    private static final long MONITORINFO_WORK_OFFSET = 20;
 
     /** WNDCLASSEXW on 64-bit Windows; natural alignment gives the documented offsets (size 80). */
     static final StructLayout WNDCLASSEXW = MemoryLayout.structLayout(
@@ -155,6 +166,20 @@ final class Win32 {
             FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
     private static final MethodHandle SET_WINDOW_POS = Native.downcall(USER32, "SetWindowPos",
             FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT));
+    private static final MethodHandle GET_WINDOW_RECT = Native.downcall(USER32, "GetWindowRect",
+            FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+    private static final MethodHandle IS_ZOOMED = Native.downcall(USER32, "IsZoomed",
+            FunctionDescriptor.of(JAVA_INT, ADDRESS));
+    private static final MethodHandle IS_WINDOW_VISIBLE = Native.downcall(USER32, "IsWindowVisible",
+            FunctionDescriptor.of(JAVA_INT, ADDRESS));
+    private static final MethodHandle MONITOR_FROM_WINDOW = Native.downcall(USER32, "MonitorFromWindow",
+            FunctionDescriptor.of(ADDRESS, ADDRESS, JAVA_INT));
+    private static final MethodHandle GET_MONITOR_INFO = Native.downcall(USER32, "GetMonitorInfoW",
+            FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+    private static final MethodHandle FILL_RECT = Native.downcall(USER32, "FillRect",
+            FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+    private static final MethodHandle CREATE_SOLID_BRUSH = Native.downcall(GDI32, "CreateSolidBrush",
+            FunctionDescriptor.of(ADDRESS, JAVA_INT));
     private static final MethodHandle LOAD_CURSOR = Native.downcall(USER32, "LoadCursorW",
             FunctionDescriptor.of(ADDRESS, ADDRESS, ADDRESS));
     private static final MethodHandle GET_DPI_FOR_WINDOW = Native.downcall(USER32, "GetDpiForWindow",
@@ -422,6 +447,90 @@ final class Win32 {
     static void setWindowPos(MemorySegment hwnd, int x, int y, int cx, int cy, int flags) {
         try {
             int ignored = (int) SET_WINDOW_POS.invokeExact(hwnd, MemorySegment.NULL, x, y, cx, cy, flags);
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    /** The window's outer rectangle in screen coordinates, written to {@code rect} (a {@link #RECT}). */
+    static void getWindowRect(MemorySegment hwnd, MemorySegment rect) {
+        try {
+            int ignored = (int) GET_WINDOW_RECT.invokeExact(hwnd, rect);
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    /** Whether the window is maximized. Safe to call from any thread: it only reads the window's state. */
+    static boolean isZoomed(MemorySegment hwnd) {
+        try {
+            return (int) IS_ZOOMED.invokeExact(hwnd) != 0;
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    static boolean isWindowVisible(MemorySegment hwnd) {
+        try {
+            return (int) IS_WINDOW_VISIBLE.invokeExact(hwnd) != 0;
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    /**
+     * The usable area of the monitor the window is on (its work area, without the taskbar) as {left, top, right, bottom} in
+     * screen coordinates, or {@code null} if Windows cannot say.
+     */
+    static int[] workAreaOf(MemorySegment hwnd) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment monitor = (MemorySegment) MONITOR_FROM_WINDOW.invokeExact(hwnd, MONITOR_DEFAULTTONEAREST);
+            if (monitor.equals(MemorySegment.NULL)) {
+                return null;
+            }
+            MemorySegment info = arena.allocate(MONITORINFO_SIZE);
+            info.set(JAVA_INT, 0, (int) MONITORINFO_SIZE); // cbSize must be set before the call
+            if ((int) GET_MONITOR_INFO.invokeExact(monitor, info) == 0) {
+                return null;
+            }
+            return new int[] {info.get(JAVA_INT, MONITORINFO_WORK_OFFSET), info.get(JAVA_INT, MONITORINFO_WORK_OFFSET + 4),
+                    info.get(JAVA_INT, MONITORINFO_WORK_OFFSET + 8), info.get(JAVA_INT, MONITORINFO_WORK_OFFSET + 12)};
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    /** A solid brush of the given COLORREF ({@code 0x00BBGGRR}); free it with {@link #deleteObject}. */
+    static MemorySegment createSolidBrush(int colorRef) {
+        try {
+            return (MemorySegment) CREATE_SOLID_BRUSH.invokeExact(colorRef);
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    static void fillRect(MemorySegment hdc, MemorySegment rect, MemorySegment brush) {
+        try {
+            int ignored = (int) FILL_RECT.invokeExact(hdc, rect, brush);
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    /** The COLORREF of a solid brush, or -1 if it cannot be read. For tests. */
+    static int brushColorRef(MemorySegment brush) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment logBrush = arena.allocate(16); // LOGBRUSH: UINT style, COLORREF color, ULONG_PTR hatch
+            int written = (int) GET_OBJECT.invokeExact(brush, 16, logBrush);
+            return written == 0 ? -1 : logBrush.get(JAVA_INT, 4);
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    static void deleteObject(MemorySegment object) {
+        try {
+            int ignored = (int) DELETE_OBJECT.invokeExact(object);
         } catch (Throwable t) {
             throw rethrow(t);
         }

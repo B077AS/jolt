@@ -106,6 +106,39 @@ class LinuxAppearanceTest {
                 w -> w.setBackgroundColor(0xF4F5FA), w -> Gtk.backgroundColor(w.nativeWebView())));
     }
 
+    /**
+     * Where GTK put the window, read back once it is on screen. Only under X11: a Wayland compositor chooses window
+     * positions itself and an application cannot even ask where its window is.
+     */
+    private static int[] geometryOnScreen(WindowOptions options) {
+        CompletableFuture<int[]> result = new CompletableFuture<>();
+        WebWindowContract.runApp(30, app -> {
+            LinuxWindow window = (LinuxWindow) app.createWindow(options);
+            // a few round trips through the main loop so the window has been mapped and placed
+            window.eval("1").thenCompose(a -> window.eval("2")).thenCompose(a -> window.eval("3")).thenRun(() -> app.dispatch(() -> {
+                try {
+                    result.complete(Gtk.windowGeometry(window.nativeWindow()));
+                } catch (Throwable t) {
+                    result.completeExceptionally(t);
+                }
+                window.close();
+            }));
+            window.loadHtml("<p>placement</p>");
+        });
+        return result.getNow(null);
+    }
+
+    @Test
+    void aNewWindowIsCenteredOnTheScreenUnderX11() {
+        org.junit.jupiter.api.Assumptions.assumeTrue("x11".equalsIgnoreCase(System.getenv("GDK_BACKEND")),
+                "window positions can only be read and chosen under X11");
+        int[] g = geometryOnScreen(WindowOptions.defaults().withSize(700, 500));
+        int expectedX = (g[4] - g[2]) / 2;
+        int expectedY = (g[5] - g[3]) / 2;
+        assertTrue(Math.abs(g[0] - expectedX) <= 2, "x " + g[0] + " but the centre of a " + g[4] + " wide screen is " + expectedX);
+        assertTrue(Math.abs(g[1] - expectedY) <= 2, "y " + g[1] + " but the centre of a " + g[5] + " high screen is " + expectedY);
+    }
+
     @Test
     void exactTitleBarColoursAreIgnoredWithoutHarm() {
         // Linux desktops own the title bar, so this is documented as unsupported; it must simply not break anything.

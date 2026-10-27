@@ -116,7 +116,7 @@ only activates on its own operating system, so one jar runs on both.
 ```xml
 <properties>
   <maven.compiler.release>25</maven.compiler.release>
-  <jolt.version>0.2.1</jolt.version>
+  <jolt.version>0.2.2</jolt.version>
 </properties>
 
 <dependencies>
@@ -165,9 +165,9 @@ Or pass `--enable-native-access=ALL-UNNAMED` on the `java` command line.
 
 ```kotlin
 dependencies {
-    implementation("io.github.b077as:jolt-core:0.2.1")
-    implementation("io.github.b077as:jolt-win32:0.2.1")
-    implementation("io.github.b077as:jolt-linux:0.2.1")
+    implementation("io.github.b077as:jolt-core:0.2.2")
+    implementation("io.github.b077as:jolt-win32:0.2.2")
+    implementation("io.github.b077as:jolt-linux:0.2.2")
 }
 
 java {
@@ -219,6 +219,8 @@ If you only target one operating system, depend on `jolt-core` and that system's
 - Packaging into a double-clickable app that bundles its own Java runtime.
 - `jolt-credentials` (since 0.2.1, optional): keep passwords and tokens in the Windows Credential Manager or the Linux Secret
   Service. See [Saving passwords and tokens](#saving-passwords-and-tokens-jolt-credentials).
+- Start maximized or centered, hide the window until the page is ready, and maximize or restore it later (since 0.2.2). See
+  [Opening maximized, centered, and without a flash](#opening-maximized-centered-and-without-a-flash).
 
 See the [changelog](CHANGELOG.md) for what each version added.
 
@@ -486,6 +488,44 @@ Setting them in `WindowOptions` means the window is created that way, so it neve
 On Windows 11 the window was checked by eye (icon, dark and light title bar, and exact colours that blend into the page)
 and by tests that read back what Windows holds. On Linux, tests read back what GTK holds under X11 and Wayland. Windows 10
 and the look of a real Linux desktop's title bar are not tested. The Linux dark preference is process-wide.
+
+### Opening maximized, centered, and without a flash
+
+Available since **0.2.2**. New windows are centered by default from that version; earlier versions let the operating
+system place them.
+
+```java
+WindowOptions options = WindowOptions.defaults()
+        .withSize(1200, 780)
+        .withBackgroundColor(0x0F1117)   // the page's background: painted behind the web view from the first frame
+        .withMaximized(true)             // start maximized (false by default)
+        .withCentered(true)              // the default: start in the middle of the screen (ignored when maximized)
+        .withVisible(false);             // do not show the window until you say so
+
+WebWindow window = app.createWindow(options);
+window.onMessage(m -> { if (m.equals("ready")) window.show(); });   // the page sends "ready" once its content is on screen
+window.loadResources(AppResources.classpath("ui"));
+```
+
+The web view needs a second or two to start. A window that is visible during that time shows an empty body, first the
+window's own background and then whatever the web view paints before the page does. Creating the window hidden and calling
+`show()` once the page is ready (the page tells you with `window.jolt.postMessage`) removes that: the window appears with
+its content already drawn. `show()` also works for a window that was created hidden and shown much later; the page
+starts rendering as soon as it appears.
+
+`window.maximize()`, `window.restore()` and `window.isMaximized()` do the same later, from any thread. Maximizing a hidden
+window does not show it: the window is maximized when it is first shown.
+
+| | Windows | Linux, X11 | Linux, Wayland |
+| --- | --- | --- | --- |
+| `withCentered` | middle of the monitor's usable area (without the taskbar); a window bigger than that keeps its top-left corner on screen | middle of the screen | **ignored**: the compositor places windows, an application cannot |
+| `withMaximized`, `maximize()`, `restore()` | yes | needs a window manager (a bare X server has none, so nothing happens) | yes, if the compositor allows it |
+| window painted with the background colour before the web view starts | yes | the web view's colour is set as before | same |
+
+Checked by tests that read back where Windows put the window and what it painted, by a Windows run of a real app (it
+opened centered or maximized, and with a hidden start no white or black frame was seen), and by the shared contract tests
+under X11 and Wayland in Docker. Centering was read back from GTK under X11 only. Not tested: several monitors,
+Windows 10, and a real Linux desktop's window manager.
 
 ### Letting the page drive it
 
@@ -843,7 +883,7 @@ Available since **0.2.1**; versions before that do not have it.
 </dependency>
 ```
 
-Gradle: `implementation("io.github.b077as:jolt-credentials:0.2.1")`.
+Gradle: `implementation("io.github.b077as:jolt-credentials:0.2.2")`.
 
 ```java
 CredentialStore store = CredentialStore.open("com.example.mail");   // your app's own namespace

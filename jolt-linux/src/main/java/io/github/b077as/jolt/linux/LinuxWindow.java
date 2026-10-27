@@ -47,6 +47,12 @@ final class LinuxWindow implements WebWindow, NativeResourceHost {
     private MemorySegment webView;
     private MemorySegment contentManager;
     private boolean destroyed;
+    /** Whether the window has been shown at least once (UI thread). */
+    private boolean shown;
+    /** Asked to be maximized before it was first shown. Readable from any thread. */
+    private volatile boolean maximizeWhenShown;
+    /** The window manager's word on it, kept up to date by the window-state signal. Readable from any thread. */
+    private volatile boolean maximized;
     private ResourceService resourceService;
 
     /** Must be called on the UI thread. */
@@ -73,6 +79,7 @@ final class LinuxWindow implements WebWindow, NativeResourceHost {
         this.id = app.register(this);
         MemorySegment key = MemorySegment.ofAddress(id);
         Gtk.connect(window, "destroy", Callbacks.DESTROY, key);
+        Gtk.connect(window, "window-state-event", Callbacks.WINDOW_STATE, key);
         Gtk.connect(contentManager, "script-message-received::" + MESSAGE_HANDLER, Callbacks.SCRIPT_MESSAGE, key);
         Gtk.connect(webView, "close", Callbacks.WEB_VIEW_CLOSE, key);
         Gtk.connect(webView, "decide-policy", Callbacks.DECIDE_POLICY, key);
@@ -94,8 +101,16 @@ final class LinuxWindow implements WebWindow, NativeResourceHost {
 
         Gtk.containerAdd(window, webView);
         Gtk.widgetShow(webView);
+        if (options.maximized()) {
+            Gtk.windowMaximize(window); // before the window is shown this sets the state it opens in
+            maximizeWhenShown = true;
+        } else if (options.centered()) {
+            Gtk.windowSetPosition(window, Gtk.WIN_POS_CENTER);
+        }
         if (options.visible()) {
             Gtk.widgetShow(window);
+            shown = true;
+            maximizeWhenShown = false; // from here the window manager's state counts
         }
         ready.complete(null);
     }
@@ -245,6 +260,8 @@ final class LinuxWindow implements WebWindow, NativeResourceHost {
         app.dispatch(() -> {
             if (!destroyed) {
                 Gtk.widgetShow(window);
+                shown = true;
+                maximizeWhenShown = false;
             }
         });
     }
@@ -256,6 +273,38 @@ final class LinuxWindow implements WebWindow, NativeResourceHost {
                 Gtk.widgetHide(window);
             }
         });
+    }
+
+    @Override
+    public void maximize() {
+        app.dispatch(() -> {
+            if (!destroyed) {
+                Gtk.windowMaximize(window);
+                if (!shown) {
+                    maximizeWhenShown = true;
+                }
+            }
+        });
+    }
+
+    @Override
+    public void restore() {
+        app.dispatch(() -> {
+            if (!destroyed) {
+                maximizeWhenShown = false;
+                Gtk.windowUnmaximize(window);
+            }
+        });
+    }
+
+    @Override
+    public boolean isMaximized() {
+        return maximizeWhenShown || maximized;
+    }
+
+    /** The window-state signal: the window manager maximized or restored the window. */
+    void onMaximizedChanged(boolean nowMaximized) {
+        maximized = nowMaximized;
     }
 
     @Override
