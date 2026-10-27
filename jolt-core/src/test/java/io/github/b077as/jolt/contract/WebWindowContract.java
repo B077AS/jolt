@@ -458,6 +458,227 @@ public abstract class WebWindowContract {
         assertInstanceOf(io.github.b077as.jolt.JoltException.class, failure.getNow(null));
     }
 
+    // ---- loadResources: every test runs over the in-process transport and over the loopback fallback ----
+
+    private static String resourceApp(java.util.Map<String, String> files, io.github.b077as.jolt.RequestHandler handler, boolean loopback) {
+        CompletableFuture<String> got = new CompletableFuture<>();
+        runApp(40, app -> {
+            WebWindow window = app.createWindow(WindowOptions.defaults().withSize(300, 200));
+            window.onMessage(message -> {
+                got.complete(message);
+                window.close();
+            });
+            io.github.b077as.jolt.AppResources resources =
+                    path -> files.containsKey(path) ? files.get(path).getBytes(StandardCharsets.UTF_8) : null;
+            if (loopback) {
+                window.loadResources(resources, handler, 0);
+            } else {
+                window.loadResources(resources, handler);
+            }
+        });
+        return got.getNow(null);
+    }
+
+    private static final java.util.Map<String, String> MULTI_FILE_APP = java.util.Map.of(
+            "index.html", "<link rel=\"stylesheet\" href=\"css/app.css\"><div id=\"box\"></div>"
+                    + "<script type=\"module\" src=\"js/main.js\"></script>",
+            "css/app.css", "#box { width: 123px; height: 10px; }",
+            // a module can run before the stylesheet has loaded; the load event waits for it
+            "js/main.js", "import { greet } from './util.js';"
+                    + "await new Promise(done => document.readyState === 'complete' ? done() : addEventListener('load', done));"
+                    + "const w = getComputedStyle(document.getElementById('box')).width;"
+                    + "window.jolt.postMessage(greet('multi') + ':' + w + ':' + location.origin);",
+            "js/util.js", "export const greet = name => 'hi ' + name;");
+
+    @Test
+    public void loadResourcesServesAMultiFileAppWithModulesAndTheBridge() {
+        String message = resourceApp(MULTI_FILE_APP, null, false);
+        assertTrue(message != null && message.startsWith("hi multi:123px:"), String.valueOf(message));
+        assertFalse(message.contains("127.0.0.1"), "the in-process transport must not use a socket: " + message);
+    }
+
+    @Test
+    public void loadResourcesServesAMultiFileAppOverLoopback() {
+        String message = resourceApp(MULTI_FILE_APP, null, true);
+        assertTrue(message != null && message.startsWith("hi multi:123px:http://127.0.0.1:"), String.valueOf(message));
+    }
+
+    private static final java.util.Map<String, String> XHR_APP = java.util.Map.of(
+            "index.html", "<script type=\"module\" src=\"app.js\"></script>",
+            "app.js", "const viaFetch = await fetch('/save', { method: 'POST', body: 'name=Zed' }).then(async r => r.status + ':' + await r.text());"
+                    + "const xhr = (token) => new Promise(res => { const x = new XMLHttpRequest(); x.open('POST', '/save');"
+                    + " if (token) x.setRequestHeader('X-Jolt-Token', token); x.onloadend = () => res(x.status + ':' + x.responseText); x.send('name=Yan'); });"
+                    + "const rawXhr = await xhr(null);"
+                    + "const tokenXhr = await xhr(window.joltCsrfToken);"
+                    + "window.jolt.postMessage([viaFetch, rawXhr, tokenXhr].join(' | '));");
+
+    private static final io.github.b077as.jolt.RequestHandler SAVE_HANDLER = request -> request.path().equals("/save")
+            ? io.github.b077as.jolt.AppResponse.html("saved " + request.formValue("name")) : null;
+
+    @Test
+    public void requestHandlerAnswersPageRequests() {
+        // nothing but this window's web view can reach the in-process transport, so a plain XMLHttpRequest needs no secret
+        assertEquals("200:saved Zed | 200:saved Yan | 200:saved Yan", resourceApp(XHR_APP, SAVE_HANDLER, false));
+    }
+
+    @Test
+    public void requestHandlerOverLoopbackRefusesForgedRequests() {
+        // over a socket Jolt adds the secret to fetch by itself; a raw XMLHttpRequest is refused until the page sends window.joltCsrfToken
+        assertEquals("200:saved Zed | 403: | 200:saved Yan", resourceApp(XHR_APP, SAVE_HANDLER, true));
+    }
+
+    private static final java.util.Map<String, String> FORM_APP = java.util.Map.of(
+            "index.html", "<form id=\"f\" method=\"post\" action=\"/save\"><input name=\"name\" value=\"Zed &amp; co\"></form>"
+                    + "<script>document.getElementById('f').requestSubmit()</script>");
+
+    private static final io.github.b077as.jolt.RequestHandler FORM_HANDLER = request ->
+            request.path().equals("/save") && request.method().equals("POST")
+                    ? io.github.b077as.jolt.AppResponse.html("<script>window.jolt.postMessage("
+                            + "'saved:" + request.formValue("name").replace("'", "") + ":' + " + request.body().length + ")</script>")
+                    : null;
+
+    @Test
+    public void plainHtmlFormPostReachesTheHandler() {
+        assertEquals("saved:Zed & co:" + "name=Zed+%26+co".length(), resourceApp(FORM_APP, FORM_HANDLER, false));
+    }
+
+    @Test
+    public void plainHtmlFormPostReachesTheHandlerOverLoopback() {
+        // the secret field was added by Jolt and removed again before the handler saw the body
+        assertEquals("saved:Zed & co:" + "name=Zed+%26+co".length(), resourceApp(FORM_APP, FORM_HANDLER, true));
+    }
+
+    private static final String PROTOCOL_PAGE = """
+            const out = [];
+            const note = (label, value) => out.push(label + '=' + value);
+            const echo = await fetch('/api/echo?x=1&y=%C3%A9', { method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Custom': 'abc' }, body: JSON.stringify({ a: 'é€𝄞' }) });
+            note('echo', [echo.status, echo.headers.get('X-Reply'), echo.headers.get('Content-Type'), await echo.text()].join('|'));
+            note('missing', (await fetch('/missing.js')).status);
+            const bin = new Uint8Array(await (await fetch('/api/binary')).arrayBuffer());
+            let sum = 0; for (const b of bin) sum = (sum * 31 + b) % 1000003;
+            note('binary', bin.length + ':' + sum);
+            note('big', (await (await fetch('/api/big')).arrayBuffer()).byteLength);
+            const redirected = await fetch('/api/redirect');
+            note('redirect', redirected.status + ':' + await redirected.text());
+            note('nocontent', (await fetch('/api/nocontent', { method: 'POST' })).status);
+            const head = await fetch('/index.html', { method: 'HEAD' });
+            note('head', head.status + ':' + (await head.text()).length);
+            const boom = await fetch('/api/throws');
+            note('throws', boom.status + ':' + (await boom.text()).includes('internals'));
+            note('put', (await fetch('/api/echo', { method: 'PUT', body: 'x' })).status);
+            note('delete', (await fetch('/api/echo', { method: 'DELETE' })).status);
+            note('type', (await fetch('/style.css')).headers.get('Content-Type'));
+            window.jolt.postMessage(out.join(';'));
+            """;
+
+    private static final io.github.b077as.jolt.RequestHandler PROTOCOL_HANDLER = request -> switch (request.path()) {
+        case "/api/echo" -> io.github.b077as.jolt.AppResponse.text(request.method() + ":" + request.query() + ":"
+                        + request.header("x-custom") + ":" + request.bodyText().length())
+                .withStatus(request.method().equals("POST") ? 201 : 200).withHeader("X-Reply", "yes");
+        case "/api/binary" -> {
+            byte[] bytes = new byte[300_000];
+            for (int i = 0; i < bytes.length; i++) {
+                bytes[i] = (byte) (i * 7 + i / 256);
+            }
+            yield new io.github.b077as.jolt.AppResponse(200, java.util.Map.of("Content-Type", "application/octet-stream"), bytes);
+        }
+        case "/api/big" -> new io.github.b077as.jolt.AppResponse(200, java.util.Map.of("Content-Type", "application/octet-stream"),
+                new byte[3 * 1024 * 1024]);
+        case "/api/redirect" -> io.github.b077as.jolt.AppResponse.redirect("/api/after");
+        case "/api/after" -> io.github.b077as.jolt.AppResponse.text("after");
+        case "/api/nocontent" -> io.github.b077as.jolt.AppResponse.status(204);
+        case "/api/throws" -> throw new IllegalStateException("internals");
+        default -> null;
+    };
+
+    private static String expectedProtocol() {
+        byte[] bytes = new byte[300_000];
+        long sum = 0;
+        for (int i = 0; i < bytes.length; i++) {
+            sum = (sum * 31 + ((byte) (i * 7 + i / 256) & 0xff)) % 1000003;
+        }
+        return "echo=201|yes|text/plain; charset=utf-8|POST:x=1&y=%C3%A9:abc:" + "{\"a\":\"é€𝄞\"}".length()
+                + ";missing=404;binary=300000:" + sum + ";big=" + 3 * 1024 * 1024 + ";redirect=200:after;nocontent=204;head=200:0"
+                + ";throws=500:false;put=200;delete=200;type=text/css; charset=utf-8";
+    }
+
+    private static final java.util.Map<String, String> PROTOCOL_APP = java.util.Map.of(
+            "index.html", "<script type=\"module\" src=\"app.js\"></script>",
+            "app.js", PROTOCOL_PAGE,
+            "style.css", "body{}");
+
+    @Test
+    public void requestsAndResponsesKeepTheirStatusHeadersBodiesAndBytes() {
+        assertEquals(expectedProtocol(), resourceApp(PROTOCOL_APP, PROTOCOL_HANDLER, false));
+    }
+
+    @Test
+    public void requestsAndResponsesKeepTheirStatusHeadersBodiesAndBytesOverLoopback() {
+        assertEquals(expectedProtocol(), resourceApp(PROTOCOL_APP, PROTOCOL_HANDLER, true));
+    }
+
+    private static final java.util.Map<String, String> POST_REDIRECT_GET_APP = java.util.Map.of(
+            "index.html", "<form id=\"f\" method=\"post\" action=\"/save\"><input name=\"name\" value=\"Zed\"></form>"
+                    + "<script>document.getElementById('f').requestSubmit()</script>");
+
+    private static final io.github.b077as.jolt.RequestHandler POST_REDIRECT_GET_HANDLER = request -> {
+        if (request.path().equals("/save") && request.method().equals("POST")) {
+            return io.github.b077as.jolt.AppResponse.redirect("/done/");
+        }
+        if (request.path().equals("/done/")) {
+            return io.github.b077as.jolt.AppResponse.html("<script>window.jolt.postMessage('done:' + location.pathname + ':'"
+                    + " + new URL('page.css', location.href).pathname)</script>");
+        }
+        return null;
+    };
+
+    @Test
+    public void aFormPostAnsweredWithARedirectEndsOnTheNewAddress() {
+        // Post/Redirect/Get: the address is the redirect target, so relative URLs resolve against it
+        assertEquals("done:/done/:/done/page.css", resourceApp(POST_REDIRECT_GET_APP, POST_REDIRECT_GET_HANDLER, false));
+    }
+
+    @Test
+    public void aFormPostAnsweredWithARedirectEndsOnTheNewAddressOverLoopback() {
+        assertEquals("done:/done/:/done/page.css", resourceApp(POST_REDIRECT_GET_APP, POST_REDIRECT_GET_HANDLER, true));
+    }
+
+    @Test
+    public void browserStorageSurvivesARestartOnTheInProcessOrigin() {
+        java.util.Map<String, String> set = java.util.Map.of("index.html",
+                "<script>localStorage.setItem('jolt-test', 'kept'); window.jolt.postMessage('set')</script>");
+        java.util.Map<String, String> read = java.util.Map.of("index.html",
+                "<script>window.jolt.postMessage('got:' + localStorage.getItem('jolt-test'))</script>");
+        assertEquals("set", resourceApp(set, null, false));
+        assertEquals("got:kept", resourceApp(read, null, false));
+    }
+
+    @Test
+    public void closingTheWindowWithARequestStillRunningIsHarmless() throws Exception {
+        for (boolean loopback : new boolean[] {false, true}) {
+            java.util.concurrent.CountDownLatch finished = new java.util.concurrent.CountDownLatch(1);
+            java.util.Map<String, String> files = java.util.Map.of("index.html",
+                    "<script>fetch('/slow'); window.jolt.postMessage('go')</script>");
+            assertEquals("go", resourceApp(files, request -> {
+                if (request.path().equals("/slow")) {
+                    try {
+                        Thread.sleep(700);
+                    } finally {
+                        finished.countDown();
+                    }
+                    return io.github.b077as.jolt.AppResponse.text("late");
+                }
+                return null;
+            }, loopback));
+            assertTrue(finished.await(10, TimeUnit.SECONDS), "the handler should still finish");
+            Thread.sleep(300); // let the late response try to reach the closed window
+            // the process and the infrastructure must be fine afterwards
+            assertEquals("hi multi", resourceApp(java.util.Map.of("index.html",
+                    "<script type=\"module\" src=\"m.js\"></script>", "m.js", "window.jolt.postMessage('hi multi')"), null, loopback));
+        }
+    }
+
     @Test
     public void loadUrlNavigatesAndTheBridgeIsAvailable() throws Exception {
         try (TestServer server = new TestServer("<script>window.jolt.postMessage('url-ok')</script>")) {

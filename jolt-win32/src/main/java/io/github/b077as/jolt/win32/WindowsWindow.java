@@ -9,6 +9,8 @@ import io.github.b077as.jolt.WindowClosedException;
 import io.github.b077as.jolt.WindowOptions;
 import io.github.b077as.jolt.internal.BridgeScript;
 import io.github.b077as.jolt.internal.Icons;
+import io.github.b077as.jolt.internal.NativeResourceHost;
+import io.github.b077as.jolt.internal.ResourceService;
 import io.github.b077as.jolt.internal.SecurityGuard;
 import io.github.b077as.jolt.internal.ffi.Native;
 
@@ -35,7 +37,7 @@ import static java.lang.foreign.ValueLayout.JAVA_LONG;
  * <p>Public methods may be called from any thread; they hop to the UI thread. Everything below the
  * "UI thread" marker must only run there.
  */
-final class WindowsWindow implements WebWindow {
+final class WindowsWindow implements WebWindow, NativeResourceHost {
 
     private static final System.Logger LOG = System.getLogger("io.github.b077as.jolt.win32");
     private static final int STYLE = Win32.WS_OVERLAPPEDWINDOW | Win32.WS_CLIPCHILDREN | Win32.WS_CLIPSIBLINGS;
@@ -62,6 +64,7 @@ final class WindowsWindow implements WebWindow {
     private MemorySegment environment = MemorySegment.NULL; // borrowed from the application, which outlives the window
     private final Map<String, byte[]> served = new HashMap<>();
     private boolean resourceInterceptionInstalled;
+    private ResourceService resourceService;
     private long documentCounter;
     private MemorySegment bigIcon = MemorySegment.NULL;
     private MemorySegment smallIcon = MemorySegment.NULL;
@@ -117,8 +120,23 @@ final class WindowsWindow implements WebWindow {
         whenReady(() -> serveAndNavigate(html));
     }
 
-    @Override
-    public CompletableFuture<String> eval(String script) {
+/**
+ * Serves the app's files inside the web view: requests under the virtual origin are answered from {@code service} and never
+ * reach the network. The origin is {@link SecurityPolicy#APP_ORIGIN}, which is always trusted, so loadHtml pages and the app
+ * share it (and its storage).
+ */
+@Override
+public boolean loadResources(ResourceService service) {
+    whenReady(() -> {
+        resourceService = service;
+        installResourceInterception();
+        navigate(WebView2Abi.ICoreWebView2.NAVIGATE, VIRTUAL_ORIGIN + "/");
+    });
+    return true;
+}
+
+@Override
+public CompletableFuture<String> eval(String script) {
         CompletableFuture<String> result = new CompletableFuture<>();
         app.dispatch(() -> {
             if (destroyed) {
@@ -647,76 +665,80 @@ final class WindowsWindow implements WebWindow {
         String path = "/doc/" + (++documentCounter) + ".html";
         served.clear();
         served.put(path, html.getBytes(StandardCharsets.UTF_8));
-        if (!resourceInterceptionInstalled) {
-            try (Arena arena = Arena.ofConfined()) {
-                Com.callChecked("AddWebResourceRequestedFilter", webView,
-                        WebView2Abi.ICoreWebView2.ADD_WEB_RESOURCE_REQUESTED_FILTER, Com.HR_PTR_INT,
-                        Native.allocWide(arena, VIRTUAL_ORIGIN + "/*"), RESOURCE_CONTEXT_ALL);
-            }
-            addEvent(WebView2Abi.ICoreWebView2.ADD_WEB_RESOURCE_REQUESTED, ComHandler.ptrPtr(
-                    WebView2Abi.ICoreWebView2WebResourceRequestedEventHandler.IID, this::onResourceRequested, app::deferFree));
-            resourceInterceptionInstalled = true;
-        }
+        installResourceInterception();
         navigate(WebView2Abi.ICoreWebView2.NAVIGATE, VIRTUAL_ORIGIN + path);
     }
 
-    /** Answers requests under the virtual origin from {@link #served}; anything unknown gets a 404, never the network. */
+    private void installResourceInterception() {
+        if (resourceInterceptionInstalled) {
+            return;
+        }
+        try (Arena arena = Arena.ofConfined()) {
+            Com.callChecked("AddWebResourceRequestedFilter", webView,
+                    WebView2Abi.ICoreWebView2.ADD_WEB_RESOURCE_REQUESTED_FILTER, Com.HR_PTR_INT,
+                    Native.allocWide(arena, VIRTUAL_ORIGIN + "/*"), RESOURCE_CONTEXT_ALL);
+        }
+        addEvent(WebView2Abi.ICoreWebView2.ADD_WEB_RESOURCE_REQUESTED, ComHandler.ptrPtr(
+                WebView2Abi.ICoreWebView2WebResourceRequestedEventHandler.IID, this::onResourceRequested, app::deferFree));
+        resourceInterceptionInstalled = true;
+    }
+
+    /**
+     * Answers requests under the virtual origin: a loadHtml document from {@link #served}, the app's files and handler from
+     * the {@link ResourceService} when loadResources is active, and anything else with a 404, never the network.
+     */
     private void onResourceRequested(MemorySegment sender, MemorySegment args) {
-        String uri = requestUri(args);
+        ResourceRequests.Incoming request = ResourceRequests.read(args);
+        String uri = request == null ? null : request.uri();
         String path = uri == null || !uri.startsWith(VIRTUAL_ORIGIN) ? "" : uri.substring(VIRTUAL_ORIGIN.length());
         int cut = indexOfAny(path, '?', '#');
         if (cut >= 0) {
             path = path.substring(0, cut);
         }
-        byte[] body = served.get(path);
-        int status = body == null ? 404 : 200;
-        String reason = body == null ? "Not Found" : "OK";
-        if (body == null) {
-            body = new byte[0];
-        }
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment data = arena.allocateFrom(java.lang.foreign.ValueLayout.JAVA_BYTE, body);
-            MemorySegment stream = Win32.createMemStream(data, body.length);
-            try {
-                MemorySegment out = arena.allocate(ADDRESS);
-                Com.callChecked("CreateWebResourceResponse", environment,
-                        WebView2Abi.ICoreWebView2Environment.CREATE_WEB_RESOURCE_RESPONSE, Com.HR_RESPONSE,
-                        stream, status, Native.allocWide(arena, reason),
-                        Native.allocWide(arena, "Content-Type: text/html; charset=utf-8\r\nCache-Control: no-store"), out);
-                MemorySegment response = Native.readPointer(out);
-                try {
-                    Com.callChecked("put_Response", args,
-                            WebView2Abi.ICoreWebView2WebResourceRequestedEventArgs.PUT_RESPONSE, Com.HR_PTR, response);
-                } finally {
-                    Com.release(response);
-                }
-            } finally {
-                Com.release(stream); // the response holds its own reference
-            }
+        byte[] document = served.get(path);
+        if (document != null) {
+            ResourceRequests.respond(environment, args, 200,
+                    Map.of("Content-Type", "text/html; charset=utf-8", "Cache-Control", "no-store"), document);
+        } else if (resourceService != null && request != null && uri.startsWith(VIRTUAL_ORIGIN)) {
+            serveResource(args, request);
+        } else {
+            ResourceRequests.respond(environment, args, 404, Map.of(), new byte[0]);
         }
     }
 
-    /** The URI of the request an event carries, or {@code null} if it cannot be read. */
-    private static String requestUri(MemorySegment args) {
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment out = arena.allocate(ADDRESS);
-            if (Com.call(args, WebView2Abi.ICoreWebView2WebResourceRequestedEventArgs.GET_REQUEST, Com.HR_PTR, out) < 0) {
-                return null;
-            }
-            MemorySegment request = Native.readPointer(out);
-            try {
-                MemorySegment uriOut = arena.allocate(ADDRESS);
-                if (Com.call(request, WebView2Abi.ICoreWebView2WebResourceRequest.GET_URI, Com.HR_PTR, uriOut) < 0) {
-                    return null;
-                }
-                MemorySegment raw = Native.readPointer(uriOut);
-                String uri = Native.readWide(raw);
-                Win32.coTaskMemFree(raw);
-                return uri;
-            } finally {
-                Com.release(request);
-            }
+    /**
+     * Hands a request to the app's {@link ResourceService} without blocking the UI thread: the event is held open with a
+     * deferral, the service answers on a worker thread, and the response is put into the event back here.
+     */
+    private void serveResource(MemorySegment args, ResourceRequests.Incoming request) {
+        ResourceService service = resourceService;
+        int refused = request.body() == null ? 413 : service.admit(request.method(), request.headers(), VIRTUAL_ORIGIN);
+        MemorySegment deferral = refused != 0 ? MemorySegment.NULL : ResourceRequests.deferral(args);
+        if (refused != 0 || deferral.equals(MemorySegment.NULL)) {
+            int status = refused != 0 ? refused : 500;
+            ResourceRequests.respond(environment, args, status, ResourceService.baseHeaders(), new byte[0]);
+            return;
         }
+        Com.addRef(args); // the event must outlive this callback
+        boolean head = request.method().equals("HEAD");
+        service.serveAsync(request.method(), request.uri(), request.headers(), request.body())
+                .thenAccept(response -> app.dispatch(() -> {
+                    try {
+                        if (!destroyed) {
+                            ResourceRequests.respond(environment, args, response.status(), response.headers(),
+                                    head ? new byte[0] : response.body());
+                        }
+                    } catch (RuntimeException e) {
+                        LOG.log(System.Logger.Level.ERROR, "answering a resource request failed", e);
+                    } finally {
+                        if (destroyed) {
+                            Com.release(deferral);
+                        } else {
+                            ResourceRequests.complete(deferral); // always, or the page waits for this request forever
+                        }
+                        Com.release(args);
+                    }
+                }));
     }
 
     private static int indexOfAny(String s, char a, char b) {

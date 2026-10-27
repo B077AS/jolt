@@ -43,6 +43,8 @@ final class Com {
     /** {@code CreateWebResourceResponse(IStream* content, int status, LPCWSTR reason, LPCWSTR headers, response**)}. */
     static final FunctionDescriptor HR_RESPONSE =
             FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT, ADDRESS, ADDRESS, ADDRESS);
+    /** {@code IStream::Read(void* pv, ULONG cb, ULONG* pcbRead)}. */
+    static final FunctionDescriptor HR_STREAM_READ = FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT, ADDRESS);
     /** {@code HRESULT m(this, int)}: {@code BOOL}/enum setters. */
     static final FunctionDescriptor HR_INT = FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT);
     /** {@code HRESULT m(this)}. */

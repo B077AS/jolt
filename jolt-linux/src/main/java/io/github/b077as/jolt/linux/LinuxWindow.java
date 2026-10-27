@@ -8,6 +8,8 @@ import io.github.b077as.jolt.WebWindow;
 import io.github.b077as.jolt.WindowClosedException;
 import io.github.b077as.jolt.WindowOptions;
 import io.github.b077as.jolt.internal.BridgeScript;
+import io.github.b077as.jolt.internal.NativeResourceHost;
+import io.github.b077as.jolt.internal.ResourceService;
 import io.github.b077as.jolt.internal.SecurityGuard;
 
 import java.lang.foreign.MemorySegment;
@@ -24,7 +26,7 @@ import java.util.function.Consumer;
  * <p>Public methods may be called from any thread; they hop to the UI thread. Unlike WebView2, WebKitGTK creates
  * the web view synchronously, so the window is ready as soon as the constructor returns.
  */
-final class LinuxWindow implements WebWindow {
+final class LinuxWindow implements WebWindow, NativeResourceHost {
 
     private static final System.Logger LOG = System.getLogger("io.github.b077as.jolt.linux");
     /** Name of the {@code window.webkit.messageHandlers.<name>} channel; must match the bridge script. */
@@ -44,6 +46,7 @@ final class LinuxWindow implements WebWindow {
     private MemorySegment webView;
     private MemorySegment contentManager;
     private boolean destroyed;
+    private ResourceService resourceService;
 
     /** Must be called on the UI thread. */
     LinuxWindow(LinuxApplication app, WindowOptions options) {
@@ -121,8 +124,29 @@ final class LinuxWindow implements WebWindow {
         });
     }
 
-    @Override
-    public CompletableFuture<String> eval(String script) {
+/**
+ * Serves the app's files from inside WebKitGTK through a URI scheme of our own ({@code jolt://app}). The origin is added to
+ * the window's trusted origins. Returns false on a system whose WebKitGTK is too old for that.
+ */
+@Override
+public boolean loadResources(ResourceService service) {
+    if (!GtkResources.available()) {
+        return false;
+    }
+    app.dispatch(() -> {
+        if (destroyed) {
+            return;
+        }
+        resourceService = service;
+        app.ensureResourceScheme();
+        guard.set(guard.policy().withTrustedOrigins(GtkResources.ORIGIN));
+        Gtk.loadUri(webView, GtkResources.ORIGIN + "/");
+    });
+    return true;
+}
+
+@Override
+public CompletableFuture<String> eval(String script) {
         CompletableFuture<String> result = new CompletableFuture<>();
         app.dispatch(() -> {
             if (destroyed) {
@@ -331,7 +355,35 @@ final class LinuxWindow implements WebWindow {
         }
     }
 
-    void onDestroyed() {
+/**
+ * A request for the app's own scheme. WebKitGTK asks on the UI thread and does not wait, so the answer is produced on a worker
+ * thread (the handler may be slow) and put back here.
+ */
+void onSchemeRequest(MemorySegment request, GtkResources.Incoming incoming) {
+    ResourceService service = resourceService;
+    int refused = service == null ? 404 : incoming.body() == null ? 413
+            : service.admit(incoming.method(), incoming.headers(), GtkResources.ORIGIN);
+    if (refused != 0) {
+        GtkResources.respond(request, refused, ResourceService.baseHeaders(), new byte[0]);
+        return;
+    }
+    GtkResources.ref(request); // the request must outlive this callback
+    boolean head = incoming.method().equals("HEAD");
+    service.serveAsyncFollowingRedirects(incoming.method(), incoming.uri(), incoming.headers(), incoming.body())
+            .thenAccept(response -> app.dispatch(() -> {
+                try {
+                    if (!destroyed) {
+                        GtkResources.respond(request, response.status(), response.headers(), head ? new byte[0] : response.body());
+                    }
+                } catch (RuntimeException e) {
+                    LOG.log(System.Logger.Level.ERROR, "answering a resource request failed", e);
+                } finally {
+                    Gtk.unref(request);
+                }
+            }));
+}
+
+void onDestroyed() {
         if (destroyed) {
             return;
         }

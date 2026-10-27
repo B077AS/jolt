@@ -38,6 +38,8 @@ final class Callbacks {
     static final MemorySegment DECIDE_POLICY;
     /** {@code permission-request} on the web view: returns TRUE if handled. user_data is the window id. */
     static final MemorySegment PERMISSION_REQUEST;
+    /** {@code WebKitURISchemeRequestCallback} for the app's own scheme: user_data is the application id. */
+    static final MemorySegment URI_SCHEME_REQUEST;
     /** {@code GAsyncReadyCallback} for {@code webkit_web_view_evaluate_javascript}: user_data is the eval id. */
     static final MemorySegment EVAL_DONE;
 
@@ -63,6 +65,9 @@ final class Callbacks {
         PERMISSION_REQUEST = stub(lookup, forever, "onPermissionRequest", MethodType.methodType(int.class, MemorySegment.class,
                         MemorySegment.class, MemorySegment.class),
                 FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS), 0);
+        URI_SCHEME_REQUEST = stub(lookup, forever, "onUriSchemeRequest",
+                MethodType.methodType(void.class, MemorySegment.class, MemorySegment.class),
+                FunctionDescriptor.ofVoid(ADDRESS, ADDRESS), 0);
         EVAL_DONE = stub(lookup, forever, "onEvalDone",
                 MethodType.methodType(void.class, MemorySegment.class, MemorySegment.class, MemorySegment.class),
                 FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, ADDRESS), 0);
@@ -125,6 +130,13 @@ final class Callbacks {
     private static int onPermissionRequest(MemorySegment webView, MemorySegment request, MemorySegment data) {
         LinuxWindow window = Registry.get(data.address(), LinuxWindow.class);
         return window != null && window.onPermissionRequest(request) ? 1 : 0;
+    }
+
+    private static void onUriSchemeRequest(MemorySegment request, MemorySegment data) {
+        LinuxApplication app = Registry.get(data.address(), LinuxApplication.class);
+        if (app != null) {
+            app.onSchemeRequest(request);
+        }
     }
 
     private static void onEvalDone(MemorySegment source, MemorySegment result, MemorySegment data) {

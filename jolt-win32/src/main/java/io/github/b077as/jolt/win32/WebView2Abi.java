@@ -399,6 +399,28 @@ final class WebView2Abi {
         private ICoreWebView2HttpResponseHeaders() {}
     }
 
+    /** {@code ICoreWebView2HttpHeadersCollectionIterator}, 6 vtable slots. */
+    static final class ICoreWebView2HttpHeadersCollectionIterator {
+        static final String IID = "0702fc30-f43b-47bb-ab52-a42cb552ad9f";
+        static final int QUERY_INTERFACE = 0;
+        static final int ADD_REF = 1;
+        static final int RELEASE = 2;
+        static final int GET_CURRENT_HEADER = 3;
+        static final int GET_HAS_CURRENT_HEADER = 4;
+        static final int MOVE_NEXT = 5;
+        private ICoreWebView2HttpHeadersCollectionIterator() {}
+    }
+
+    /** {@code ICoreWebView2Deferral}, 4 vtable slots. */
+    static final class ICoreWebView2Deferral {
+        static final String IID = "c10e7f7b-b585-46f0-a623-8befbf3e4ee0";
+        static final int QUERY_INTERFACE = 0;
+        static final int ADD_REF = 1;
+        static final int RELEASE = 2;
+        static final int COMPLETE = 3;
+        private ICoreWebView2Deferral() {}
+    }
+
     /** {@code ICoreWebView2NavigationCompletedEventArgs}, 6 vtable slots. */
     static final class ICoreWebView2NavigationCompletedEventArgs {
         static final String IID = "30d68b7d-20d9-4752-a9ca-ec8448fbb5c1";

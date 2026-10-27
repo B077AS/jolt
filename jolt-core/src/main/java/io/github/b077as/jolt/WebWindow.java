@@ -20,6 +20,70 @@ public interface WebWindow {
      */
     void loadUrl(String url);
 
+    /**
+     * Shows a web app made of several files. The page is served from {@code resources} and navigated to its {@code index.html},
+     * so it can use relative links, {@code <link>}, ES modules and {@code fetch}, and the files stay separate. Browser storage
+     * (localStorage, IndexedDB) lives under the page's origin and survives restarts.
+     *
+     * <p>The files are served inside the web view itself (WebView2 and WebKitGTK both let an application answer requests for an
+     * address of its own), so nothing listens on the network. A platform or web view that cannot do that falls back to a server on
+     * a loopback port, see {@link #loadResources(AppResources, int)}.
+     */
+    default void loadResources(AppResources resources) {
+        loadResources(resources, (RequestHandler) null);
+    }
+
+    /**
+     * Like {@link #loadResources(AppResources)}, and {@code handler} answers requests the page makes to its own app (htmx's
+     * {@code hx-get} and {@code hx-post}, {@code fetch} calls to an API, plain forms) before the files do, so Java can return
+     * HTML fragments or JSON. It works with any front end; htmx is not required.
+     *
+     * <p>With the in-process transport only this window's own web view can reach the handler, so there is no cross-site request
+     * forgery to defend against; a request whose {@code Origin} is not the app's is still refused. Over the loopback fallback,
+     * where any local program or web page could connect, requests are guarded instead: see
+     * {@link #loadResources(AppResources, RequestHandler, int)}. {@code GET} requests must never change anything either way.
+     * See {@link RequestHandler} for threading.
+     */
+    default void loadResources(AppResources resources, RequestHandler handler) {
+        io.github.b077as.jolt.internal.ResourceService service = new io.github.b077as.jolt.internal.ResourceService(resources, handler);
+        if (this instanceof io.github.b077as.jolt.internal.NativeResourceHost host && host.loadResources(service)) {
+            return;
+        }
+        loadResources(resources, handler, 0);
+    }
+
+    /**
+     * Serves {@code resources} from a server on a loopback port instead of inside the web view, on a fixed {@code port} so the
+     * origin, and the browser storage under it, stays the same between runs ({@code 0} picks a free one, and storage is then lost
+     * on the next run). Use it when you want to open the same address in a normal browser to debug, or as a fallback.
+     */
+    default void loadResources(AppResources resources, int port) {
+        loadResources(resources, null, port);
+    }
+
+    /**
+     * Like {@link #loadResources(AppResources, int)} with a {@code handler}. Because any program on the machine, and any website
+     * the user has open in a browser, can send requests to a loopback port, they are guarded: a {@code POST}, {@code PUT},
+     * {@code PATCH} or {@code DELETE} is refused unless it carries this run's secret, which Jolt adds by itself to htmx requests
+     * and to {@code fetch} calls from the app's page (and exposes as {@code window.joltCsrfToken} for anything else, such as
+     * {@code XMLHttpRequest}). Plain HTML {@code <form method=post>} forms get it as a hidden field (urlencoded only; for
+     * multipart or {@code form.submit()}, use {@code hx-post}). Other websites and local programs cannot learn the secret.
+     */
+    default void loadResources(AppResources resources, RequestHandler handler, int port) {
+        io.github.b077as.jolt.internal.AssetServer server;
+        try {
+            server = new io.github.b077as.jolt.internal.AssetServer(resources, handler, port);
+        } catch (java.io.IOException e) {
+            throw new JoltException("cannot serve the app's files on port " + port, e);
+        }
+        onClosed(server::close);
+        if (handler != null) {
+            addInitScript(server.initScript());
+        }
+        setSecurity(security().withTrustedOrigins(server.origin()));
+        loadUrl(server.origin() + "/");
+    }
+
     /** Navigates to a document built from {@code html}. The page gets the origin {@link SecurityPolicy#APP_ORIGIN}, which is always trusted. */
     void loadHtml(String html);
 

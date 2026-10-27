@@ -202,7 +202,7 @@ If you only target one operating system, depend on `jolt-core` and that system's
 ## What works today
 
 - Windows (WebView2) and Linux (WebKitGTK 4.1, X11 or Wayland chosen by GTK at runtime). Several windows at once.
-- `loadUrl`, `loadHtml`, `eval` (returns the JSON result) and `addInitScript`.
+- `loadUrl`, `loadHtml`, `loadResources` (serve separate HTML/CSS/JS files from inside the web view, optionally answered by Java request handlers), `eval` (returns the JSON result) and `addInitScript`.
 - String messages in both directions (`window.jolt.postMessage` and `onMessage` in the page).
 - Window icon (PNG, or a multi-size `.ico` for crisp taskbar icons), light or dark native title bar, exact title bar
   colours (Windows 11) and the web view's background colour, set at creation or later.
@@ -595,6 +595,77 @@ Good to know:
 - **Security: the page can call everything you register.** Jolt only lets your own content and origins you list reach your
   handlers by default; see [Security](#security). Treat handler parameters as untrusted input anyway: validate them, as
   `NotesStore.add` does for an empty note.
+
+### Multi-file pages
+
+`loadHtml` takes one string, so relative `<link>`, `<script src>` and ES modules have nothing to resolve against. To keep
+HTML, CSS and JS in separate files, serve them with `loadResources`:
+
+```java
+window.loadResources(AppResources.classpath("ui"));          // src/main/resources/ui/index.html, css/, js/ ...
+window.loadResources(AppResources.directory(Path.of("ui"))); // a folder on disk, handy while developing
+```
+
+The page can then use relative URLs, `type="module"`, `fetch`, fonts and any front end (plain files, htmx, React, Vue, ...). The
+files are served **inside the web view**, with no socket: WebView2 and WebKitGTK both let an application answer requests for an
+address of its own, so only this window's web view can reach them. The page's origin is `https://jolt.localhost` on Windows
+(the same as `loadHtml` pages) and `jolt://app` on Linux. It never changes, so `localStorage`, IndexedDB and cookies survive a
+restart. Don't hard-code the origin in your page; use relative URLs.
+
+#### Answering requests from Java
+
+Pass a `RequestHandler` and the page's own requests (`fetch`, `XMLHttpRequest`, `<form method="post">`, htmx's `hx-get` and
+`hx-post`) are answered by Java before the files are. It does not care what the front end is: return HTML fragments for htmx,
+JSON for a single-page app, or redirects for classic forms.
+
+```java
+window.loadResources(AppResources.classpath("ui"), request -> switch (request.path()) {
+    case "/notes" -> AppResponse.html(renderNotes());                       // GET /notes
+    case "/api/notes" -> AppResponse.text(notesAsJson())                    // GET /api/notes
+            .withHeader("Content-Type", "application/json");
+    case "/notes/add" -> {                                                  // POST, from hx-post or a form
+        notes.add(request.formValue("text"));
+        yield AppResponse.html(renderNotes()).withHeader("HX-Trigger", "noteAdded");
+    }
+    default -> null;                                                        // null: let the files answer
+});
+```
+
+`AppRequest` has the method, path, query, headers and body, with `formValue`, `queryParams` and `isHtmx()` helpers.
+`AppResponse` has `html`, `text`, `status`, `redirect`, `withHeader` and `withStatus`. Handlers run on worker threads (use
+`Application.dispatch` to touch windows). Escape anything user-supplied before putting it in HTML, and keep `GET` handlers free of
+side effects. Bodies over 8 MB get 413; an exception in a handler gives a bare 500 and the details go to the log, not the page.
+
+Redirects work everywhere: a form post answered with `AppResponse.redirect(...)` (Post/Redirect/Get) ends on the new address.
+WebKitGTK does not follow redirects from an in-process scheme itself, so on Linux Jolt does it: a page navigation gets a tiny page
+that moves to the new address, and `fetch`/`XMLHttpRequest` get the target's answer directly (after a 301, 302 or 303 as a `GET`).
+Only same-origin redirects are followed that way.
+
+#### Requirements and the loopback fallback
+
+The in-process transport needs WebView2 on Windows (always the case) and WebKitGTK 2.40 or newer on Linux (with libsoup 3, which
+every WebKitGTK 4.1 install has). A system that lacks them falls back automatically to a server on a loopback port; you can
+also ask for that, for example to open the same address in a normal browser to debug:
+
+```java
+window.loadResources(resources, handler, 48123);   // http://127.0.0.1:48123, fixed port so storage survives restarts
+```
+
+Any program on the machine, and any website the user has open in a browser, can send requests to a loopback port, so Jolt guards it:
+
+- **CSRF:** `POST`/`PUT`/`PATCH`/`DELETE` are refused unless they carry a random per-run secret in `X-Jolt-Token`. Jolt adds it
+  to htmx requests and to `fetch` calls from your page, and only for URLs on its own server, so it never reaches another
+  origin. Plain `<form method="post">` forms work too: Jolt adds the secret as a hidden `_jolt_token` field when the form is
+  submitted (for forms posting to its own server, urlencoded only) and removes it before your handler sees the body. It is also
+  available as `window.joltCsrfToken` for `XMLHttpRequest`. Not covered: `multipart/form-data` forms and `form.submit()` (which
+  fires no submit event); use `hx-post` (add `hx-encoding="multipart/form-data"` for uploads) or send the `X-Jolt-Token` header
+  yourself. The handler never sees the secret.
+- `Origin` must match if present, `Sec-Fetch-Site` must be `same-origin` or `none` (this also rejects a page served from another
+  port on the same machine), and `Host` must name the server (DNS rebinding).
+- No CORS headers are sent and `OPTIONS` is refused, so another origin cannot read a response.
+
+None of this is needed in-process, where nothing but the window's own web view can send a request; a state-changing request there
+is still refused if its `Origin` is not the app's.
 
 ## Security
 
