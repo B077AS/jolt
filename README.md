@@ -116,7 +116,7 @@ only activates on its own operating system, so one jar runs on both.
 ```xml
 <properties>
   <maven.compiler.release>25</maven.compiler.release>
-  <jolt.version>0.1.0</jolt.version>
+  <jolt.version>0.2.0</jolt.version>
 </properties>
 
 <dependencies>
@@ -165,9 +165,9 @@ Or pass `--enable-native-access=ALL-UNNAMED` on the `java` command line.
 
 ```kotlin
 dependencies {
-    implementation("io.github.b077as:jolt-core:0.1.0")
-    implementation("io.github.b077as:jolt-win32:0.1.0")
-    implementation("io.github.b077as:jolt-linux:0.1.0")
+    implementation("io.github.b077as:jolt-core:0.2.0")
+    implementation("io.github.b077as:jolt-win32:0.2.0")
+    implementation("io.github.b077as:jolt-linux:0.2.0")
 }
 
 java {
@@ -193,16 +193,23 @@ If you only target one operating system, depend on `jolt-core` and that system's
 9. [Change the app icon](#change-the-app-icon)
 10. [Package it](#package-it)
 11. [Things to know](#things-to-know)
-12. [Security](#security)
-13. [Layout of a Jolt app](#layout-of-a-jolt-app)
-14. [When something goes wrong](#when-something-goes-wrong)
-15. [Build Jolt itself and run the examples](#build-jolt-itself-and-run-the-examples)
-16. [How it works](#how-it-works)
+12. [Multi-file pages, request handlers and uploads](#multi-file-pages-request-handlers-and-uploads)
+13. [Security](#security)
+14. [Layout of a Jolt app](#layout-of-a-jolt-app)
+15. [When something goes wrong](#when-something-goes-wrong)
+16. [Build Jolt itself and run the examples](#build-jolt-itself-and-run-the-examples)
+17. [How it works](#how-it-works)
 
 ## What works today
 
 - Windows (WebView2) and Linux (WebKitGTK 4.1, X11 or Wayland chosen by GTK at runtime). Several windows at once.
-- `loadUrl`, `loadHtml`, `loadResources` (serve separate HTML/CSS/JS files from inside the web view, optionally answered by Java request handlers), `eval` (returns the JSON result) and `addInitScript`.
+- `loadUrl`, `loadHtml`, `eval` (returns the JSON result) and `addInitScript`.
+- `loadResources`: your page as separate HTML, CSS and JS files (or a bundler's output) served from inside the web view with no
+  socket, with a stable origin so `localStorage` survives restarts. See
+  [Multi-file pages, request handlers and uploads](#multi-file-pages-request-handlers-and-uploads).
+- Java request handlers for the page's own requests (`fetch`, forms, htmx, JSON APIs), a `Router` with path parameters, groups,
+  filters and error handling, `multipart/form-data` uploads with a configurable size limit, and redirects. Works with any front
+  end; htmx is optional.
 - String messages in both directions (`window.jolt.postMessage` and `onMessage` in the page).
 - Window icon (PNG, or a multi-size `.ico` for crisp taskbar icons), light or dark native title bar, exact title bar
   colours (Windows 11) and the web view's background colour, set at creation or later.
@@ -221,6 +228,9 @@ If you only target one operating system, depend on `jolt-core` and that system's
 
 Run Java with `--enable-native-access=ALL-UNNAMED`, or put `Enable-Native-Access: ALL-UNNAMED` in your jar manifest.
 Without it Java prints a warning on every start.
+
+`loadResources` serves your files from inside the web view on WebKitGTK 2.40 or newer; an older WebKitGTK falls back to a
+guarded loopback server automatically. See [Requirements and the loopback fallback](#requirements-and-the-loopback-fallback).
 
 ## Your first window
 
@@ -335,23 +345,32 @@ window.loadUrl("http://localhost:5173");
 
 The notes example does this when started with `-Dui.url=...`. Hot reload is your dev server's job and the Java side does
 not change. With a real Vite dev server, editing a React component updates the open Jolt window in place, without
-reloading the page.
+reloading the page. Without a dev server, `window.loadResources(AppResources.directory(Path.of("src/main/resources/ui")))`
+serves the folder straight from disk, reading each file again on every request, so reloading the page picks up your edits.
 
 ### For release: bundle the page into the app
 
-Put the finished page in `src/main/resources` and load it from there:
+Put the finished page in `src/main/resources/ui` and serve it from the jar. With separate HTML, CSS and JS files (plain files
+or the folder a bundler such as Vite produces), use `loadResources`:
+
+```java
+window.loadResources(AppResources.classpath("ui"));   // ui/index.html, ui/css/..., ui/js/...
+```
+
+The files stay separate, relative URLs and ES modules work, and the page keeps a stable origin so `localStorage` survives
+restarts. See [Multi-file pages, request handlers and uploads](#multi-file-pages-request-handlers-and-uploads), which also covers
+answering the page's requests from Java.
+
+If you prefer one self-contained HTML file (scripts and styles inlined, which Vite produces with `vite-plugin-singlefile` and the
+React example uses), `loadHtml` still works:
 
 ```java
 String html = new String(MyApp.class.getResourceAsStream("/ui/index.html").readAllBytes(), StandardCharsets.UTF_8);
 window.loadHtml(html);
 ```
 
-**The page must be one self-contained HTML file** (scripts and styles inlined). Vite produces that with
-`vite-plugin-singlefile`, and the React example does exactly that. Serving a folder of separate files straight out of your
-jar is not supported yet.
-
-Large pages are fine on both platforms (tested with a 3 MB document). On Windows, Jolt serves every page from memory under
-its own address, `https://jolt.localhost`, so there is no size limit and nothing for you to do.
+Large pages are fine on both platforms (tested with a 3 MB document). On Windows, Jolt serves every `loadHtml` page from memory
+under its own address, `https://jolt.localhost`, so there is no size limit and nothing for you to do.
 
 ### Using React, TypeScript and Vite
 
@@ -596,7 +615,7 @@ Good to know:
   handlers by default; see [Security](#security). Treat handler parameters as untrusted input anyway: validate them, as
   `NotesStore.add` does for an empty note.
 
-### Multi-file pages
+## Multi-file pages, request handlers and uploads
 
 `loadHtml` takes one string, so relative `<link>`, `<script src>` and ES modules have nothing to resolve against. To keep
 HTML, CSS and JS in separate files, serve them with `loadResources`:
@@ -612,7 +631,7 @@ address of its own, so only this window's web view can reach them. The page's or
 (the same as `loadHtml` pages) and `jolt://app` on Linux. It never changes, so `localStorage`, IndexedDB and cookies survive a
 restart. Don't hard-code the origin in your page; use relative URLs.
 
-#### Answering requests from Java
+### Answering requests from Java
 
 Pass a `RequestHandler` and the page's own requests (`fetch`, `XMLHttpRequest`, `<form method="post">`, htmx's `hx-get` and
 `hx-post`) are answered by Java before the files are. It does not care what the front end is: return HTML fragments for htmx,
@@ -642,7 +661,7 @@ WebKitGTK does not follow redirects from an in-process scheme itself, so on Linu
 that moves to the new address, and `fetch`/`XMLHttpRequest` get the target's answer directly (after a 301, 302 or 303 as a `GET`).
 Only same-origin redirects are followed that way.
 
-#### Routing
+### Routing
 
 A lambda with a `switch` is fine for a few routes. For more, use `Router`, which is a `RequestHandler`:
 
@@ -674,7 +693,7 @@ window.loadResources(AppResources.classpath("ui"), router);
 - **Errors:** `onError` turns an exception from a filter or route into a response. Without it, or if it returns `null`, Jolt
   answers 500 and logs the cause.
 
-#### Uploads (multipart/form-data)
+### Uploads (multipart/form-data)
 
 A form with a file input, or `fetch` with a `FormData`, sends `multipart/form-data`. `AppRequest.parts()` reads it:
 
@@ -719,7 +738,7 @@ turn into a 400.
 - Over the loopback fallback, Jolt adds its secret to multipart forms as a hidden field and removes it before your handler sees the
   parts. `navigator.sendBeacon` cannot carry the secret there and is refused.
 
-#### Requirements and the loopback fallback
+### Requirements and the loopback fallback
 
 The in-process transport needs WebView2 on Windows (always the case) and WebKitGTK 2.40 or newer on Linux (with libsoup 3, which
 every WebKitGTK 4.1 install has). A system that lacks them falls back automatically to a server on a loopback port; you can
@@ -728,6 +747,9 @@ also ask for that, for example to open the same address in a normal browser to d
 ```java
 window.loadResources(resources, handler, 48123);   // http://127.0.0.1:48123, fixed port so storage survives restarts
 ```
+
+To combine a fixed port with a bigger upload limit, use
+`window.loadResourcesOverLoopback(resources, handler, ResourceOptions.defaults().withMaxRequestBytes(...), 48123)`.
 
 Any program on the machine, and any website the user has open in a browser, can send requests to a loopback port, so Jolt guards it:
 
@@ -747,8 +769,8 @@ is still refused if its `Origin` is not the app's.
 ## Security
 
 The page can call everything you register with `onMessage`, so Jolt decides which pages may reach it. Each window has a
-`SecurityPolicy`. The default, `SecurityPolicy.standard()`, trusts only your own content (what you pass to `loadHtml`) plus
-origins you list, and blocks the rest:
+`SecurityPolicy`. The default, `SecurityPolicy.standard()`, trusts only your own content (what you pass to `loadHtml` or serve
+with `loadResources`) plus origins you list, and blocks the rest:
 
 | Protection | What it does when on | Switch |
 | --- | --- | --- |
@@ -881,3 +903,11 @@ thread goes through `dispatch`, which queues the task and wakes the loop. On Win
 straight through their vtables with FFM, and the callback interfaces WebView2 wants are implemented in Java as COM objects
 whose methods are FFM upcall stubs. The vtable slot numbers are generated from Microsoft's header rather than typed by
 hand, because a wrong slot or signature crashes the JVM instead of throwing.
+
+`loadResources` rests on one transport-independent class, which serves the files, calls your handler and turns failures into
+HTTP errors. On Windows the web view hands it every request to `https://jolt.localhost` (WebView2's request interception, answered
+asynchronously so a slow handler never blocks the UI thread). On Linux it is a URI scheme registered with WebKitGTK. Both read the
+request, run the handler on a virtual thread, and write the response back on the UI thread. Where that is not possible, the same
+class sits behind a small HTTP server on the loopback interface, with the guards described above. Linux has two extra pieces, both
+there because of WebKitGTK: Jolt follows same-origin redirects itself, and a small script in the page turns request bodies that hold
+a `Blob` into bytes, since WebKitGTK aborts the process on them.
