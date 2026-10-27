@@ -19,6 +19,27 @@ class WindowOptionsTest {
     }
 
     @Test
+    void aNewWindowIsCenteredAndNotMaximizedByDefault() {
+        WindowOptions defaults = WindowOptions.defaults();
+        assertEquals(true, defaults.centered());
+        assertEquals(false, defaults.maximized());
+    }
+
+    @Test
+    void maximizedAndCenteredSurviveEveryOtherChangeAndViceVersa() {
+        WindowOptions o = WindowOptions.defaults().withMaximized(true).withCentered(false);
+        WindowOptions changed = o.withTitle("T").withSize(300, 200).withDevTools(true).withVisible(false).withBackgroundColor(0x112233);
+        assertEquals(true, changed.maximized());
+        assertEquals(false, changed.centered());
+        // and the new fields do not disturb the old ones
+        WindowOptions flipped = changed.withMaximized(false).withCentered(true);
+        assertEquals("T", flipped.title());
+        assertEquals(300, flipped.width());
+        assertEquals(0x112233, flipped.backgroundRgb());
+        assertEquals(false, flipped.visible());
+    }
+
+    @Test
     void withMethodsKeepEveryOtherField() {
         WindowOptions o = WindowOptions.defaults().withTitle("T").withSize(800, 600).withDevTools(true).withVisible(false)
                 .withIcon(new byte[] {1, 2, 3}).withTitleBarScheme(ColorScheme.DARK).withBackgroundColor(0x123456);

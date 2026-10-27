@@ -70,6 +70,10 @@ final class WindowsWindow implements WebWindow, NativeResourceHost {
     private MemorySegment smallIcon = MemorySegment.NULL;
     private boolean webViewReady;
     private boolean destroyed;
+    /** Fills the window behind the web view, so what shows before the web view has painted is the page's colour, not white. */
+    private MemorySegment backgroundBrush = MemorySegment.NULL;
+    /** The window was asked to be maximized while hidden (or at creation): it is shown maximized. Readable from any thread. */
+    private volatile boolean maximizeOnFirstShow;
 
     /** Must be called on the UI thread. */
     WindowsWindow(WindowsApplication app, WindowOptions options) {
@@ -94,10 +98,16 @@ final class WindowsWindow implements WebWindow, NativeResourceHost {
         if (options.icon() != null) {
             applyIcon(options.icon());
         }
+        if (options.backgroundRgb() != null) {
+            setBackgroundBrush(options.backgroundRgb()); // painted behind the web view, so it never starts out white
+        }
         applyClientSize(options.width(), options.height());
+        if (options.centered() && !options.maximized()) {
+            center();
+        }
+        maximizeOnFirstShow = options.maximized();
         if (options.visible()) {
-            Win32.showWindow(hwnd, Win32.SW_SHOW);
-            Win32.updateWindow(hwnd);
+            display();
         }
         initWebView();
     }
@@ -219,6 +229,11 @@ public CompletableFuture<String> eval(String script) {
 
     @Override
     public void setBackgroundColor(int rgb) {
+        app.dispatch(() -> {
+            if (!destroyed) {
+                setBackgroundBrush(rgb);
+            }
+        });
         whenReady(() -> applyBackground(rgb));
     }
 
@@ -235,8 +250,7 @@ public CompletableFuture<String> eval(String script) {
     public void show() {
         app.dispatch(() -> {
             if (!destroyed) {
-                Win32.showWindow(hwnd, Win32.SW_SHOW);
-                Win32.updateWindow(hwnd);
+                display();
             }
         });
     }
@@ -248,6 +262,38 @@ public CompletableFuture<String> eval(String script) {
                 Win32.showWindow(hwnd, Win32.SW_HIDE);
             }
         });
+    }
+
+    @Override
+    public void maximize() {
+        app.dispatch(() -> {
+            if (destroyed) {
+                return;
+            }
+            if (Win32.isWindowVisible(hwnd)) {
+                Win32.showWindow(hwnd, Win32.SW_SHOWMAXIMIZED); // same value as SW_MAXIMIZE
+            } else {
+                maximizeOnFirstShow = true; // maximizing a hidden window must not make it appear
+            }
+        });
+    }
+
+    @Override
+    public void restore() {
+        app.dispatch(() -> {
+            if (destroyed) {
+                return;
+            }
+            maximizeOnFirstShow = false;
+            if (Win32.isWindowVisible(hwnd)) {
+                Win32.showWindow(hwnd, Win32.SW_RESTORE);
+            }
+        });
+    }
+
+    @Override
+    public boolean isMaximized() {
+        return maximizeOnFirstShow || Win32.isZoomed(hwnd);
     }
 
     @Override
@@ -302,6 +348,22 @@ public CompletableFuture<String> eval(String script) {
                 resizeWebView();
                 return 0L;
             }
+            case Win32.WM_SHOWWINDOW -> {
+                // A web view created while its window was hidden does not paint when the window is shown later unless it is told.
+                syncWebViewVisibility(wParam != 0);
+                return null; // the system still does its own handling
+            }
+            case Win32.WM_ERASEBKGND -> {
+                if (backgroundBrush.equals(MemorySegment.NULL)) {
+                    return null;
+                }
+                try (Arena arena = Arena.ofConfined()) {
+                    MemorySegment rect = arena.allocate(Win32.RECT);
+                    Win32.getClientRect(hwnd, rect);
+                    Win32.fillRect(MemorySegment.ofAddress(wParam), rect, backgroundBrush);
+                }
+                return 1L; // erased
+            }
             case Win32.WM_SETFOCUS -> {
                 if (webViewReady) {
                     Com.call(controller, WebView2Abi.ICoreWebView2Controller.MOVE_FOCUS, Com.HR_INT, MOVE_FOCUS_PROGRAMMATIC);
@@ -328,6 +390,56 @@ public CompletableFuture<String> eval(String script) {
             default -> {
                 return null;
             }
+        }
+    }
+
+    /** Shows the window (maximized if it was asked to start that way) and makes sure the web view is awake. UI thread. */
+    private void display() {
+        int command = maximizeOnFirstShow ? Win32.SW_SHOWMAXIMIZED : Win32.SW_SHOW;
+        maximizeOnFirstShow = false;
+        Win32.showWindow(hwnd, command);
+        Win32.updateWindow(hwnd);
+        // WM_SHOWWINDOW arrives before the window has its final position and size (maximizing changes both), so tell the web
+        // view again now that they are settled.
+        syncWebViewVisibility(true);
+    }
+
+    /** Puts the window in the middle of the usable area (without the taskbar) of the monitor it is on. UI thread. */
+    private void center() {
+        int[] work = Win32.workAreaOf(hwnd);
+        if (work == null) {
+            return;
+        }
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment rect = arena.allocate(Win32.RECT);
+            Win32.getWindowRect(hwnd, rect);
+            int width = rect.get(JAVA_INT, 8) - rect.get(JAVA_INT, 0);
+            int height = rect.get(JAVA_INT, 12) - rect.get(JAVA_INT, 4);
+            int x = work[0] + (work[2] - work[0] - width) / 2;
+            int y = work[1] + (work[3] - work[1] - height) / 2;
+            // A window bigger than the work area keeps its top-left corner (and so its title bar) on screen.
+            Win32.setWindowPos(hwnd, Math.max(x, work[0]), Math.max(y, work[1]), 0, 0,
+                    Win32.SWP_NOSIZE | Win32.SWP_NOZORDER | Win32.SWP_NOACTIVATE);
+        }
+    }
+
+    private void setBackgroundBrush(int rgb) {
+        MemorySegment old = backgroundBrush;
+        backgroundBrush = Win32.createSolidBrush(colorRef(rgb));
+        if (!old.equals(MemorySegment.NULL)) {
+            Win32.deleteObject(old);
+        }
+    }
+
+    /** Keeps the web view's own visibility in step with its window's. UI thread. */
+    private void syncWebViewVisibility(boolean visible) {
+        if (controller.equals(MemorySegment.NULL) || destroyed) {
+            return;
+        }
+        Com.call(controller, WebView2Abi.ICoreWebView2Controller.PUT_IS_VISIBLE, Com.HR_INT, visible ? 1 : 0);
+        if (visible) {
+            resizeWebView();
+            Com.call(controller, WebView2Abi.ICoreWebView2Controller.NOTIFY_PARENT_WINDOW_POSITION_CHANGED, Com.HR_VOID);
         }
     }
 
@@ -369,6 +481,24 @@ public CompletableFuture<String> eval(String script) {
         } finally {
             Com.release(controller2);
         }
+    }
+
+    /** The window's outer rectangle as {left, top, right, bottom} in screen coordinates. For tests; UI thread. */
+    int[] outerBounds() {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment rect = arena.allocate(Win32.RECT);
+            Win32.getWindowRect(hwnd, rect);
+            return new int[] {rect.get(JAVA_INT, 0), rect.get(JAVA_INT, 4), rect.get(JAVA_INT, 8), rect.get(JAVA_INT, 12)};
+        }
+    }
+
+    /** The colour the window itself is painted with behind the web view as {@code 0xRRGGBB}, or -1 if it has none. For tests. */
+    int readWindowBackgroundRgb() {
+        if (backgroundBrush.equals(MemorySegment.NULL)) {
+            return -1;
+        }
+        int colorRef = Win32.brushColorRef(backgroundBrush);
+        return colorRef < 0 ? -1 : colorRef(colorRef) & 0xFFFFFF; // COLORREF <-> RGB is the same byte swap in both directions
     }
 
     /** Win32 {@code COLORREF} is {@code 0x00BBGGRR}; ours is {@code 0xRRGGBB}. */
@@ -837,6 +967,10 @@ public CompletableFuture<String> eval(String script) {
         }
         handlers.clear();
         destroyIcons();
+        if (!backgroundBrush.equals(MemorySegment.NULL)) {
+            Win32.deleteObject(backgroundBrush);
+            backgroundBrush = MemorySegment.NULL;
+        }
         app.windowDestroyed(hwnd);
         for (Runnable listener : closedListeners) {
             try {

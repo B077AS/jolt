@@ -28,6 +28,8 @@ final class Callbacks {
     static final MemorySegment IDLE;
     /** {@code destroy} signal on the top-level window: user_data is the window id. */
     static final MemorySegment DESTROY;
+    /** {@code window-state-event} on the top-level window (maximized or not): returns FALSE; user_data is the window id. */
+    static final MemorySegment WINDOW_STATE;
     /** {@code script-message-received::<name>} on the content manager: user_data is the window id. */
     static final MemorySegment SCRIPT_MESSAGE;
     /** {@code close} signal on the web view (page called {@code window.close()}): user_data is the window id. */
@@ -50,6 +52,9 @@ final class Callbacks {
                 FunctionDescriptor.of(JAVA_INT, ADDRESS), 0);
         DESTROY = stub(lookup, forever, "onDestroy", MethodType.methodType(void.class, MemorySegment.class, MemorySegment.class),
                 FunctionDescriptor.ofVoid(ADDRESS, ADDRESS), 0);
+        WINDOW_STATE = stub(lookup, forever, "onWindowState",
+                MethodType.methodType(int.class, MemorySegment.class, MemorySegment.class, MemorySegment.class),
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS), 0);
         SCRIPT_MESSAGE = stub(lookup, forever, "onScriptMessage",
                 MethodType.methodType(void.class, MemorySegment.class, MemorySegment.class, MemorySegment.class),
                 FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, ADDRESS), 0);
@@ -101,6 +106,22 @@ final class Callbacks {
         if (window != null) {
             window.onDestroyed();
         }
+    }
+
+    /** GdkEventWindowState on 64-bit: type(4) pad(4) window(8) send_event(1) pad(3) changed_mask(4) new_window_state(4). */
+    private static final int GDK_WINDOW_STATE_MAXIMIZED = 1 << 2;
+
+    private static int onWindowState(MemorySegment widget, MemorySegment event, MemorySegment data) {
+        LinuxWindow window = Registry.get(data.address(), LinuxWindow.class);
+        if (window != null) {
+            MemorySegment state = event.reinterpret(28);
+            int changed = state.get(JAVA_INT, 20);
+            int now = state.get(JAVA_INT, 24);
+            if ((changed & GDK_WINDOW_STATE_MAXIMIZED) != 0) {
+                window.onMaximizedChanged((now & GDK_WINDOW_STATE_MAXIMIZED) != 0);
+            }
+        }
+        return 0; // FALSE: let GTK handle the event too
     }
 
     private static void onScriptMessage(MemorySegment contentManager, MemorySegment javascriptResult, MemorySegment data) {

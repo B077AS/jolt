@@ -57,6 +57,14 @@ final class Gtk {
     private static final MethodHandle GTK_WINDOW_SET_DEFAULT_SIZE = h(GTK, "gtk_window_set_default_size",
             FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT, JAVA_INT));
     private static final MethodHandle GTK_WINDOW_RESIZE = h(GTK, "gtk_window_resize", FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT, JAVA_INT));
+    private static final MethodHandle GTK_WINDOW_MAXIMIZE = h(GTK, "gtk_window_maximize", FunctionDescriptor.ofVoid(ADDRESS));
+    private static final MethodHandle GTK_WINDOW_UNMAXIMIZE = h(GTK, "gtk_window_unmaximize", FunctionDescriptor.ofVoid(ADDRESS));
+    private static final MethodHandle GTK_WINDOW_SET_POSITION = h(GTK, "gtk_window_set_position", FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT));
+    private static final MethodHandle GTK_WINDOW_GET_POSITION = h(GTK, "gtk_window_get_position", FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, ADDRESS));
+    private static final MethodHandle GTK_WINDOW_GET_SIZE = h(GTK, "gtk_window_get_size", FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, ADDRESS));
+    private static final MethodHandle GDK_SCREEN_GET_DEFAULT = h(GTK, "gdk_screen_get_default", FunctionDescriptor.of(ADDRESS));
+    private static final MethodHandle GDK_SCREEN_GET_WIDTH = h(GTK, "gdk_screen_get_width", FunctionDescriptor.of(JAVA_INT, ADDRESS));
+    private static final MethodHandle GDK_SCREEN_GET_HEIGHT = h(GTK, "gdk_screen_get_height", FunctionDescriptor.of(JAVA_INT, ADDRESS));
     private static final MethodHandle GTK_CONTAINER_ADD = h(GTK, "gtk_container_add", FunctionDescriptor.ofVoid(ADDRESS, ADDRESS));
     private static final MethodHandle GTK_WIDGET_SHOW = h(GTK, "gtk_widget_show", FunctionDescriptor.ofVoid(ADDRESS));
     private static final MethodHandle GTK_WIDGET_HIDE = h(GTK, "gtk_widget_hide", FunctionDescriptor.ofVoid(ADDRESS));
@@ -219,6 +227,37 @@ final class Gtk {
 
     static void windowResize(MemorySegment window, int width, int height) {
         call(GTK_WINDOW_RESIZE, window, width, height);
+    }
+
+    /** Asks the window manager to maximize; on a window that is not shown yet it sets the state the window opens in. */
+    static void windowMaximize(MemorySegment window) {
+        call(GTK_WINDOW_MAXIMIZE, window);
+    }
+
+    static void windowUnmaximize(MemorySegment window) {
+        call(GTK_WINDOW_UNMAXIMIZE, window);
+    }
+
+    /** The window's {x, y, width, height} and the screen's {width, height}, as one array of six. For tests (X11 only: Wayland has no positions). */
+    static int[] windowGeometry(MemorySegment window) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment x = arena.allocate(4);
+            MemorySegment y = arena.allocate(4);
+            MemorySegment w = arena.allocate(4);
+            MemorySegment h = arena.allocate(4);
+            call(GTK_WINDOW_GET_POSITION, window, x, y);
+            call(GTK_WINDOW_GET_SIZE, window, w, h);
+            MemorySegment screen = (MemorySegment) call(GDK_SCREEN_GET_DEFAULT);
+            return new int[] {x.get(JAVA_INT, 0), y.get(JAVA_INT, 0), w.get(JAVA_INT, 0), h.get(JAVA_INT, 0),
+                    (int) call(GDK_SCREEN_GET_WIDTH, screen), (int) call(GDK_SCREEN_GET_HEIGHT, screen)};
+        }
+    }
+
+    /** {@code GTK_WIN_POS_CENTER}: centre on the screen when the window is first shown (X11; a Wayland compositor decides itself). */
+    static final int WIN_POS_CENTER = 1;
+
+    static void windowSetPosition(MemorySegment window, int position) {
+        call(GTK_WINDOW_SET_POSITION, window, position);
     }
 
     static void containerAdd(MemorySegment container, MemorySegment child) {

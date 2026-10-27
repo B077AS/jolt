@@ -156,9 +156,29 @@ public interface WebWindow {
     /** Sets the client-area size in logical (DPI-independent) pixels. */
     void setSize(int width, int height);
 
+    /**
+     * Shows the window and starts the web view painting. Works the same for a window created hidden
+     * ({@link WindowOptions#visible()} {@code false}): the page then renders as soon as the window appears. A window that
+     * was asked to start maximized is maximized now.
+     */
     void show();
 
     void hide();
+
+    /**
+     * Maximizes the window. On a window that is still hidden it is remembered and takes effect when the window is first
+     * shown. On Linux it needs a window manager or compositor that honours the request (a bare X server does not).
+     */
+    void maximize();
+
+    /** Undoes {@link #maximize()}: the window goes back to its normal size and position. */
+    void restore();
+
+    /**
+     * Whether the window is maximized, or will be when it is first shown. Can be called from any thread. A request to
+     * maximize is carried out on the UI thread, so right after {@link #maximize()} this may still say {@code false}.
+     */
+    boolean isMaximized();
 
     /** Opens the browser developer tools, if enabled in {@link WindowOptions}. */
     void openDevTools();

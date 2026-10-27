@@ -6,6 +6,28 @@ this file says when they do.
 
 The latest version is the one on [Maven Central](https://central.sonatype.com/artifact/io.github.b077as/jolt-core).
 
+## 0.2.2 - 2026-10-27
+
+### Added
+- `WindowOptions.withMaximized(boolean)` and `withCentered(boolean)`, and `WebWindow.maximize()`, `restore()` and `isMaximized()`.
+  **New windows are now centered on the screen by default** (before, Windows cascaded them from the top-left). Use
+  `withCentered(false)` to get the operating system's own placement back. Centering is ignored on Wayland, where the
+  compositor decides, and when the window starts maximized.
+- On Windows the native window is painted with `backgroundRgb` behind the web view, so a window no longer starts out white
+  while the web view is still starting.
+- Contract tests for a hidden window that is shown later, and for maximizing; `WindowPlacementTest` (Windows) reads back the
+  window position, maximized state and painted background; an X11 test reads the centered position from GTK.
+
+### Fixed
+- **A window created hidden (`withVisible(false)`) and shown later stayed blank on Windows**: the web view was never told
+  that its window had become visible. It is now, including when the window is shown maximized.
+
+### Changed
+- `WindowOptions` has two more record components (`maximized`, `centered`). Code that uses `WindowOptions.defaults()` and the
+  `with...` methods is unaffected; code that calls the record's constructor directly has to pass them.
+- `WebWindow` has three more methods; custom implementations of the interface (there are none in Jolt besides the two
+  backends) have to add them.
+
 ## 0.2.1 - 2026-10-27
 
 ### Added
