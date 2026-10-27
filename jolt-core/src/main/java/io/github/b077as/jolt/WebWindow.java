@@ -45,11 +45,19 @@ public interface WebWindow {
      * See {@link RequestHandler} for threading.
      */
     default void loadResources(AppResources resources, RequestHandler handler) {
-        io.github.b077as.jolt.internal.ResourceService service = new io.github.b077as.jolt.internal.ResourceService(resources, handler);
+        loadResources(resources, handler, ResourceOptions.defaults());
+    }
+
+    /**
+     * Like {@link #loadResources(AppResources, RequestHandler)} with settings such as the largest request body, for uploads.
+     */
+    default void loadResources(AppResources resources, RequestHandler handler, ResourceOptions options) {
+        io.github.b077as.jolt.internal.ResourceService service =
+                new io.github.b077as.jolt.internal.ResourceService(resources, handler, options);
         if (this instanceof io.github.b077as.jolt.internal.NativeResourceHost host && host.loadResources(service)) {
             return;
         }
-        loadResources(resources, handler, 0);
+        loadResourcesOverLoopback(resources, handler, options, 0);
     }
 
     /**
@@ -66,13 +74,19 @@ public interface WebWindow {
      * the user has open in a browser, can send requests to a loopback port, they are guarded: a {@code POST}, {@code PUT},
      * {@code PATCH} or {@code DELETE} is refused unless it carries this run's secret, which Jolt adds by itself to htmx requests
      * and to {@code fetch} calls from the app's page (and exposes as {@code window.joltCsrfToken} for anything else, such as
-     * {@code XMLHttpRequest}). Plain HTML {@code <form method=post>} forms get it as a hidden field (urlencoded only; for
-     * multipart or {@code form.submit()}, use {@code hx-post}). Other websites and local programs cannot learn the secret.
+     * {@code XMLHttpRequest}). Plain HTML {@code <form method=post>} forms get it as a hidden field (urlencoded or
+     * multipart; for {@code form.submit()}, use {@code requestSubmit()} or {@code hx-post}). Other websites and local programs
+     * cannot learn the secret.
      */
     default void loadResources(AppResources resources, RequestHandler handler, int port) {
+        loadResourcesOverLoopback(resources, handler, ResourceOptions.defaults(), port);
+    }
+
+    /** Like {@link #loadResources(AppResources, RequestHandler, int)} with {@link ResourceOptions}. */
+    default void loadResourcesOverLoopback(AppResources resources, RequestHandler handler, ResourceOptions options, int port) {
         io.github.b077as.jolt.internal.AssetServer server;
         try {
-            server = new io.github.b077as.jolt.internal.AssetServer(resources, handler, port);
+            server = new io.github.b077as.jolt.internal.AssetServer(resources, handler, options, port);
         } catch (java.io.IOException e) {
             throw new JoltException("cannot serve the app's files on port " + port, e);
         }

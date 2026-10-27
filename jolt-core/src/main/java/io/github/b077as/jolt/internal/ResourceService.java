@@ -3,6 +3,7 @@ package io.github.b077as.jolt.internal;
 import io.github.b077as.jolt.AppRequest;
 import io.github.b077as.jolt.AppResources;
 import io.github.b077as.jolt.AppResponse;
+import io.github.b077as.jolt.ResourceOptions;
 import io.github.b077as.jolt.RequestHandler;
 
 import java.io.IOException;
@@ -25,12 +26,12 @@ import java.util.concurrent.CompletableFuture;
  *
  * <p>Transports are responsible for what only they can know: whether the request really came from the app's own page
  * ({@link #admit} for the in-process ones; the loopback server adds a secret and more checks), and for reading the body
- * (at most {@link #MAX_BODY} bytes).
+ * (at most {@link #maxBody()} bytes, answering 413 beyond that).
  */
 public final class ResourceService {
 
-    /** Largest request body a transport hands over; bigger ones are answered with 413. */
-    public static final int MAX_BODY = 8 * 1024 * 1024;
+    /** The default for the largest request body a transport hands over; see {@link #maxBody()}. */
+    public static final int MAX_BODY = ResourceOptions.DEFAULT_MAX_REQUEST_BYTES;
 
     public static final Set<String> SAFE_METHODS = Set.of("GET", "HEAD");
     public static final Set<String> UNSAFE_METHODS = Set.of("POST", "PUT", "PATCH", "DELETE");
@@ -60,11 +61,22 @@ public final class ResourceService {
 
     private final AppResources resources;
     private final RequestHandler handler;
+    private final int maxBody;
 
     /** @param handler answers requests before the files do; may be {@code null} for a read-only file server */
     public ResourceService(AppResources resources, RequestHandler handler) {
+        this(resources, handler, ResourceOptions.defaults());
+    }
+
+    public ResourceService(AppResources resources, RequestHandler handler, ResourceOptions options) {
         this.resources = resources;
         this.handler = handler;
+        this.maxBody = options.maxRequestBytes();
+    }
+
+    /** The largest request body a transport may read; a bigger one is answered with 413 without reaching the handler. */
+    public int maxBody() {
+        return maxBody;
     }
 
     public boolean hasHandler() {

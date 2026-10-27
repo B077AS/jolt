@@ -61,9 +61,86 @@ public record AppRequest(String method, String path, String query, Map<String, S
         return parseForm(query);
     }
 
-    /** The body parsed as {@code application/x-www-form-urlencoded}, which is what htmx and plain forms send. */
+    /**
+     * The form fields of the body: for {@code application/x-www-form-urlencoded}, which is what htmx and plain forms send, the
+     * decoded fields; for {@code multipart/form-data}, the text of the parts that are not files (see {@link #parts} for the files).
+     * A multipart body is parsed on every call, so call {@link #parts} once when you need several fields.
+     *
+     * @throws IllegalArgumentException if a multipart body is malformed
+     */
     public Map<String, List<String>> form() {
-        return parseForm(bodyText());
+        if (!isMultipart()) {
+            return parseForm(bodyText());
+        }
+        Map<String, List<String>> result = new LinkedHashMap<>();
+        for (Part part : parts()) {
+            if (!part.isFile()) {
+                result.computeIfAbsent(part.name(), k -> new ArrayList<>()).add(part.text());
+            }
+        }
+        return result;
+    }
+
+    /** Whether the body is {@code multipart/form-data}, which is what a form with a file input, or {@code FormData}, sends. */
+    public boolean isMultipart() {
+        return io.github.b077as.jolt.internal.MultipartParser.boundary(header("content-type")) != null;
+    }
+
+    /**
+     * The parts of a {@code multipart/form-data} body, in order: form fields and files. The whole body is already in memory (see
+     * {@link ResourceOptions#maxRequestBytes()} for the size limit).
+     *
+     * @throws IllegalArgumentException if this is not a multipart request or its body is malformed; a handler can let it
+     *                                  propagate to {@link Router#onError} to answer 400
+     */
+    public List<Part> parts() {
+        String boundary = io.github.b077as.jolt.internal.MultipartParser.boundary(header("content-type"));
+        if (boundary == null) {
+            throw new IllegalArgumentException("not a multipart/form-data request");
+        }
+        return io.github.b077as.jolt.internal.MultipartParser.parts(body, boundary);
+    }
+
+    /** The first part called {@code name}, or {@code null}. */
+    public Part part(String name) {
+        for (Part part : parts()) {
+            if (part.name().equals(name)) {
+                return part;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * One part of a {@code multipart/form-data} body.
+     *
+     * @param name        the field name
+     * @param filename    for a file, the name the browser sent, <b>reduced to its last path segment with control characters
+     *                    removed</b>; empty if no file was chosen; {@code null} for an ordinary field. Still untrusted: never use it
+     *                    as a path without checking where it ends up
+     * @param contentType the part's {@code Content-Type} (what the browser guessed for a file), or {@code null}
+     * @param headers     the part's headers by lower-case name
+     * @param content     the part's bytes
+     */
+    public record Part(String name, String filename, String contentType, Map<String, String> headers, byte[] content) {
+
+        public Part {
+            headers = Map.copyOf(headers);
+        }
+
+        /** Whether this part came from a file input (even if no file was chosen, when {@link #size} is 0). */
+        public boolean isFile() {
+            return filename != null;
+        }
+
+        /** The content decoded as UTF-8. */
+        public String text() {
+            return new String(content, StandardCharsets.UTF_8);
+        }
+
+        public int size() {
+            return content.length;
+        }
     }
 
     /** The first value of the form field {@code name}, or {@code null}. */

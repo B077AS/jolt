@@ -29,12 +29,15 @@ final class ResourceRequests {
     /**
      * A request as the page made it.
      *
-     * @param body the request body, empty if none, or {@code null} if it is larger than {@link ResourceService#MAX_BODY}
+     * @param body the request body, empty if none, or {@code null} if it is larger than the limit given to {@link #read}
      */
     record Incoming(String method, String uri, Map<String, String> headers, byte[] body) {}
 
-    /** Reads method, address, headers and body, or returns {@code null} if the event does not hold a readable request. */
-    static Incoming read(MemorySegment args) {
+    /**
+     * Reads method, address, headers and body (up to {@code maxBody} bytes), or returns {@code null} if the event does not hold a
+     * readable request.
+     */
+    static Incoming read(MemorySegment args, int maxBody) {
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment out = arena.allocate(ADDRESS);
             if (Com.call(args, WebView2Abi.ICoreWebView2WebResourceRequestedEventArgs.GET_REQUEST, Com.HR_PTR, out) < 0) {
@@ -47,7 +50,7 @@ final class ResourceRequests {
                 if (uri == null || method == null) {
                     return null;
                 }
-                return new Incoming(method.toUpperCase(Locale.ROOT), uri, headers(request, arena), body(request, arena));
+                return new Incoming(method.toUpperCase(Locale.ROOT), uri, headers(request, arena), body(request, arena, maxBody));
             } finally {
                 Com.release(request);
             }
@@ -155,7 +158,7 @@ final class ResourceRequests {
     }
 
     /** The request body, empty if there is none, {@code null} if it is too large. */
-    private static byte[] body(MemorySegment request, Arena arena) {
+    private static byte[] body(MemorySegment request, Arena arena, int maxBody) {
         MemorySegment out = arena.allocate(ADDRESS);
         if (Com.call(request, WebView2Abi.ICoreWebView2WebResourceRequest.GET_CONTENT, Com.HR_PTR, out) < 0) {
             return new byte[0];
@@ -174,7 +177,7 @@ final class ResourceRequests {
                 int read = count.get(JAVA_INT, 0);
                 if (read > 0) {
                     bytes.write(chunk.asSlice(0, read).toArray(JAVA_BYTE), 0, read);
-                    if (bytes.size() > ResourceService.MAX_BODY) {
+                    if (bytes.size() > maxBody) {
                         return null;
                     }
                 }

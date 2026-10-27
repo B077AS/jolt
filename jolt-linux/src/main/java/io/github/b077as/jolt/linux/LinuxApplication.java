@@ -226,27 +226,27 @@ final class LinuxApplication implements Application {
         }
     }
 
-/** Registers the app's own URI scheme on the web context, once. */
-void ensureResourceScheme() {
-    if (!resourceSchemeRegistered) {
-        GtkResources.registerScheme(webContext, Callbacks.URI_SCHEME_REQUEST, MemorySegment.ofAddress(id));
-        resourceSchemeRegistered = true;
-    }
-}
-
-/** A request for the app's own scheme: handed to the window whose web view made it. */
-void onSchemeRequest(MemorySegment request) {
-    GtkResources.Incoming incoming = GtkResources.read(request);
-    for (LinuxWindow window : windows.values()) {
-        if (window.nativeWebView().address() == incoming.webView()) {
-            window.onSchemeRequest(request, incoming);
-            return;
+    /** Registers the app's own URI scheme on the web context, once. */
+    void ensureResourceScheme() {
+        if (!resourceSchemeRegistered) {
+            GtkResources.registerScheme(webContext, Callbacks.URI_SCHEME_REQUEST, MemorySegment.ofAddress(id));
+            resourceSchemeRegistered = true;
         }
     }
-    GtkResources.respond(request, 404, io.github.b077as.jolt.internal.ResourceService.baseHeaders(), new byte[0]);
-}
 
-long registerEval(CompletableFuture<String> future) {
+    /** A request for the app's own scheme: handed to the window whose web view made it. */
+    void onSchemeRequest(MemorySegment request) {
+        long webView = GtkResources.webViewOf(request);
+        for (LinuxWindow window : windows.values()) {
+            if (window.nativeWebView().address() == webView) {
+                window.onSchemeRequest(request);
+                return;
+            }
+        }
+        GtkResources.respond(request, 404, io.github.b077as.jolt.internal.ResourceService.baseHeaders(), new byte[0]);
+    }
+
+    long registerEval(CompletableFuture<String> future) {
         return Registry.add(new PendingEval(future));
     }
 

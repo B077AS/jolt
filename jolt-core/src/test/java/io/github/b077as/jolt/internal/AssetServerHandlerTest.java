@@ -190,11 +190,8 @@ class AssetServerHandlerTest {
             // other origins and other sites are still refused even with the right field
             assertEquals(403, call(server, "POST", "/echo", "_jolt_token=" + server.token(), "Content-Type", type, "Origin", "https://evil.example").statusCode());
             assertEquals(403, call(server, "POST", "/echo", "_jolt_token=" + server.token(), "Content-Type", type, "Sec-Fetch-Site", "cross-site").statusCode());
-            // the field is only for urlencoded forms: a multipart or text/plain body needs the header
+            // the field is accepted in urlencoded and multipart forms only (see AssetServerMultipartTest); other types need the header
             assertEquals(403, call(server, "POST", "/echo", "_jolt_token=" + server.token(), "Content-Type", "text/plain").statusCode());
-            String multipart = "--b\r\nContent-Disposition: form-data; name=\"_jolt_token\"\r\n\r\n" + server.token() + "\r\n--b--";
-            assertEquals(403, call(server, "POST", "/echo", multipart,
-                    "Content-Type", "multipart/form-data; boundary=b").statusCode());
         }
     }
 
