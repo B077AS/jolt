@@ -460,7 +460,7 @@ public abstract class WebWindowContract {
 
     // ---- loadResources: every test runs over the in-process transport and over the loopback fallback ----
 
-    private static String resourceApp(java.util.Map<String, String> files, io.github.b077as.jolt.RequestHandler handler, boolean loopback) {
+    protected static String resourceApp(java.util.Map<String, String> files, io.github.b077as.jolt.RequestHandler handler, boolean loopback) {
         return resourceApp(files, handler, loopback, io.github.b077as.jolt.ResourceOptions.defaults());
     }
 
@@ -892,7 +892,8 @@ public abstract class WebWindowContract {
         for (boolean loopback : new boolean[] {false, true}) {
             java.util.concurrent.CountDownLatch finished = new java.util.concurrent.CountDownLatch(1);
             java.util.Map<String, String> files = java.util.Map.of("index.html",
-                    "<script>fetch('/slow'); window.jolt.postMessage('go')</script>");
+                    // closing at once could beat the web view to dispatching the request, so let it get under way first
+                    "<script>fetch('/slow'); setTimeout(() => window.jolt.postMessage('go'), 250)</script>");
             assertEquals("go", resourceApp(files, request -> {
                 if (request.path().equals("/slow")) {
                     try {
