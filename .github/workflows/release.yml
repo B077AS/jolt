@@ -33,7 +33,7 @@ jobs:
       - name: Publish to Maven Central
         run: >
           mvn -B -ntp clean deploy -Prelease -DskipTests
-          -pl jolt-core,jolt-win32,jolt-linux -am
+          -pl jolt-core,jolt-win32,jolt-linux,jolt-credentials -am
         env:
           MAVEN_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
           MAVEN_CENTRAL_TOKEN: ${{ secrets.SONATYPE_PASSWORD }}

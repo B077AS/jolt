@@ -116,7 +116,7 @@ only activates on its own operating system, so one jar runs on both.
 ```xml
 <properties>
   <maven.compiler.release>25</maven.compiler.release>
-  <jolt.version>0.2.0</jolt.version>
+  <jolt.version>0.2.1</jolt.version>
 </properties>
 
 <dependencies>
@@ -165,9 +165,9 @@ Or pass `--enable-native-access=ALL-UNNAMED` on the `java` command line.
 
 ```kotlin
 dependencies {
-    implementation("io.github.b077as:jolt-core:0.2.0")
-    implementation("io.github.b077as:jolt-win32:0.2.0")
-    implementation("io.github.b077as:jolt-linux:0.2.0")
+    implementation("io.github.b077as:jolt-core:0.2.1")
+    implementation("io.github.b077as:jolt-win32:0.2.1")
+    implementation("io.github.b077as:jolt-linux:0.2.1")
 }
 
 java {
@@ -195,10 +195,11 @@ If you only target one operating system, depend on `jolt-core` and that system's
 11. [Things to know](#things-to-know)
 12. [Multi-file pages, request handlers and uploads](#multi-file-pages-request-handlers-and-uploads)
 13. [Security](#security)
-14. [Layout of a Jolt app](#layout-of-a-jolt-app)
-15. [When something goes wrong](#when-something-goes-wrong)
-16. [Build Jolt itself and run the examples](#build-jolt-itself-and-run-the-examples)
-17. [How it works](#how-it-works)
+14. [Saving passwords and tokens](#saving-passwords-and-tokens-jolt-credentials)
+15. [Layout of a Jolt app](#layout-of-a-jolt-app)
+16. [When something goes wrong](#when-something-goes-wrong)
+17. [Build Jolt itself and run the examples](#build-jolt-itself-and-run-the-examples)
+18. [How it works](#how-it-works)
 
 ## What works today
 
@@ -216,6 +217,10 @@ If you only target one operating system, depend on `jolt-core` and that system's
 - Every `WebWindow` and `Application` method is safe to call from any thread.
 - Developer tools (right-click, Inspect) for debugging the page.
 - Packaging into a double-clickable app that bundles its own Java runtime.
+- `jolt-credentials` (since 0.2.1, optional): keep passwords and tokens in the Windows Credential Manager or the Linux Secret
+  Service. See [Saving passwords and tokens](#saving-passwords-and-tokens-jolt-credentials).
+
+See the [changelog](CHANGELOG.md) for what each version added.
 
 ## Requirements
 
@@ -822,6 +827,44 @@ Things to know:
 - WebView2 ignores a navigation to the exact address it has just cancelled; if you react to a block by trusting the origin,
   load a different page of the site, or load it before the first attempt.
 - In the page, set text with `textContent`, never `innerHTML`, when it comes from users or files.
+
+## Saving passwords and tokens (`jolt-credentials`)
+
+A desktop app that logs in to something (a mail server, an API) has a password or token to keep. Do not write it to a file
+of your own: put it in the operating system's keystore. `jolt-credentials` does that through the same FFM approach as the
+rest of Jolt, with no native code to build. It does not depend on `jolt-core`, so it also works in a program with no window.
+Available since **0.2.1**; versions before that do not have it.
+
+```xml
+<dependency>
+  <groupId>io.github.b077as</groupId>
+  <artifactId>jolt-credentials</artifactId>
+  <version>${jolt.version}</version>
+</dependency>
+```
+
+Gradle: `implementation("io.github.b077as:jolt-credentials:0.2.1")`.
+
+```java
+CredentialStore store = CredentialStore.open("com.example.mail");   // your app's own namespace
+store.put("alice@example.com", password);                           // replaces an earlier one
+Optional<String> saved = store.get("alice@example.com");
+store.delete("alice@example.com");                                  // true if there was one
+```
+
+| | Where the secret goes | Needs |
+| --- | --- | --- |
+| Windows | Credential Manager (`CredWriteW`, `CredReadW`, `CredDeleteW`) | nothing. A secret is at most 2560 bytes in UTF-8. |
+| Linux | the Secret Service through `libsecret` (GNOME Keyring, KWallet, KeePassXC) | `libsecret-1.so.0` (Debian and Ubuntu: `libsecret-1-0`) and a running, unlocked Secret Service |
+
+- **Check for it when you start.** `CredentialStore.open` throws `CredentialStoreUnavailableException` on a machine with no
+  keystore (macOS, no `libsecret`, no Secret Service running, as on a minimal window manager or in a container). The message
+  says why. Catch it and fall back to something else, such as asking the user each time.
+- **Secrets are text** (UTF-8, not empty, no NUL characters). An account is any non-blank name up to 255 characters.
+- **Call it off the UI thread.** Every call blocks, and on Linux it may wait for the user to unlock the keyring.
+- **What it protects against:** other users of the machine and someone reading the disk. It does not protect against a
+  program running as the same user, which can ask the keystore for the same secrets. A Java `String` cannot be wiped from
+  memory, so do not hold one longer than you need to.
 
 ## Layout of a Jolt app
 

@@ -39,6 +39,7 @@
     <module>jolt-core</module>
     <module>jolt-win32</module>
     <module>jolt-linux</module>
+    <module>jolt-credentials</module>
     <module>examples/hello-window</module>
     <module>examples/notes-app</module>
   </modules>
@@ -71,6 +72,11 @@
       <dependency>
         <groupId>io.github.b077as</groupId>
         <artifactId>jolt-linux</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.github.b077as</groupId>
+        <artifactId>jolt-credentials</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
