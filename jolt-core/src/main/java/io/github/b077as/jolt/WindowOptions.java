@@ -29,15 +29,23 @@ import java.util.Objects;
  *                       of wherever the operating system puts a new window (Windows cascades them). The default is
  *                       {@code true}. Ignored while {@code maximized}. On Wayland an application cannot choose its
  *                       position, so the compositor decides
+ * @param minWidth       smallest client-area width in logical pixels the user can resize the window to, or {@code 0} for no
+ *                       minimum
+ * @param minHeight      smallest client-area height in logical pixels the user can resize the window to, or {@code 0} for no
+ *                       minimum
  */
 public record WindowOptions(String title, int width, int height, boolean devTools, boolean visible,
                             byte[] icon, ColorScheme titleBarScheme, Integer backgroundRgb,
-                            SecurityPolicy security, boolean maximized, boolean centered) {
+                            SecurityPolicy security, boolean maximized, boolean centered,
+                            int minWidth, int minHeight) {
 
     public WindowOptions {
         Objects.requireNonNull(title, "title");
         if (width <= 0 || height <= 0) {
             throw new IllegalArgumentException("size must be positive: " + width + "x" + height);
+        }
+        if (minWidth < 0 || minHeight < 0) {
+            throw new IllegalArgumentException("minimum size must not be negative: " + minWidth + "x" + minHeight);
         }
         icon = icon == null ? null : icon.clone();
         security = security == null ? SecurityPolicy.standard() : security;
@@ -47,51 +55,56 @@ public record WindowOptions(String title, int width, int height, boolean devTool
     }
 
     public static WindowOptions defaults() {
-        return new WindowOptions("Jolt", 1024, 720, false, true, null, null, null, null, false, true);
+        return new WindowOptions("Jolt", 1024, 720, false, true, null, null, null, null, false, true, 0, 0);
     }
 
     public WindowOptions withTitle(String title) {
-        return new WindowOptions(title, width, height, devTools, visible, icon, titleBarScheme, backgroundRgb, security, maximized, centered);
+        return new WindowOptions(title, width, height, devTools, visible, icon, titleBarScheme, backgroundRgb, security, maximized, centered, minWidth, minHeight);
     }
 
     public WindowOptions withSize(int width, int height) {
-        return new WindowOptions(title, width, height, devTools, visible, icon, titleBarScheme, backgroundRgb, security, maximized, centered);
+        return new WindowOptions(title, width, height, devTools, visible, icon, titleBarScheme, backgroundRgb, security, maximized, centered, minWidth, minHeight);
     }
 
     public WindowOptions withDevTools(boolean devTools) {
-        return new WindowOptions(title, width, height, devTools, visible, icon, titleBarScheme, backgroundRgb, security, maximized, centered);
+        return new WindowOptions(title, width, height, devTools, visible, icon, titleBarScheme, backgroundRgb, security, maximized, centered, minWidth, minHeight);
     }
 
     public WindowOptions withVisible(boolean visible) {
-        return new WindowOptions(title, width, height, devTools, visible, icon, titleBarScheme, backgroundRgb, security, maximized, centered);
+        return new WindowOptions(title, width, height, devTools, visible, icon, titleBarScheme, backgroundRgb, security, maximized, centered, minWidth, minHeight);
     }
 
     /** @param png the icon as PNG or {@code .ico} data, see {@link #icon()} */
     public WindowOptions withIcon(byte[] png) {
-        return new WindowOptions(title, width, height, devTools, visible, png, titleBarScheme, backgroundRgb, security, maximized, centered);
+        return new WindowOptions(title, width, height, devTools, visible, png, titleBarScheme, backgroundRgb, security, maximized, centered, minWidth, minHeight);
     }
 
     public WindowOptions withTitleBarScheme(ColorScheme scheme) {
-        return new WindowOptions(title, width, height, devTools, visible, icon, scheme, backgroundRgb, security, maximized, centered);
+        return new WindowOptions(title, width, height, devTools, visible, icon, scheme, backgroundRgb, security, maximized, centered, minWidth, minHeight);
     }
 
     /** @param rgb {@code 0xRRGGBB} */
     public WindowOptions withBackgroundColor(int rgb) {
-        return new WindowOptions(title, width, height, devTools, visible, icon, titleBarScheme, rgb, security, maximized, centered);
+        return new WindowOptions(title, width, height, devTools, visible, icon, titleBarScheme, rgb, security, maximized, centered, minWidth, minHeight);
     }
 
     /** What pages in this window may do; can also be changed later with {@link WebWindow#setSecurity}. */
     public WindowOptions withSecurity(SecurityPolicy policy) {
-        return new WindowOptions(title, width, height, devTools, visible, icon, titleBarScheme, backgroundRgb, policy, maximized, centered);
+        return new WindowOptions(title, width, height, devTools, visible, icon, titleBarScheme, backgroundRgb, policy, maximized, centered, minWidth, minHeight);
     }
 
     /** Whether the window starts maximized, see {@link #maximized()}. */
     public WindowOptions withMaximized(boolean maximized) {
-        return new WindowOptions(title, width, height, devTools, visible, icon, titleBarScheme, backgroundRgb, security, maximized, centered);
+        return new WindowOptions(title, width, height, devTools, visible, icon, titleBarScheme, backgroundRgb, security, maximized, centered, minWidth, minHeight);
+    }
+
+    /** The smallest size the user can resize the window to, see {@link #minWidth()}; {@code 0} means no minimum. */
+    public WindowOptions withMinSize(int minWidth, int minHeight) {
+        return new WindowOptions(title, width, height, devTools, visible, icon, titleBarScheme, backgroundRgb, security, maximized, centered, minWidth, minHeight);
     }
 
     /** Whether the window is centered on the screen when created, see {@link #centered()}. */
     public WindowOptions withCentered(boolean centered) {
-        return new WindowOptions(title, width, height, devTools, visible, icon, titleBarScheme, backgroundRgb, security, maximized, centered);
+        return new WindowOptions(title, width, height, devTools, visible, icon, titleBarScheme, backgroundRgb, security, maximized, centered, minWidth, minHeight);
     }
 }

@@ -26,6 +26,7 @@ final class Win32 {
     // window messages
     static final int WM_DESTROY = 0x0002;
     static final int WM_SIZE = 0x0005;
+    static final int WM_GETMINMAXINFO = 0x0024;
     static final int WM_SETFOCUS = 0x0007;
     static final int WM_CLOSE = 0x0010;
     static final int WM_ERASEBKGND = 0x0014;

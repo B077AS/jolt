@@ -56,6 +56,21 @@ class WindowOptionsTest {
     }
 
     @Test
+    void theMinimumSizeDefaultsToNoneAndSurvivesOtherChanges() {
+        assertEquals(0, WindowOptions.defaults().minWidth());
+        assertEquals(0, WindowOptions.defaults().minHeight());
+        WindowOptions o = WindowOptions.defaults().withMinSize(400, 300).withTitle("T").withSize(800, 600).withMaximized(true);
+        assertEquals(400, o.minWidth());
+        assertEquals(300, o.minHeight());
+    }
+
+    @Test
+    void aNegativeMinimumSizeIsRejected() {
+        assertThrows(IllegalArgumentException.class, () -> WindowOptions.defaults().withMinSize(-1, 0));
+        assertThrows(IllegalArgumentException.class, () -> WindowOptions.defaults().withMinSize(0, -1));
+    }
+
+    @Test
     void theIconIsCopiedSoLaterChangesToTheArrayDoNotLeakIn() {
         byte[] png = {1, 2, 3};
         WindowOptions o = WindowOptions.defaults().withIcon(png);

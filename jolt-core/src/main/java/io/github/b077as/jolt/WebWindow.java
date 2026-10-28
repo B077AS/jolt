@@ -101,6 +101,21 @@ public interface WebWindow {
     /** Navigates to a document built from {@code html}. The page gets the origin {@link SecurityPolicy#APP_ORIGIN}, which is always trusted. */
     void loadHtml(String html);
 
+    /** Opens a {@link BinaryChannel} with the default {@link ChannelOptions}. */
+    default BinaryChannel openChannel(String name) {
+        return openChannel(name, ChannelOptions.defaults());
+    }
+
+    /**
+     * Opens a {@link BinaryChannel}: a named pipe for large or binary data between Java and the page, which reaches it as
+     * {@code jolt.channel(name)}. Open it before the page loads. Each window has its own channels.
+     *
+     * @throws IllegalStateException if a channel of that name is already open on this window
+     */
+    default BinaryChannel openChannel(String name, ChannelOptions options) {
+        return io.github.b077as.jolt.internal.ChannelServers.of(this).open(name, options);
+    }
+
     /**
      * Evaluates {@code script} in the page. The future completes with the JSON encoding of the script's
      * completion value (for example {@code "42"}, {@code "\"text\""}, or {@code "null"}).

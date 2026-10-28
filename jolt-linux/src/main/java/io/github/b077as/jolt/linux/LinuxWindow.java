@@ -99,6 +99,10 @@ final class LinuxWindow implements WebWindow, NativeResourceHost {
             Gtk.setBackgroundColor(webView, options.backgroundRgb());
         }
 
+        if (options.minWidth() > 0 || options.minHeight() > 0) {
+            Gtk.windowSetMinSize(window, options.minWidth(), options.minHeight());
+        }
+
         Gtk.containerAdd(window, webView);
         Gtk.widgetShow(webView);
         if (options.maximized()) {
