@@ -215,6 +215,8 @@ If you only target one operating system, depend on `jolt-core` and that system's
   or raw data such as video frames (since 0.2.3). See [Binary data: channels](#binary-data-channels).
 - Window icon (PNG, or a multi-size `.ico` for crisp taskbar icons), light or dark native title bar, exact title bar
   colours (Windows 11) and the web view's background colour, set at creation or later.
+- The operating system's open, save and choose-folder dialogs, which give your Java code the real path. See
+  [Choosing files](#choosing-files-open-and-save-dialogs).
 - Every `WebWindow` and `Application` method is safe to call from any thread.
 - Developer tools (right-click, Inspect) for debugging the page.
 - Packaging into a double-clickable app that bundles its own Java runtime.
@@ -387,6 +389,79 @@ secrets, back-pressure), and a real page that sends 256 KB through Java and back
 **On Linux, use `loadResources` for a page that opens channels, not `loadHtml`.** WebKitGTK refuses a `ws://` connection from
 the `https://jolt.localhost` document that `loadHtml` creates (mixed content), before it reaches the network. Pages served by
 `loadResources` (the `jolt://app` origin, or the loopback fallback) can open one; this was checked by a probe. On Windows both work.
+
+### Choosing files: open and save dialogs
+
+A web page can open a file picker (`<input type="file">`) but only ever sees the file's contents, never its path, and it cannot
+choose where a file is saved. For that, ask the operating system's own dialogs through the window:
+
+```java
+Dialogs dialogs = window.dialogs();
+
+// Save: the user picks the place, your Java code writes the file
+dialogs.saveFile(FileDialogOptions.defaults()
+                .withTitle("Export report")
+                .withFileName("report.pdf")
+                .withFilters(FileFilter.of("PDF documents", "pdf")))
+        .thenAccept(chosen -> chosen.ifPresent(path -> writeReport(path)));   // empty when the user cancels
+
+// Open: you get the real path
+dialogs.openFile(FileDialogOptions.defaults().withFilters(FileFilter.of("Images", "png", "jpg", "jpeg")));
+dialogs.openFiles(FileDialogOptions.defaults());          // several files; an empty list when cancelled
+dialogs.chooseFolder(FileDialogOptions.defaults());
+```
+
+- Every method returns a `CompletableFuture` at once and may be called from any thread, for example from a request handler. The
+  future completes when the user has chosen or cancelled. **Cancelling is not an error**: you get an empty result.
+- The dialog is modal to the window, which keeps working underneath (the page keeps running). A second request while one is open
+  waits for the first.
+- `FileDialogOptions` is all optional: `withTitle`, `withInitialDirectory`, `withFileName` (the proposed name in a save dialog; in
+  an open dialog the file that is already chosen, so the user only confirms) and `withFilters` (the first filter starts selected;
+  no filters means all files) and `withSize(width, height)` (see below).
+- **Size.** `FileDialogOptions.defaults().withSize(1000, 650)` asks for a bigger dialog (logical pixels; `0` leaves that side to the
+  system). The system owns the dialog, so it is a request. On Windows the dialog is resized right after it opens, centred where it
+  appeared and kept on the screen, and Windows then remembers that size for later dialogs. Linux cannot size the desktop portal's
+  chooser, so a dialog with a size is GTK's own chooser window, which does not go through the portal; GTK will not make it smaller
+  than its contents need.
+- `saveFile` does not create the file, and the system asks before overwriting one that exists. Write the file only if the result is
+  present.
+- Windows uses the common item dialogs. Linux uses `GtkFileChooserNative`, which goes through the desktop portal when the app is
+  sandboxed (Flatpak, Snap) and otherwise shows GTK's own dialog. On Linux the filters match the extension in lower and upper case
+  only (`.png` and `.PNG`, not `.Png`).
+- If the window is closed while a dialog is open, the dialog is closed first and the request fails with `WindowClosedException`.
+
+Checked with the real dialogs, answered by tests: cancel, confirm in a save dialog, confirm a preselected file in an open dialog,
+requests queued behind each other, and closing the window with a dialog open. That ran on Windows and on Linux under X11 and
+Wayland (in Docker, where the portal is not present, so the GTK dialog was used). Not checked: the desktop portal itself, several
+monitors, and a user actually clicking through a dialog.
+
+#### Saving from the page: `jolt.saveAs`
+
+A page cannot choose where a file goes, and it never sees a path. To let it save a file the user picks, enable `saveAs` on the
+window (before the page loads) and call `jolt.saveAs` from the page:
+
+```java
+window.enableSaveAs();                      // or window.enableSaveAs(Path.of(System.getProperty("user.home"), "Documents")) to choose the starting folder
+```
+```js
+const saved = await jolt.saveAs(blobOrBytesOrText, {
+  name: "report.pdf",                       // proposed file name
+  title: "Export report",
+  filters: [{ name: "PDF documents", extensions: ["pdf"] }],
+});
+if (saved) console.log(saved.name, saved.size);   // { name, size }: the name the user chose, never the path
+else console.log("cancelled");                     // null when the user closes the dialog
+```
+
+- `data` can be a string (written as UTF-8), an `ArrayBuffer`, any typed array, or a `Blob`. It is sent after the user has chosen
+  a file, in 1 MB pieces, so a large `Blob` is not read if they cancel and its size is not limited by memory.
+- The file is written to a temporary file next to the target and moved into place when the last byte has arrived. A transfer that
+  fails, or a page that goes away halfway, never leaves a half-written file where the user asked for a whole one.
+- The promise rejects with an `Error` if the user's chosen location cannot be written, if the connection to Java is lost, or if
+  `enableSaveAs()` was not called. It rejects with a `TypeError` for data it cannot write.
+- Only pages whose origin the window's [`SecurityPolicy`](#security) trusts can use it. It runs over a [binary channel](#binary-data-channels),
+  so the Linux note there applies: show the page with `loadResources`, not `loadHtml`. The channel name `jolt.saveAs` is reserved;
+  `openChannel` refuses names that start with `jolt.`.
 
 ## The frontend
 

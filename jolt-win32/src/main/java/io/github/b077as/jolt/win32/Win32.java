@@ -2,6 +2,7 @@ package io.github.b077as.jolt.win32;
 
 import io.github.b077as.jolt.internal.ffi.Native;
 
+import io.github.b077as.jolt.internal.ffi.Guid;
 import java.lang.foreign.Arena;
 import java.lang.foreign.FunctionDescriptor;
 import java.lang.foreign.Linker;
@@ -167,6 +168,9 @@ final class Win32 {
             FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
     private static final MethodHandle SET_WINDOW_POS = Native.downcall(USER32, "SetWindowPos",
             FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT));
+    /** {@code HWND GetWindow(HWND, UINT)}. */
+    private static final MethodHandle GET_WINDOW = Native.downcall(USER32, "GetWindow",
+            FunctionDescriptor.of(ADDRESS, ADDRESS, JAVA_INT));
     private static final MethodHandle GET_WINDOW_RECT = Native.downcall(USER32, "GetWindowRect",
             FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
     private static final MethodHandle IS_ZOOMED = Native.downcall(USER32, "IsZoomed",
@@ -193,6 +197,13 @@ final class Win32 {
             FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT));
     private static final MethodHandle CO_UNINITIALIZE = Native.downcall(OLE32, "CoUninitialize",
             FunctionDescriptor.ofVoid());
+    private static final SymbolLookup SHELL32 = SymbolLookup.libraryLookup("shell32.dll", Arena.global());
+    /** {@code HRESULT CoCreateInstance(REFCLSID, IUnknown* outer, DWORD context, REFIID, void** object)}. */
+    private static final MethodHandle CO_CREATE_INSTANCE = Native.downcall(OLE32, "CoCreateInstance",
+            FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT, ADDRESS, ADDRESS));
+    /** {@code HRESULT SHCreateItemFromParsingName(PCWSTR path, IBindCtx*, REFIID, void** item)}. */
+    private static final MethodHandle SH_CREATE_ITEM_FROM_PARSING_NAME = Native.downcall(SHELL32, "SHCreateItemFromParsingName",
+            FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS, ADDRESS));
     private static final MethodHandle CO_TASK_MEM_FREE = Native.downcall(OLE32, "CoTaskMemFree",
             FunctionDescriptor.ofVoid(ADDRESS));
 
@@ -384,6 +395,15 @@ final class Win32 {
     static void discardPendingQuit(MemorySegment msgBuffer) {
         try {
             int ignored = (int) PEEK_MESSAGE.invokeExact(msgBuffer, MemorySegment.NULL, WM_QUIT, WM_QUIT, PM_REMOVE);
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    /** The enabled popup window owned by {@code owner} (an open modal dialog), or NULL. */
+    static MemorySegment enabledPopupOf(MemorySegment owner) {
+        try {
+            return (MemorySegment) GET_WINDOW.invokeExact(owner, 6 /* GW_ENABLEDPOPUP */);
         } catch (Throwable t) {
             throw rethrow(t);
         }
@@ -582,6 +602,31 @@ final class Win32 {
     static void coUninitialize() {
         try {
             CO_UNINITIALIZE.invokeExact();
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    /** Creates an in-process COM object of class {@code clsid} and returns its interface {@code iid}; throws if that fails. */
+    static MemorySegment coCreateInstance(String clsid, String iid) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment out = arena.allocate(ADDRESS);
+            int hr = (int) CO_CREATE_INSTANCE.invokeExact(arena.allocateFrom(java.lang.foreign.ValueLayout.JAVA_BYTE, Guid.bytes(clsid)),
+                    MemorySegment.NULL, 1 /* CLSCTX_INPROC_SERVER */, arena.allocateFrom(java.lang.foreign.ValueLayout.JAVA_BYTE, Guid.bytes(iid)), out);
+            Com.check("CoCreateInstance " + clsid, hr);
+            return Native.readPointer(out);
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    /** The shell item for a file system path as interface {@code iid}, or NULL if the path cannot be resolved. */
+    static MemorySegment shCreateItemFromParsingName(Arena arena, String path, String iid) {
+        try {
+            MemorySegment out = arena.allocate(ADDRESS);
+            int hr = (int) SH_CREATE_ITEM_FROM_PARSING_NAME.invokeExact(Native.allocWide(arena, path), MemorySegment.NULL,
+                    arena.allocateFrom(java.lang.foreign.ValueLayout.JAVA_BYTE, Guid.bytes(iid)), out);
+            return hr < 0 ? MemorySegment.NULL : Native.readPointer(out);
         } catch (Throwable t) {
             throw rethrow(t);
         }

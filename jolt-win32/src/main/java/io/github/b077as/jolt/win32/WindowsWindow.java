@@ -9,6 +9,7 @@ import io.github.b077as.jolt.WindowClosedException;
 import io.github.b077as.jolt.WindowOptions;
 import io.github.b077as.jolt.internal.BridgeScript;
 import io.github.b077as.jolt.internal.Icons;
+import io.github.b077as.jolt.internal.NativeDialogHost;
 import io.github.b077as.jolt.internal.NativeResourceHost;
 import io.github.b077as.jolt.internal.ResourceService;
 import io.github.b077as.jolt.internal.SecurityGuard;
@@ -37,7 +38,7 @@ import static java.lang.foreign.ValueLayout.JAVA_LONG;
  * <p>Public methods may be called from any thread; they hop to the UI thread. Everything below the
  * "UI thread" marker must only run there.
  */
-final class WindowsWindow implements WebWindow, NativeResourceHost {
+final class WindowsWindow implements WebWindow, NativeResourceHost, NativeDialogHost {
 
     private static final System.Logger LOG = System.getLogger("io.github.b077as.jolt.win32");
     private static final int STYLE = Win32.WS_OVERLAPPEDWINDOW | Win32.WS_CLIPCHILDREN | Win32.WS_CLIPSIBLINGS;
@@ -70,6 +71,8 @@ final class WindowsWindow implements WebWindow, NativeResourceHost {
     private MemorySegment smallIcon = MemorySegment.NULL;
     private boolean webViewReady;
     private boolean destroyed;
+    /** {@link #destroyNow} has started; the window goes as soon as an open dialog has returned. */
+    private volatile boolean closing;
     /** Fills the window behind the web view, so what shows before the web view has painted is the page's colour, not white. */
     private MemorySegment backgroundBrush = MemorySegment.NULL;
     /** The window was asked to be maximized while hidden (or at creation): it is shown maximized. Readable from any thread. */
@@ -337,6 +340,13 @@ public CompletableFuture<String> eval(String script) {
     /** Destroys the native window now; used by the application on shutdown. */
     void destroyNow() {
         if (!destroyed) {
+            closing = true;
+            if (dialogs != null && dialogs.isShowing()) {
+                // Destroying the owner of an open file dialog leaves the shell in a state that crashes the next dialog, so the
+                // dialog is closed first and the window destroyed once its modal loop has returned.
+                dialogs.cancelShowing();
+                return; // WindowsDialogs calls destroyNow again when the dialog is gone
+            }
             Win32.destroyWindow(hwnd); // synchronously delivers WM_DESTROY to handleMessage
         }
     }
@@ -463,6 +473,21 @@ public CompletableFuture<String> eval(String script) {
         } else {
             pending.add(op);
         }
+    }
+
+    private WindowsDialogs dialogs;
+
+    @Override
+    public synchronized WindowsDialogs dialogs() {
+        if (dialogs == null) {
+            dialogs = new WindowsDialogs(app, this);
+        }
+        return dialogs;
+    }
+
+    /** Whether the native window is destroyed or about to be. */
+    boolean isDestroyed() {
+        return destroyed || closing;
     }
 
     /** The native window handle, for tests that check the real window state. */
