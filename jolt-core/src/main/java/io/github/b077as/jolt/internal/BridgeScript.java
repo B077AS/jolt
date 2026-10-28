@@ -30,6 +30,11 @@ public final class BridgeScript {
                     value: Object.freeze({
                       postMessage: (m) => send(String(m)),
                       onMessage: (cb) => { listeners.add(cb); return () => listeners.delete(cb); },
+                      channel: (name, options) => {
+                        const open = window.__joltChannelFactory;
+                        if (!open) throw new Error("no binary channel: call openChannel(name) on the Java side before the page loads");
+                        return open(String(name), options);
+                      },
                       __dispatch: (m) => {
                         for (const cb of [...listeners]) {
                           try { cb(m); } catch (e) { console.error(e); }

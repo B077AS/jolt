@@ -6,6 +6,19 @@ this file says when they do.
 
 The latest version is the one on [Maven Central](https://central.sonatype.com/artifact/io.github.b077as/jolt-core).
 
+## 0.2.3 - 2026-10-28
+
+### Added
+- **Binary channels**: `WebWindow.openChannel(name[, ChannelOptions])` returns a `BinaryChannel`, a named two-way pipe for raw bytes
+  between Java and the page (`jolt.channel(name)` in the page, with `onMessage`, `send`, `onOpen`, `onClose`). For video frames,
+  audio, images, files and other data that is too big or too binary for `postMessage`. `ChannelOptions.newestOnly()` makes a slow
+  page get only the newest message instead of a backlog. The transport is a loopback WebSocket that accepts only origins the
+  window's `SecurityPolicy` trusts and a per-run secret. Tested against a plain WebSocket client and in real windows on Windows and on Linux (X11 and Wayland).
+  On Linux the page must be shown with `loadResources`: WebKitGTK blocks the connection from a `loadHtml` page.
+- `WindowOptions.withMinSize(width, height)`: the smallest size the user can resize the window to (Windows `WM_GETMINMAXINFO`,
+  GTK geometry hints). `WindowOptions` gained the components `minWidth` and `minHeight`, so code that calls its constructor
+  directly (rather than `defaults()` and the `with` methods) needs two more arguments. Checked on Windows and on Linux under X11.
+
 ## 0.2.2 - 2026-10-27
 
 ### Added

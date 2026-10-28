@@ -116,7 +116,7 @@ only activates on its own operating system, so one jar runs on both.
 ```xml
 <properties>
   <maven.compiler.release>25</maven.compiler.release>
-  <jolt.version>0.2.2</jolt.version>
+  <jolt.version>0.2.3</jolt.version>
 </properties>
 
 <dependencies>
@@ -165,9 +165,9 @@ Or pass `--enable-native-access=ALL-UNNAMED` on the `java` command line.
 
 ```kotlin
 dependencies {
-    implementation("io.github.b077as:jolt-core:0.2.2")
-    implementation("io.github.b077as:jolt-win32:0.2.2")
-    implementation("io.github.b077as:jolt-linux:0.2.2")
+    implementation("io.github.b077as:jolt-core:0.2.3")
+    implementation("io.github.b077as:jolt-win32:0.2.3")
+    implementation("io.github.b077as:jolt-linux:0.2.3")
 }
 
 java {
@@ -211,7 +211,8 @@ If you only target one operating system, depend on `jolt-core` and that system's
 - Java request handlers for the page's own requests (`fetch`, forms, htmx, JSON APIs), a `Router` with path parameters, groups,
   filters and error handling, `multipart/form-data` uploads with a configurable size limit, and redirects. Works with any front
   end; htmx is optional.
-- String messages in both directions (`window.jolt.postMessage` and `onMessage` in the page).
+- String messages in both directions (`window.jolt.postMessage` and `onMessage` in the page), and binary **channels** for large
+  or raw data such as video frames (since 0.2.3). See [Binary data: channels](#binary-data-channels).
 - Window icon (PNG, or a multi-size `.ico` for crisp taskbar icons), light or dark native title bar, exact title bar
   colours (Windows 11) and the web view's background colour, set at creation or later.
 - Every `WebWindow` and `Application` method is safe to call from any thread.
@@ -335,6 +336,57 @@ safe to call from any thread. The rule:
 
 > Never block the UI thread waiting for something that needs the UI thread. In particular, do not call `.get()` or
 > `.join()` on the result of `eval` from a message listener.
+
+### Binary data: channels
+
+Available since **0.2.3**.
+
+`postMessage` carries strings, which is right for commands and small JSON. For anything big or binary (video frames, audio,
+images, a file, sensor readings) open a **channel**: a named, two-way pipe that carries raw bytes, with no base64 and no JSON.
+
+```java
+BinaryChannel frames = window.openChannel("frames");          // open it before the page loads
+frames.onMessage(bytes -> handle(bytes));                      // from the page; the ByteBuffer is yours to keep
+frames.send(ByteBuffer.wrap(pixels));                          // to the page; returns false if it could not be accepted
+```
+
+```js
+const frames = jolt.channel("frames");
+frames.onMessage((data) => { /* data is an ArrayBuffer */ });
+frames.send(new Uint8Array([1, 2, 3]));                        // ArrayBuffer, typed array, or a string (sent as UTF-8)
+```
+
+- **The page connects by itself** and reconnects if the connection drops, for example when it reloads. `onOpen` and `onClose`
+  (on both sides) tell you when. `isOpen()` says whether a page is connected right now.
+- **A slow page never blocks Java.** `send` copies the bytes, queues them and returns at once, so it is safe to call from a
+  thread that must not wait (a video callback, say) and to reuse your buffer straight away. What happens when the page cannot
+  keep up is your choice, per channel:
+
+  ```java
+  window.openChannel("video", ChannelOptions.newestOnly());                           // a message not sent yet is replaced by the next one
+  window.openChannel("log",   ChannelOptions.defaults().withMaxQueuedBytes(1 << 20)); // keep order; send() returns false when 1 MB is waiting
+  ```
+
+  Use `newestOnly` for live data where an old frame is worth nothing, and the default for data where every message counts.
+- **Callbacks run on a thread of their own**, one message at a time and in order. They are not the UI thread: use
+  `app.dispatch(...)` to get there.
+- Names are 1 to 128 letters, digits or `. _ : -`, and one name can be open once per window. `channel.close()` frees it.
+- Messages from the page are limited to 64 MB by default (`ChannelOptions.withMaxMessageBytes`); a bigger one closes the
+  connection.
+
+Under the hood a channel is a WebSocket to a server on `127.0.0.1` that belongs to the window. Any program on the machine, and
+any web page in the user's browser, can reach a loopback port, so a connection is only accepted when its `Origin` is one the
+window's [`SecurityPolicy`](#security) trusts (checked when it connects, so `setSecurity` takes effect), it carries a random
+per-run secret that only the page's own script has, and a channel of that name is open. Your page does not see any of this. The
+transport is an implementation detail and may change to something faster on a platform without changing the API.
+
+Checked so far: the server against a plain WebSocket client (sizes from 0 bytes to 2 MB, fragmented messages, refused origins and
+secrets, back-pressure), and a real page that sends 256 KB through Java and back and reconnects after a reload, on Windows
+(WebView2) and on Linux (WebKitGTK 2.52 under X11, in Docker). Throughput has not been measured.
+
+**On Linux, use `loadResources` for a page that opens channels, not `loadHtml`.** WebKitGTK refuses a `ws://` connection from
+the `https://jolt.localhost` document that `loadHtml` creates (mixed content), before it reaches the network. Pages served by
+`loadResources` (the `jolt://app` origin, or the loopback fallback) can open one; this was checked by a probe. On Windows both work.
 
 ## The frontend
 
@@ -512,6 +564,10 @@ window's own background and then whatever the web view paints before the page do
 `show()` once the page is ready (the page tells you with `window.jolt.postMessage`) removes that: the window appears with
 its content already drawn. `show()` also works for a window that was created hidden and shown much later; the page
 starts rendering as soon as it appears.
+
+`WindowOptions.withMinSize(width, height)` sets the smallest size the user can drag the window to (client-area logical
+pixels; `0` means no limit). Available since **0.2.3**. Checked by tests that resize a window below its minimum on Windows and on Linux
+under X11; a Wayland compositor decides window sizes itself, so it was not checked there.
 
 `window.maximize()`, `window.restore()` and `window.isMaximized()` do the same later, from any thread. Maximizing a hidden
 window does not show it: the window is maximized when it is first shown.
@@ -883,7 +939,7 @@ Available since **0.2.1**; versions before that do not have it.
 </dependency>
 ```
 
-Gradle: `implementation("io.github.b077as:jolt-credentials:0.2.2")`.
+Gradle: `implementation("io.github.b077as:jolt-credentials:0.2.3")`.
 
 ```java
 CredentialStore store = CredentialStore.open("com.example.mail");   // your app's own namespace

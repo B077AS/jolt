@@ -111,10 +111,15 @@ class LinuxAppearanceTest {
      * positions itself and an application cannot even ask where its window is.
      */
     private static int[] geometryOnScreen(WindowOptions options) {
+        return geometryOnScreen(options, w -> { });
+    }
+
+    private static int[] geometryOnScreen(WindowOptions options, java.util.function.Consumer<WebWindow> act) {
         CompletableFuture<int[]> result = new CompletableFuture<>();
         WebWindowContract.runApp(30, app -> {
             LinuxWindow window = (LinuxWindow) app.createWindow(options);
             // a few round trips through the main loop so the window has been mapped and placed
+            act.accept(window);
             window.eval("1").thenCompose(a -> window.eval("2")).thenCompose(a -> window.eval("3")).thenRun(() -> app.dispatch(() -> {
                 try {
                     result.complete(Gtk.windowGeometry(window.nativeWindow()));
@@ -137,6 +142,15 @@ class LinuxAppearanceTest {
         int expectedY = (g[5] - g[3]) / 2;
         assertTrue(Math.abs(g[0] - expectedX) <= 2, "x " + g[0] + " but the centre of a " + g[4] + " wide screen is " + expectedX);
         assertTrue(Math.abs(g[1] - expectedY) <= 2, "y " + g[1] + " but the centre of a " + g[5] + " high screen is " + expectedY);
+    }
+
+    @Test
+    void aWindowCannotBeResizedBelowItsMinimumSize() {
+        org.junit.jupiter.api.Assumptions.assumeTrue(System.getenv("JOLT_TEST_KIOSK_COMPOSITOR") == null,
+                "the kiosk compositor keeps every window the size of the screen");
+        int[] g = geometryOnScreen(WindowOptions.defaults().withSize(900, 700).withMinSize(600, 400), w -> w.setSize(200, 150));
+        assertTrue(g[2] >= 600 && g[2] < 700, "width " + g[2] + " after asking for 200 with a minimum of 600");
+        assertTrue(g[3] >= 400 && g[3] < 500, "height " + g[3] + " after asking for 150 with a minimum of 400");
     }
 
     @Test

@@ -348,6 +348,13 @@ public CompletableFuture<String> eval(String script) {
                 resizeWebView();
                 return 0L;
             }
+            case Win32.WM_GETMINMAXINFO -> {
+                if (options.minWidth() == 0 && options.minHeight() == 0) {
+                    return null;
+                }
+                applyMinTrackSize(lParam);
+                return 0L;
+            }
             case Win32.WM_SHOWWINDOW -> {
                 // A web view created while its window was hidden does not paint when the window is shown later unless it is told.
                 syncWebViewVisibility(wParam != 0);
@@ -599,6 +606,20 @@ public CompletableFuture<String> eval(String script) {
             Win32.setWindowPos(hwnd, 0, 0, rect.get(JAVA_INT, 8) - rect.get(JAVA_INT, 0),
                     rect.get(JAVA_INT, 12) - rect.get(JAVA_INT, 4),
                     Win32.SWP_NOMOVE | Win32.SWP_NOZORDER | Win32.SWP_NOACTIVATE);
+        }
+    }
+
+    /** Fills in {@code ptMinTrackSize} of the MINMAXINFO that {@code lParam} points at, with the frame added to the client minimum. */
+    private void applyMinTrackSize(long lParam) {
+        int dpi = Win32.dpiForWindow(hwnd);
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment rect = arena.allocate(Win32.RECT);
+            rect.set(JAVA_INT, 8, Math.round(options.minWidth() * dpi / 96f));
+            rect.set(JAVA_INT, 12, Math.round(options.minHeight() * dpi / 96f));
+            Win32.adjustWindowRectExForDpi(rect, STYLE, 0, dpi);
+            MemorySegment info = MemorySegment.ofAddress(lParam).reinterpret(40); // MINMAXINFO: five POINTs
+            info.set(JAVA_INT, 24, rect.get(JAVA_INT, 8) - rect.get(JAVA_INT, 0));
+            info.set(JAVA_INT, 28, rect.get(JAVA_INT, 12) - rect.get(JAVA_INT, 4));
         }
     }
 

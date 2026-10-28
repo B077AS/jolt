@@ -3,6 +3,7 @@ package io.github.b077as.jolt.contract;
 import com.sun.net.httpserver.HttpServer;
 import io.github.b077as.jolt.AppOptions;
 import io.github.b077as.jolt.Application;
+import io.github.b077as.jolt.BinaryChannel;
 import io.github.b077as.jolt.BlockedEvent;
 import io.github.b077as.jolt.SecurityPolicy;
 import io.github.b077as.jolt.WebWindow;
@@ -26,6 +27,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -99,6 +101,60 @@ public abstract class WebWindowContract {
             window.loadHtml("<script>window.jolt.postMessage('hello from page')</script>");
         });
         assertEquals("hello from page", received.getNow(null));
+    }
+
+    /**
+     * Shows a page that runs {@code script}. It is served as a resource, not with {@code loadHtml}: WebKitGTK blocks a WebSocket
+     * to 'ws://127.0.0.1' from the 'https://jolt.localhost' document {@code loadHtml} creates (mixed content), while the
+     * resource origin of each backend may open one.
+     */
+    private static void loadChannelPage(WebWindow window, String script) {
+        byte[] page = ("<script>" + script + "</script>").getBytes(StandardCharsets.UTF_8);
+        window.loadResources(path -> path.endsWith("index.html") ? page : null);
+    }
+
+    @Test
+    public void aBinaryChannelCarriesEveryByteValueBothWays() {
+        byte[] all = new byte[256 * 1024];
+        for (int i = 0; i < all.length; i++) {
+            all[i] = (byte) (i * 31 + (i >> 8));
+        }
+        CompletableFuture<byte[]> echoed = new CompletableFuture<>();
+        runApp(30, app -> {
+            WebWindow window = app.createWindow(WindowOptions.defaults().withSize(400, 300));
+            BinaryChannel channel = window.openChannel("bytes");
+            channel.onOpen(() -> channel.send(all));
+            channel.onMessage(data -> {
+                byte[] copy = new byte[data.remaining()];
+                data.get(copy);
+                echoed.complete(copy);
+                window.close();
+            });
+            // the page sends back what it receives, as an ArrayBuffer
+            loadChannelPage(window, "const c = jolt.channel('bytes'); c.onMessage(d => c.send(d));");
+        });
+        assertTrue(echoed.isDone(), "the page never answered");
+        assertArrayEquals(all, echoed.getNow(null));
+    }
+
+    @Test
+    public void aBinaryChannelReconnectsWhenThePageReloads() {
+        AtomicInteger opened = new AtomicInteger();
+        CompletableFuture<Integer> reconnected = new CompletableFuture<>();
+        runApp(30, app -> {
+            WebWindow window = app.createWindow(WindowOptions.defaults().withSize(400, 300));
+            BinaryChannel channel = window.openChannel("reload");
+            channel.onOpen(() -> {
+                if (opened.incrementAndGet() == 1) {
+                    window.eval("location.reload()");
+                } else {
+                    reconnected.complete(opened.get());
+                    window.close();
+                }
+            });
+            loadChannelPage(window, "jolt.channel('reload');");
+        });
+        assertTrue(reconnected.isDone(), "the reloaded page never reconnected");
     }
 
     @Test

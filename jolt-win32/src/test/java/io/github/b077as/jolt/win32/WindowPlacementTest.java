@@ -82,6 +82,31 @@ class WindowPlacementTest {
         assertTrue(o.bounds[1] >= o.workArea[1], "top edge on screen: " + o.bounds[1]);
     }
 
+    private static int[] outerSize(Observed o) {
+        return new int[] {o.bounds[2] - o.bounds[0], o.bounds[3] - o.bounds[1]};
+    }
+
+    @Test
+    void aWindowCannotBeMadeSmallerThanItsMinimumSize() {
+        int[] expected = outerSize(observe(WindowOptions.defaults().withSize(600, 400), NOTHING));
+        Observed shrunk = observe(WindowOptions.defaults().withSize(900, 700).withMinSize(600, 400), w -> w.setSize(200, 150));
+        assertArrayEquals(expected, outerSize(shrunk), "outer size after asking for 200x150 with a 600x400 minimum");
+    }
+
+    @Test
+    void aMinimumSizeDoesNotStopAWindowFromBeingLarger() {
+        int[] expected = outerSize(observe(WindowOptions.defaults().withSize(900, 700), NOTHING));
+        Observed o = observe(WindowOptions.defaults().withSize(900, 700).withMinSize(600, 400), NOTHING);
+        assertArrayEquals(expected, outerSize(o));
+    }
+
+    @Test
+    void aWidthOnlyMinimumLeavesTheHeightFree() {
+        int[] tall = outerSize(observe(WindowOptions.defaults().withSize(600, 150), NOTHING));
+        Observed o = observe(WindowOptions.defaults().withSize(900, 700).withMinSize(600, 0), w -> w.setSize(200, 150));
+        assertArrayEquals(tall, outerSize(o));
+    }
+
     @Test
     void aWindowCreatedMaximizedFillsTheUsableArea() {
         Observed o = observe(WindowOptions.defaults().withMaximized(true), NOTHING);

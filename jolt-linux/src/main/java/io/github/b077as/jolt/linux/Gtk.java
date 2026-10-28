@@ -56,6 +56,8 @@ final class Gtk {
     private static final MethodHandle GTK_WINDOW_SET_TITLE = h(GTK, "gtk_window_set_title", FunctionDescriptor.ofVoid(ADDRESS, ADDRESS));
     private static final MethodHandle GTK_WINDOW_SET_DEFAULT_SIZE = h(GTK, "gtk_window_set_default_size",
             FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT, JAVA_INT));
+    private static final MethodHandle GTK_WINDOW_SET_GEOMETRY_HINTS = h(GTK, "gtk_window_set_geometry_hints",
+            FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, ADDRESS, JAVA_INT));
     private static final MethodHandle GTK_WINDOW_RESIZE = h(GTK, "gtk_window_resize", FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT, JAVA_INT));
     private static final MethodHandle GTK_WINDOW_MAXIMIZE = h(GTK, "gtk_window_maximize", FunctionDescriptor.ofVoid(ADDRESS));
     private static final MethodHandle GTK_WINDOW_UNMAXIMIZE = h(GTK, "gtk_window_unmaximize", FunctionDescriptor.ofVoid(ADDRESS));
@@ -223,6 +225,17 @@ final class Gtk {
 
     static void windowSetDefaultSize(MemorySegment window, int width, int height) {
         call(GTK_WINDOW_SET_DEFAULT_SIZE, window, width, height);
+    }
+
+    /** The smallest size the window manager lets the user resize the window to. Zero in one dimension leaves it unconstrained. */
+    static void windowSetMinSize(MemorySegment window, int minWidth, int minHeight) {
+        final int gdkHintMinSize = 1 << 1;
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment geometry = arena.allocate(56); // GdkGeometry: min_width and min_height come first
+            geometry.set(JAVA_INT, 0, minWidth);
+            geometry.set(JAVA_INT, 4, minHeight);
+            call(GTK_WINDOW_SET_GEOMETRY_HINTS, window, MemorySegment.NULL, geometry, gdkHintMinSize);
+        }
     }
 
     static void windowResize(MemorySegment window, int width, int height) {
