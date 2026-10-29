@@ -6,7 +6,7 @@ this file says when they do.
 
 The latest version is the one on [Maven Central](https://central.sonatype.com/artifact/io.github.b077as/jolt-core).
 
-## Unreleased
+## 0.2.4 - 2026-10-29
 
 ### Added
 - **File dialogs**: `WebWindow.dialogs()` returns `Dialogs`, the operating system's own open, save and choose-folder dialogs
