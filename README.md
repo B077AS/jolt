@@ -116,7 +116,7 @@ only activates on its own operating system, so one jar runs on both.
 ```xml
 <properties>
   <maven.compiler.release>25</maven.compiler.release>
-  <jolt.version>0.2.3</jolt.version>
+  <jolt.version>0.2.4</jolt.version>
 </properties>
 
 <dependencies>
@@ -165,9 +165,9 @@ Or pass `--enable-native-access=ALL-UNNAMED` on the `java` command line.
 
 ```kotlin
 dependencies {
-    implementation("io.github.b077as:jolt-core:0.2.3")
-    implementation("io.github.b077as:jolt-win32:0.2.3")
-    implementation("io.github.b077as:jolt-linux:0.2.3")
+    implementation("io.github.b077as:jolt-core:0.2.4")
+    implementation("io.github.b077as:jolt-win32:0.2.4")
+    implementation("io.github.b077as:jolt-linux:0.2.4")
 }
 
 java {
@@ -393,7 +393,8 @@ the `https://jolt.localhost` document that `loadHtml` creates (mixed content), b
 ### Choosing files: open and save dialogs
 
 A web page can open a file picker (`<input type="file">`) but only ever sees the file's contents, never its path, and it cannot
-choose where a file is saved. For that, ask the operating system's own dialogs through the window:
+choose where a file is saved. For that, ask the operating system's own dialogs through the window
+(available since **0.2.4**):
 
 ```java
 Dialogs dialogs = window.dialogs();
@@ -1014,7 +1015,7 @@ Available since **0.2.1**; versions before that do not have it.
 </dependency>
 ```
 
-Gradle: `implementation("io.github.b077as:jolt-credentials:0.2.3")`.
+Gradle: `implementation("io.github.b077as:jolt-credentials:0.2.4")`.
 
 ```java
 CredentialStore store = CredentialStore.open("com.example.mail");   // your app's own namespace
