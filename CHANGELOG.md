@@ -6,6 +6,23 @@ this file says when they do.
 
 The latest version is the one on [Maven Central](https://central.sonatype.com/artifact/io.github.b077as/jolt-core).
 
+## Unreleased
+
+### Added
+- **File dialogs**: `WebWindow.dialogs()` returns `Dialogs`, the operating system's own open, save and choose-folder dialogs
+  (`openFile`, `openFiles`, `saveFile`, `chooseFolder`), owned by the window. Each returns a `CompletableFuture` that completes with the
+  real path the user chose, or with an empty result when they cancel. `FileDialogOptions` sets the title, the starting folder, a
+  proposed or preselected file name and `FileFilter`s. Use them to read a file by its path, or to let the user pick where Java
+  saves one. Windows uses the common item dialogs; Linux uses `GtkFileChooserNative`, which goes through the desktop portal
+  when the app is sandboxed. `FileDialogOptions.withSize(width, height)` asks for a bigger dialog (Windows resizes it after it opens;
+  on Linux a dialog with a size is GTK's own chooser instead of the portal's). Tested with the real dialogs on Windows and on Linux (X11
+  and Wayland, in Docker).
+
+- **`jolt.saveAs(data, options)`** in the page, after `window.enableSaveAs()` (optionally with the starting folder) in Java: opens the
+  save dialog, then writes the string, bytes or `Blob` the page hands over to the file the user chose. The page learns only the file
+  name. The data goes to a temporary file that replaces the target when complete, so a failed transfer leaves nothing half written.
+  Channel names starting with `jolt.` are now reserved.
+
 ## 0.2.3 - 2026-10-28
 
 ### Added

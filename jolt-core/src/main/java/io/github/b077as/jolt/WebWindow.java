@@ -101,6 +101,38 @@ public interface WebWindow {
     /** Navigates to a document built from {@code html}. The page gets the origin {@link SecurityPolicy#APP_ORIGIN}, which is always trusted. */
     void loadHtml(String html);
 
+    /**
+     * The operating system's file dialogs (open, save, choose a folder), owned by this window.
+     *
+     * @throws UnsupportedOperationException if this window's platform has none
+     */
+    default Dialogs dialogs() {
+        if (this instanceof io.github.b077as.jolt.internal.NativeDialogHost host) {
+            return host.dialogs();
+        }
+        throw new UnsupportedOperationException("this window cannot show native dialogs");
+    }
+
+    /**
+     * Lets the pages of this window save files with {@code jolt.saveAs(data, options)}: the operating system's save dialog opens,
+     * and the bytes the page hands over are written to the file the user chooses. Only pages whose origin the
+     * {@link SecurityPolicy} trusts can use it, the user always picks the file, and the page learns only its name. Enable it before
+     * the page loads.
+     *
+     * <pre>{@code
+     * const saved = await jolt.saveAs(blobOrBytesOrText, { name: "report.pdf", title: "Export", filters: [{ name: "PDF", extensions: ["pdf"] }] });
+     * if (saved) console.log(saved.name, saved.size); else console.log("cancelled");   // null when the user cancels
+     * }</pre>
+     */
+    default void enableSaveAs() {
+        enableSaveAs(null);
+    }
+
+    /** Like {@link #enableSaveAs()}, with the folder the save dialog starts in ({@code null}: where the system last had the user). */
+    default void enableSaveAs(java.nio.file.Path initialDirectory) {
+        io.github.b077as.jolt.internal.PageSaveAs.enable(this, initialDirectory);
+    }
+
     /** Opens a {@link BinaryChannel} with the default {@link ChannelOptions}. */
     default BinaryChannel openChannel(String name) {
         return openChannel(name, ChannelOptions.defaults());
@@ -113,6 +145,9 @@ public interface WebWindow {
      * @throws IllegalStateException if a channel of that name is already open on this window
      */
     default BinaryChannel openChannel(String name, ChannelOptions options) {
+        if (name != null && name.startsWith("jolt.")) {
+            throw new IllegalArgumentException("channel names starting with \"jolt.\" are reserved: " + name);
+        }
         return io.github.b077as.jolt.internal.ChannelServers.of(this).open(name, options);
     }
 

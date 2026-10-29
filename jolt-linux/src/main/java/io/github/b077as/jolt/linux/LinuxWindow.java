@@ -9,6 +9,7 @@ import io.github.b077as.jolt.WindowClosedException;
 import io.github.b077as.jolt.WindowOptions;
 import io.github.b077as.jolt.internal.BlobBodyShim;
 import io.github.b077as.jolt.internal.BridgeScript;
+import io.github.b077as.jolt.internal.NativeDialogHost;
 import io.github.b077as.jolt.internal.NativeResourceHost;
 import io.github.b077as.jolt.internal.ResourceService;
 import io.github.b077as.jolt.internal.SecurityGuard;
@@ -27,7 +28,7 @@ import java.util.function.Consumer;
  * <p>Public methods may be called from any thread; they hop to the UI thread. Unlike WebView2, WebKitGTK creates
  * the web view synchronously, so the window is ready as soon as the constructor returns.
  */
-final class LinuxWindow implements WebWindow, NativeResourceHost {
+final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHost {
 
     private static final System.Logger LOG = System.getLogger("io.github.b077as.jolt.linux");
     /** Name of the {@code window.webkit.messageHandlers.<name>} channel; must match the bridge script. */
@@ -47,6 +48,9 @@ final class LinuxWindow implements WebWindow, NativeResourceHost {
     private MemorySegment webView;
     private MemorySegment contentManager;
     private boolean destroyed;
+    /** {@link #destroyNow} has started; the window goes as soon as an open dialog has returned. */
+    private volatile boolean closing;
+    private LinuxDialogs dialogs;
     /** Whether the window has been shown at least once (UI thread). */
     private boolean shown;
     /** Asked to be maximized before it was first shown. Readable from any thread. */
@@ -364,8 +368,26 @@ final class LinuxWindow implements WebWindow, NativeResourceHost {
     /** Destroys the native window now; its "destroy" signal then calls {@link #onDestroyed()}. */
     void destroyNow() {
         if (!destroyed) {
+            closing = true;
+            if (dialogs != null && dialogs.isShowing()) {
+                dialogs.respond(false); // LinuxDialogs calls destroyNow again once the dialog has returned
+                return;
+            }
             Gtk.widgetDestroy(window);
         }
+    }
+
+    @Override
+    public synchronized LinuxDialogs dialogs() {
+        if (dialogs == null) {
+            dialogs = new LinuxDialogs(app, this);
+        }
+        return dialogs;
+    }
+
+    /** Whether the native window is destroyed or about to be. */
+    boolean isDestroyed() {
+        return destroyed || closing;
     }
 
     /**
