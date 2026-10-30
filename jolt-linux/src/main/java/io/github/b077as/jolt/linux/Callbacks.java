@@ -44,6 +44,8 @@ final class Callbacks {
     static final MemorySegment URI_SCHEME_REQUEST;
     /** {@code GAsyncReadyCallback} for {@code webkit_web_view_evaluate_javascript}: user_data is the eval id. */
     static final MemorySegment EVAL_DONE;
+    /** {@code GLogFunc}: drops {@link Gtk#KNOWN_NOISE}, prints everything else as GLib would. */
+    static final MemorySegment LOG;
 
     static {
         MethodHandles.Lookup lookup = MethodHandles.lookup();
@@ -76,6 +78,9 @@ final class Callbacks {
         EVAL_DONE = stub(lookup, forever, "onEvalDone",
                 MethodType.methodType(void.class, MemorySegment.class, MemorySegment.class, MemorySegment.class),
                 FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, ADDRESS), 0);
+        LOG = stub(lookup, forever, "onLog",
+                MethodType.methodType(void.class, MemorySegment.class, int.class, MemorySegment.class, MemorySegment.class),
+                FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT, ADDRESS, ADDRESS), 0);
     }
 
     private Callbacks() {}
@@ -157,6 +162,12 @@ final class Callbacks {
         LinuxApplication app = Registry.get(data.address(), LinuxApplication.class);
         if (app != null) {
             app.onSchemeRequest(request);
+        }
+    }
+
+    private static void onLog(MemorySegment domain, int level, MemorySegment message, MemorySegment data) {
+        if (!Gtk.isKnownNoise(Gtk.readUtf8(message))) {
+            Gtk.logDefault(domain, level, message);
         }
     }
 

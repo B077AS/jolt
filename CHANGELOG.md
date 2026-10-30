@@ -6,6 +6,23 @@ this file says when they do.
 
 The latest version is the one on [Maven Central](https://central.sonatype.com/artifact/io.github.b077as/jolt-core).
 
+## 0.2.5 - 2026-10-30
+
+### Added
+- **`Application.openExternal(URI)`**: opens an `http`, `https` or `mailto` address in the user's default browser or mail program
+  (`ShellExecuteW` on Windows, `g_app_info_launch_default_for_uri` on Linux). Any other scheme, such as `file:`, throws
+  `IllegalArgumentException`, because handing it to the shell could start a program. The future says whether the system accepted the
+  request, not whether the page loaded. Useful from `onBlocked` to send a blocked link to the browser.
+- **`AppOptions.withQuietNativeLogs(boolean)`** (Linux, off by default): hides a short list of known harmless GTK warnings, such as
+  `GFileInfo created without standard::size` from the file chooser. Every other native message is still printed.
+  `AppOptions` gained the component `quietNativeLogs`; the old three-argument constructor still works.
+
+### Changed
+- Linux: the process is named after the app id (`g_set_prgname`) before GTK starts, so on Wayland the window's `app_id` is your app id
+  instead of `java` and the compositor can find the icon through `<appId>.desktop`.
+- The README is shorter and simpler.
+
+
 ## 0.2.4 - 2026-10-29
 
 ### Added

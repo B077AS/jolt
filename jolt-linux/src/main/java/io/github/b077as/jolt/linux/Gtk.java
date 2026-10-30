@@ -33,6 +33,7 @@ final class Gtk {
     private static final SymbolLookup GLIB = SymbolLookup.libraryLookup("libglib-2.0.so.0", LIBS);
     private static final SymbolLookup GOBJECT = SymbolLookup.libraryLookup("libgobject-2.0.so.0", LIBS);
     private static final SymbolLookup GTK = SymbolLookup.libraryLookup("libgtk-3.so.0", LIBS);
+    private static final SymbolLookup GIO = SymbolLookup.libraryLookup("libgio-2.0.so.0", LIBS);
     private static final SymbolLookup JSC = SymbolLookup.libraryLookup("libjavascriptcoregtk-4.1.so.0", LIBS);
     private static final SymbolLookup WEBKIT = SymbolLookup.libraryLookup("libwebkit2gtk-4.1.so.0", LIBS);
 
@@ -43,6 +44,14 @@ final class Gtk {
     private static final MethodHandle G_OBJECT_UNREF = h(GOBJECT, "g_object_unref", FunctionDescriptor.ofVoid(ADDRESS));
     private static final MethodHandle G_SIGNAL_CONNECT_DATA = h(GOBJECT, "g_signal_connect_data",
             FunctionDescriptor.of(JAVA_LONG, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, JAVA_INT));
+    private static final MethodHandle G_APP_INFO_LAUNCH_DEFAULT_FOR_URI = h(GIO, "g_app_info_launch_default_for_uri",
+            FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+    private static final MethodHandle G_SET_PRGNAME = h(GLIB, "g_set_prgname", FunctionDescriptor.ofVoid(ADDRESS));
+    private static final MethodHandle G_SET_APPLICATION_NAME = h(GLIB, "g_set_application_name", FunctionDescriptor.ofVoid(ADDRESS));
+    private static final MethodHandle G_LOG_SET_HANDLER = h(GLIB, "g_log_set_handler",
+            FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT, ADDRESS, ADDRESS));
+    private static final MethodHandle G_LOG_DEFAULT_HANDLER = h(GLIB, "g_log_default_handler",
+            FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT, ADDRESS, ADDRESS));
     /** {@code g_object_new(GType, const char* first_property, ...)} with two property/value pairs and NULL. */
     private static final MethodHandle G_OBJECT_NEW_2 = h(GOBJECT, "g_object_new",
             FunctionDescriptor.of(ADDRESS, JAVA_LONG, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS),
@@ -200,6 +209,65 @@ final class Gtk {
     }
 
     // ---- GTK ----
+
+    /**
+     * Names the program after {@code appId} before GTK starts. On Wayland the compositor takes the window's
+     * {@code app_id} from the program name (otherwise {@code java}) and finds the icon through the
+     * {@code <appId>.desktop} file.
+     */
+    static void setProgramName(String appId) {
+        try (Arena arena = Arena.ofConfined()) {
+            call(G_SET_PRGNAME, utf8(arena, appId)); // GLib copies the string
+            call(G_SET_APPLICATION_NAME, utf8(arena, appId));
+        }
+    }
+
+    /** Messages (by text) that {@link #hideKnownNoise} drops. */
+    static final String[] KNOWN_NOISE = {
+            "GFileInfo created without standard::size", // GTK 3 file chooser, harmless
+            "g_file_info_get_size): should not be reached",
+    };
+
+    /** Whether {@code message} is one of the known harmless GTK messages. */
+    static boolean isKnownNoise(String message) {
+        if (message != null) {
+            for (String noise : KNOWN_NOISE) {
+                if (message.contains(noise)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static final int G_LOG_LEVEL_CRITICAL = 1 << 3;
+    private static final int G_LOG_LEVEL_WARNING = 1 << 4;
+
+    /** Routes GLib-GIO warnings and criticals through {@link Callbacks#LOG}, which drops {@link #KNOWN_NOISE}. */
+    static void hideKnownNoise() {
+        try (Arena arena = Arena.ofConfined()) {
+            call(G_LOG_SET_HANDLER, utf8(arena, "GLib-GIO"), G_LOG_LEVEL_CRITICAL | G_LOG_LEVEL_WARNING, Callbacks.LOG,
+                    MemorySegment.NULL);
+        }
+    }
+
+    /** What GLib would have done with the message. */
+    static void logDefault(MemorySegment domain, int level, MemorySegment message) {
+        call(G_LOG_DEFAULT_HANDLER, domain, level, message, MemorySegment.NULL);
+    }
+
+    /** Opens {@code uri} with the desktop's default handler. Returns whether the desktop accepted it. */
+    static boolean launchDefaultForUri(String uri) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment error = arena.allocate(ADDRESS);
+            boolean launched = (int) call(G_APP_INFO_LAUNCH_DEFAULT_FOR_URI, utf8(arena, uri), MemorySegment.NULL, error) != 0;
+            MemorySegment e = error.get(ADDRESS, 0);
+            if (!e.equals(MemorySegment.NULL)) {
+                errorFree(e);
+            }
+            return launched;
+        }
+    }
 
     static boolean initCheck() {
         return (int) call(GTK_INIT_CHECK, MemorySegment.NULL, MemorySegment.NULL) != 0;
