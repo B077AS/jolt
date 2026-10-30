@@ -59,6 +59,16 @@ public interface Application extends AutoCloseable {
         return result;
     }
 
+    /**
+     * Opens a web or mail address in the user's default browser or mail program. Only {@code http}, {@code https}
+     * and {@code mailto} are accepted; anything else (for example {@code file:}) throws
+     * {@link IllegalArgumentException}, because handing it to the shell could start a program. The future completes
+     * with whether the system accepted the request, not whether the page loaded.
+     */
+    default CompletableFuture<Boolean> openExternal(java.net.URI uri) {
+        throw new UnsupportedOperationException("this platform cannot open external addresses");
+    }
+
     /** Creates a window hosting a web view. Must be called on the UI thread. */
     WebWindow createWindow(WindowOptions options);
 

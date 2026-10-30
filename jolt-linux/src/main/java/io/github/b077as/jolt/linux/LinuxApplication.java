@@ -116,6 +116,10 @@ final class LinuxApplication implements Application {
             } catch (LinkageError | IllegalArgumentException e) {
                 throw new JoltException("GTK 3 / WebKitGTK 4.1 are not installed: " + LinuxPlatform.INSTALL_HINT, e);
             }
+            Gtk.setProgramName(options.appId());
+            if (options.quietNativeLogs()) {
+                Gtk.hideKnownNoise();
+            }
             if (!Gtk.initCheck()) {
                 throw new JoltException("GTK could not open a display (is DISPLAY or WAYLAND_DISPLAY set?)");
             }
@@ -185,6 +189,12 @@ final class LinuxApplication implements Application {
     @Override
     public boolean isUiThread() {
         return Thread.currentThread() == uiThread;
+    }
+
+    @Override
+    public java.util.concurrent.CompletableFuture<Boolean> openExternal(java.net.URI uri) {
+        String target = io.github.b077as.jolt.internal.ExternalUri.check(uri);
+        return submit(() -> Gtk.launchDefaultForUri(target));
     }
 
     @Override

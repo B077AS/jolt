@@ -172,6 +172,12 @@ final class WindowsApplication implements Application {
     }
 
     @Override
+    public java.util.concurrent.CompletableFuture<Boolean> openExternal(java.net.URI uri) {
+        String target = io.github.b077as.jolt.internal.ExternalUri.check(uri);
+        return submit(() -> Win32.shellOpen(target));
+    }
+
+    @Override
     public WebWindow createWindow(WindowOptions windowOptions) {
         if (!isUiThread()) {
             throw new IllegalStateException("createWindow must be called on the UI thread (inside run's onStart)");

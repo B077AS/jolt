@@ -204,6 +204,9 @@ final class Win32 {
     /** {@code HRESULT SHCreateItemFromParsingName(PCWSTR path, IBindCtx*, REFIID, void** item)}. */
     private static final MethodHandle SH_CREATE_ITEM_FROM_PARSING_NAME = Native.downcall(SHELL32, "SHCreateItemFromParsingName",
             FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS, ADDRESS));
+    /** {@code HINSTANCE ShellExecuteW(HWND, PCWSTR verb, PCWSTR file, PCWSTR params, PCWSTR dir, INT show)}; above 32 means success. */
+    private static final MethodHandle SHELL_EXECUTE_W = Native.downcall(SHELL32, "ShellExecuteW",
+            FunctionDescriptor.of(ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, JAVA_INT));
     private static final MethodHandle CO_TASK_MEM_FREE = Native.downcall(OLE32, "CoTaskMemFree",
             FunctionDescriptor.ofVoid(ADDRESS));
 
@@ -635,6 +638,19 @@ final class Win32 {
     static void coTaskMemFree(MemorySegment ptr) {
         try {
             CO_TASK_MEM_FREE.invokeExact(ptr);
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    /** Asks the shell to open {@code target} with its default handler. Returns whether the shell accepted it. */
+    static boolean shellOpen(String target) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment verb = arena.allocateFrom("open", java.nio.charset.StandardCharsets.UTF_16LE);
+            MemorySegment file = arena.allocateFrom(target, java.nio.charset.StandardCharsets.UTF_16LE);
+            MemorySegment result = (MemorySegment) SHELL_EXECUTE_W.invokeExact(MemorySegment.NULL, verb, file,
+                    MemorySegment.NULL, MemorySegment.NULL, SW_SHOW);
+            return result.address() > 32;
         } catch (Throwable t) {
             throw rethrow(t);
         }

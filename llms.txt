@@ -2,7 +2,7 @@
 
 > Jolt opens a native window on Windows and Linux whose contents are a web page, and lets that page talk to Java in the same process. It uses the web view the operating system already has (WebView2 on Windows, WebKitGTK 4.1 on Linux), so there is no bundled browser. It is built on Java 25's Foreign Function & Memory API: no JNI, no native code to compile. License: Apache 2.0. Status: early (0.x), APIs can still change.
 
-Current version: 0.2.4 (see CHANGELOG.md for what each version added; Maven Central is the source of truth for the latest).
+Current version: 0.2.5 (see CHANGELOG.md for what each version added; Maven Central is the source of truth for the latest).
 Group id: `io.github.b077as`. Java 25 or newer. macOS is not supported.
 
 Modules (all released with the same version):
@@ -12,6 +12,7 @@ Modules (all released with the same version):
 - Window placement, since 0.2.2: `WindowOptions.withMaximized`, `withCentered` (the default), `withVisible(false)` plus `show()` once the page is ready (no blank flash at startup), `WebWindow.maximize/restore/isMaximized`.
 - `jolt-credentials`: optional, since 0.2.1. Stores passwords and tokens in the Windows Credential Manager or the Linux Secret Service. No dependency on `jolt-core`.
 - File dialogs and binary channels, since 0.2.4 and 0.2.3: `WebWindow.dialogs()` (open, save, choose-folder), `jolt.saveAs` in the page, `WebWindow.openChannel` for raw bytes between Java and the page.
+- `Application.openExternal(URI)` (http, https, mailto) and `AppOptions.withQuietNativeLogs`, since 0.2.5.
 
 Run with `--enable-native-access=ALL-UNNAMED` (or set `Enable-Native-Access: ALL-UNNAMED` in the jar manifest).
 
@@ -24,4 +25,4 @@ Run with `--enable-native-access=ALL-UNNAMED` (or set `Enable-Native-Access: ALL
 ## What is and is not verified
 - Windows: tested against real WebView2 windows and the real Credential Manager.
 - Linux: tested in Docker (Ubuntu 24.04) on X11 and Wayland; the credentials module only against gnome-keyring.
-- Not verified: other Linux distributions, KWallet, KeePassXC, real GPUs, Windows 10 specifics. See the README sections "Things to know" and "When something goes wrong".
+- Not verified: other Linux distributions, KWallet, KeePassXC, real GPUs, Windows 10 specifics. See the README section "When something goes wrong".
