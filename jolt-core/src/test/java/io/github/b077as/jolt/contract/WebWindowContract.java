@@ -2,10 +2,15 @@ package io.github.b077as.jolt.contract;
 
 import com.sun.net.httpserver.HttpServer;
 import io.github.b077as.jolt.AppOptions;
+import io.github.b077as.jolt.AppResources;
+import io.github.b077as.jolt.AppResponse;
 import io.github.b077as.jolt.Application;
 import io.github.b077as.jolt.BinaryChannel;
 import io.github.b077as.jolt.BlockedEvent;
 import io.github.b077as.jolt.Notification;
+import io.github.b077as.jolt.OpenWindowRequest;
+import io.github.b077as.jolt.RequestHandler;
+import io.github.b077as.jolt.ResourceOptions;
 import io.github.b077as.jolt.SecurityPolicy;
 import io.github.b077as.jolt.WebWindow;
 import io.github.b077as.jolt.WindowClosedException;
@@ -26,6 +31,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -1544,5 +1550,219 @@ public abstract class WebWindowContract {
             window.loadHtml("<script>window.jolt.postMessage('go')</script>");
         });
         assertEquals("\"still alive\"", result.getNow(null));
+    }
+
+    // ---- several windows: jolt.openWindow, jolt.broadcast, owner, focus, windows() ----
+
+    /** Answers {@code /} with {@code mainHtml} and {@code /pop} with {@code popHtml}; anything else falls through to a 404. */
+    private static RequestHandler twoPages(String mainHtml, String popHtml) {
+        return request -> switch (request.path()) {
+            case "/" -> AppResponse.html(mainHtml);
+            case "/pop" -> AppResponse.html(popHtml);
+            default -> null;
+        };
+    }
+
+    /** Shows the app on {@code startPath}, in the web view or over the loopback fallback. */
+    private static void showApp(WebWindow window, RequestHandler handler, boolean loopback, String startPath) {
+        ResourceOptions options = ResourceOptions.defaults().withStartPath(startPath);
+        AppResources noFiles = path -> null;
+        if (loopback) {
+            window.loadResourcesOverLoopback(noFiles, handler, options, 0);
+        } else {
+            window.loadResources(noFiles, handler, options);
+        }
+    }
+
+    private void aPageOpensWindowsAndAsksForTheSameKeyTwice(boolean loopback) {
+        CompletableFuture<String> mainReport = new CompletableFuture<>();
+        CompletableFuture<String> popupReport = new CompletableFuture<>();
+        AtomicInteger asked = new AtomicInteger();
+        AtomicReference<OpenWindowRequest> first = new AtomicReference<>();
+        AtomicReference<WebWindow> mainWindow = new AtomicReference<>();
+        AtomicInteger windowsWhileOpen = new AtomicInteger();
+        runApp(60, app -> {
+            RequestHandler handler = twoPages("""
+                    <script type="module">
+                    const a = await jolt.openWindow('/pop?x=1', { key: 'k', title: 'Popup', width: 500, height: 400 });
+                    const b = await jolt.openWindow('/pop?x=2', { key: 'k' });   // same key: the first window comes forward
+                    const c = await jolt.openWindow('/nope');                    // the opener refuses
+                    jolt.postMessage('result:' + [a, b, c].join(','));
+                    </script>""", """
+                    <script>jolt.postMessage('pop:' + location.pathname + location.search)</script>""");
+            WebWindow main = app.createWindow(WindowOptions.defaults().withSize(400, 300));
+            mainWindow.set(main);
+            main.onMessage(mainReport::complete);
+            main.enableOpenWindow(app, request -> {
+                asked.incrementAndGet();
+                if (!request.path().startsWith("/pop")) {
+                    return null;
+                }
+                first.compareAndSet(null, request);
+                WebWindow popup = request.createWindow(app);
+                popup.onMessage(popupReport::complete);
+                showApp(popup, handler, loopback, request.path());
+                return popup;
+            });
+            CompletableFuture.allOf(mainReport, popupReport).thenRun(() -> {
+                windowsWhileOpen.set(app.windows().size());
+                new ArrayList<>(app.windows()).forEach(WebWindow::close);
+            });
+            showApp(main, handler, loopback, "/");
+        });
+        assertEquals("result:true,true,false", mainReport.getNow(null));
+        assertEquals("pop:/pop?x=1", popupReport.getNow(null), "the new window must open on the requested path, not on /");
+        assertEquals(2, asked.get(), "the second request for key 'k' must not reach the opener again");
+        assertEquals(2, windowsWhileOpen.get(), "one window for the main page and one pop-out, not two pop-outs");
+        OpenWindowRequest request = first.get();
+        assertEquals("/pop?x=1", request.path());
+        assertEquals("k", request.key());
+        assertEquals("Popup", request.title());
+        assertEquals(500, request.width());
+        assertEquals(400, request.height());
+        assertTrue(request.opener() == mainWindow.get(), "the request must name the window whose page made it");
+    }
+
+    @Test
+    public void aPageOpensAWindowOnAPathAndTheSameKeyBringsItForwardInsteadOfOpeningAnother() {
+        aPageOpensWindowsAndAsksForTheSameKeyTwice(false);
+    }
+
+    @Test
+    public void aPageOpensAWindowOnAPathAndTheSameKeyBringsItForwardInsteadOfOpeningAnotherOverLoopback() {
+        aPageOpensWindowsAndAsksForTheSameKeyTwice(true);
+    }
+
+    private void windowsBroadcastToEachOtherButNotToThemselves(boolean loopback) {
+        CompletableFuture<String> mainReport = new CompletableFuture<>();
+        CompletableFuture<String> popupReport = new CompletableFuture<>();
+        runApp(60, app -> {
+            RequestHandler handler = twoPages("""
+                    <script>
+                    const seen = [];
+                    jolt.onBroadcast(async (text) => {
+                      seen.push(text);
+                      if (text === 'popup-ready') await jolt.broadcast('hello popup');
+                      if (text === 'popup-done') jolt.postMessage(seen.join(','));
+                    });
+                    jolt.openWindow('/pop');
+                    </script>""", """
+                    <script>
+                    jolt.onBroadcast((text) => { jolt.postMessage('popup got:' + text); jolt.broadcast('popup-done'); });
+                    jolt.broadcast('popup-ready');
+                    </script>""");
+            WebWindow main = app.createWindow(WindowOptions.defaults().withSize(400, 300));
+            main.onMessage(mainReport::complete);
+            main.enableOpenWindow(app, request -> {
+                WebWindow popup = request.createWindow(app);
+                popup.onMessage(popupReport::complete);
+                showApp(popup, handler, loopback, request.path());
+                return popup;
+            });
+            CompletableFuture.allOf(mainReport, popupReport)
+                    .thenRun(() -> new ArrayList<>(app.windows()).forEach(WebWindow::close));
+            showApp(main, handler, loopback, "/");
+        });
+        assertEquals("popup got:hello popup", popupReport.getNow(null));
+        // a window never receives its own broadcast: 'hello popup' was sent by main
+        assertEquals("popup-ready,popup-done", mainReport.getNow(null));
+    }
+
+    @Test
+    public void windowsBroadcastToTheOtherWindowsButNotBackToTheSender() {
+        windowsBroadcastToEachOtherButNotToThemselves(false);
+    }
+
+    @Test
+    public void windowsBroadcastToTheOtherWindowsButNotBackToTheSenderOverLoopback() {
+        windowsBroadcastToEachOtherButNotToThemselves(true);
+    }
+
+    @Test
+    public void openWindowRejectsAddressesOutsideTheAppAndRefusesWhenTheOpenerFails() {
+        CompletableFuture<String> report = new CompletableFuture<>();
+        AtomicInteger asked = new AtomicInteger();
+        runApp(40, app -> {
+            WebWindow main = app.createWindow(WindowOptions.defaults().withSize(400, 300));
+            main.onMessage(message -> {
+                report.complete(message);
+                main.close();
+            });
+            main.enableOpenWindow(app, request -> {
+                asked.incrementAndGet();
+                throw new IllegalStateException("the app cannot open " + request.path());
+            });
+            RequestHandler handler = twoPages("""
+                    <script type="module">
+                    const r = [];
+                    for (const path of ['//evil.example/x', 'https://evil.example/', '/\\\\evil.example/x', 'relative']) {
+                      try { await jolt.openWindow(path); r.push('opened'); } catch (e) { r.push('rejected'); }
+                    }
+                    r.push(await jolt.openWindow('/boom'));
+                    jolt.postMessage(r.join(','));
+                    </script>""", "");
+            showApp(main, handler, false, "/");
+        });
+        assertEquals("rejected,rejected,rejected,rejected,false", report.getNow(null));
+        assertEquals(1, asked.get(), "only the address inside the app may reach the opener");
+    }
+
+    @Test
+    public void openWindowIsNotAvailableUntilTheJavaWindowEnablesIt() {
+        CompletableFuture<String> report = new CompletableFuture<>();
+        runApp(30, app -> {
+            WebWindow main = app.createWindow(WindowOptions.defaults().withSize(400, 300));
+            main.onMessage(message -> {
+                report.complete(message);
+                main.close();
+            });
+            loadChannelPage(main, "jolt.openWindow('/pop').then(v => jolt.postMessage('opened'), e => jolt.postMessage(e.message))");
+        });
+        String message = report.getNow(null);
+        assertTrue(message != null && message.contains("enableOpenWindow"), String.valueOf(message));
+    }
+
+    @Test
+    public void anOwnedWindowIsListedFocusableAndClosedWithItsOwner() {
+        AtomicInteger listed = new AtomicInteger();
+        AtomicBoolean ownedClosed = new AtomicBoolean();
+        runApp(40, app -> {
+            WebWindow owner = app.createWindow(WindowOptions.defaults().withSize(300, 200));
+            WebWindow owned = app.createWindow(WindowOptions.defaults().withSize(300, 200).withOwner(owner));
+            WebWindow independent = app.createWindow(WindowOptions.defaults().withSize(300, 200));
+            listed.set(app.windows().size());
+            assertTrue(app.windows().contains(owned) && app.windows().contains(owner));
+            owned.focus();
+            owned.hide();
+            owned.focus(); // brings a hidden window back
+            // closing the owner must take the owned window with it; the independent one lives on until we close it
+            owned.onClosed(() -> {
+                ownedClosed.set(true);
+                independent.close();
+            });
+            owner.ready().thenRun(() -> owner.close());
+        });
+        assertEquals(3, listed.get());
+        assertTrue(ownedClosed.get(), "closing the owner must close the window it owns");
+    }
+
+    @Test
+    public void aWindowOwnedByAClosedWindowIsSimplyIndependent() {
+        CompletableFuture<String> report = new CompletableFuture<>();
+        runApp(30, app -> {
+            WebWindow keeper = app.createWindow(WindowOptions.defaults().withSize(200, 200).withVisible(false)); // keeps the loop alive
+            WebWindow gone = app.createWindow(WindowOptions.defaults().withSize(200, 200).withVisible(false));
+            gone.onClosed(() -> {
+                WebWindow window = app.createWindow(WindowOptions.defaults().withSize(300, 200).withOwner(gone));
+                window.onMessage(message -> {
+                    report.complete(message);
+                    window.close();
+                    keeper.close();
+                });
+                window.loadHtml("<script>window.jolt.postMessage('alive')</script>");
+            });
+            gone.close();
+        });
+        assertEquals("alive", report.getNow(null));
     }
 }

@@ -95,7 +95,7 @@ public interface WebWindow {
             addInitScript(server.initScript());
         }
         setSecurity(security().withTrustedOrigins(server.origin()));
-        loadUrl(server.origin() + "/");
+        loadUrl(server.origin() + options.startPath());
     }
 
     /** Navigates to a document built from {@code html}. The page gets the origin {@link SecurityPolicy#APP_ORIGIN}, which is always trusted. */
@@ -150,6 +150,27 @@ public interface WebWindow {
      */
     default void enableNotifications(Application app) {
         io.github.b077as.jolt.internal.PageNotify.enable(this, app);
+    }
+
+    /**
+     * Lets the pages of this window open other windows with {@code jolt.openWindow(path, options)} and talk to the pages of the
+     * app's other windows with {@code jolt.broadcast(text)}. The page never opens anything by itself: {@code opener} is asked
+     * for every request and creates the window, or refuses (see {@link WindowOpener}). Only pages whose origin the
+     * {@link SecurityPolicy} trusts can use it, and a window is limited to 10 requests per 10 seconds. Enable it before the
+     * page loads.
+     *
+     * <pre>{@code
+     * const opened = await jolt.openWindow("/message/42", { key: "message-42", title: "Re: lunch", width: 900, height: 700 });
+     * // true: a window opened, or the one with that key was brought to the front; false: the app refused
+     *
+     * jolt.broadcast("message-42:read");                        // goes to every other window that has enabled this
+     * const stop = jolt.onBroadcast((text) => refreshList(text)); // call stop() to unsubscribe
+     * }</pre>
+     * {@code path} is an address inside the app (it must start with one {@code /}); anything else is rejected. Pass {@code null}
+     * as {@code opener} to give a window {@code broadcast} only. Windows created by the opener get the same abilities.
+     */
+    default void enableOpenWindow(Application app, WindowOpener opener) {
+        io.github.b077as.jolt.internal.PageWindows.enable(this, app, opener);
     }
 
     /** Opens a {@link BinaryChannel} with the default {@link ChannelOptions}. */
@@ -233,6 +254,13 @@ public interface WebWindow {
     void show();
 
     void hide();
+
+    /**
+     * Brings the window to the front and gives it the keyboard focus; a minimized window is restored and a hidden one is shown.
+     * The system may refuse to take focus away from another application (Windows and Wayland compositors both can); the
+     * window is then raised or flashes in the taskbar instead. Does nothing once the window is closed.
+     */
+    void focus();
 
     /**
      * Maximizes the window. On a window that is still hidden it is remembered and takes effect when the window is first

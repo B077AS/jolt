@@ -62,6 +62,7 @@ public final class ResourceService {
     private final AppResources resources;
     private final RequestHandler handler;
     private final int maxBody;
+    private final String startPath;
 
     /** @param handler answers requests before the files do; may be {@code null} for a read-only file server */
     public ResourceService(AppResources resources, RequestHandler handler) {
@@ -72,6 +73,12 @@ public final class ResourceService {
         this.resources = resources;
         this.handler = handler;
         this.maxBody = options.maxRequestBytes();
+        this.startPath = options.startPath();
+    }
+
+    /** The address inside the app the window opens on, always starting with one {@code /}. */
+    public String startPath() {
+        return startPath;
     }
 
     /** The largest request body a transport may read; a bigger one is answered with 413 without reaching the handler. */

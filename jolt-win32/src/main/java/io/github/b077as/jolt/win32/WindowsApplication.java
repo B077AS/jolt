@@ -18,7 +18,7 @@ import java.lang.invoke.MethodType;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -49,8 +49,8 @@ final class WindowsApplication implements Application {
     private final ConcurrentLinkedQueue<Runnable> frees = new ConcurrentLinkedQueue<>();
     private volatile boolean loopRunning;
     private final AtomicBoolean wakePending = new AtomicBoolean();
-    /** Live windows by HWND; UI thread only. */
-    private final Map<Long, WindowsWindow> windows = new HashMap<>();
+    /** Live windows by HWND; changed on the UI thread only, readable from any thread. */
+    private final Map<Long, WindowsWindow> windows = new java.util.concurrent.ConcurrentHashMap<>();
 
     private volatile Thread uiThread;
     private volatile MemorySegment dispatchWindow;
@@ -196,6 +196,11 @@ final class WindowsApplication implements Application {
             throw new IllegalStateException("createWindow must be called on the UI thread (inside run's onStart)");
         }
         return new WindowsWindow(this, windowOptions);
+    }
+
+    @Override
+    public List<WebWindow> windows() {
+        return List.copyOf(windows.values());
     }
 
     @Override

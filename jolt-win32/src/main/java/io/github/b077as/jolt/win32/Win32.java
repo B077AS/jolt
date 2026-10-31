@@ -177,6 +177,10 @@ final class Win32 {
             FunctionDescriptor.of(JAVA_INT, ADDRESS));
     private static final MethodHandle IS_WINDOW_VISIBLE = Native.downcall(USER32, "IsWindowVisible",
             FunctionDescriptor.of(JAVA_INT, ADDRESS));
+    private static final MethodHandle IS_ICONIC = Native.downcall(USER32, "IsIconic",
+            FunctionDescriptor.of(JAVA_INT, ADDRESS));
+    private static final MethodHandle SET_FOREGROUND_WINDOW = Native.downcall(USER32, "SetForegroundWindow",
+            FunctionDescriptor.of(JAVA_INT, ADDRESS));
     private static final MethodHandle MONITOR_FROM_WINDOW = Native.downcall(USER32, "MonitorFromWindow",
             FunctionDescriptor.of(ADDRESS, ADDRESS, JAVA_INT));
     private static final MethodHandle GET_MONITOR_INFO = Native.downcall(USER32, "GetMonitorInfoW",
@@ -489,6 +493,23 @@ final class Win32 {
     static boolean isZoomed(MemorySegment hwnd) {
         try {
             return (int) IS_ZOOMED.invokeExact(hwnd) != 0;
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    static boolean isIconic(MemorySegment hwnd) {
+        try {
+            return (int) IS_ICONIC.invokeExact(hwnd) != 0;
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    /** May be refused by the system when another application has the foreground; the taskbar button then flashes instead. */
+    static void setForegroundWindow(MemorySegment hwnd) {
+        try {
+            int ignored = (int) SET_FOREGROUND_WINDOW.invokeExact(hwnd);
         } catch (Throwable t) {
             throw rethrow(t);
         }

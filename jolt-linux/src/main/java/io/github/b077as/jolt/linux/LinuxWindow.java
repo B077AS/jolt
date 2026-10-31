@@ -68,6 +68,10 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
         window = Gtk.windowNew();
         Gtk.windowSetTitle(window, options.title());
         Gtk.windowSetDefaultSize(window, options.width(), options.height());
+        // A closed owner, or one from another application, is ignored.
+        if (options.owner() instanceof LinuxWindow owner && owner.app == app && !owner.destroyed) {
+            Gtk.windowSetOwner(window, owner.window);
+        }
 
         contentManager = Gtk.newUserContentManager();
         if (!Gtk.registerScriptMessageHandler(contentManager, MESSAGE_HANDLER)) {
@@ -166,7 +170,7 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
             // WebKitGTK aborts the process on a request body that holds a Blob; the script sends bytes instead (see BlobBodyShim)
             Gtk.addUserScript(contentManager, BlobBodyShim.script(GtkResources.ORIGIN));
             guard.set(guard.policy().withTrustedOrigins(GtkResources.ORIGIN));
-            Gtk.loadUri(webView, GtkResources.ORIGIN + "/");
+            Gtk.loadUri(webView, GtkResources.ORIGIN + service.startPath());
         });
         return true;
     }
@@ -279,6 +283,17 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
         app.dispatch(() -> {
             if (!destroyed) {
                 Gtk.widgetHide(window);
+            }
+        });
+    }
+
+    @Override
+    public void focus() {
+        app.dispatch(() -> {
+            if (!destroyed) {
+                Gtk.windowPresent(window); // also shows a hidden window; on Wayland the compositor may only mark it as wanting attention
+                shown = true;
+                maximizeWhenShown = false;
             }
         });
     }

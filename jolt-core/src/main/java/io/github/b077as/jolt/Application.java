@@ -85,6 +85,12 @@ public interface Application extends AutoCloseable {
     /** Creates a window hosting a web view. Must be called on the UI thread. */
     WebWindow createWindow(WindowOptions options);
 
+    /**
+     * The windows that are open right now, in no particular order. A snapshot: windows opened or closed afterwards are not
+     * reflected in it. Safe from any thread.
+     */
+    java.util.List<WebWindow> windows();
+
     /** Releases native resources. Call after {@link #run(Runnable)} has returned. */
     @Override
     void close();

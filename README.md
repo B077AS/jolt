@@ -211,6 +211,40 @@ const saved = await jolt.saveAs(blobOrBytesOrText, { name: "report.pdf", filters
 The data is written to a temporary file and moved into place when complete. Only trusted origins may use it, and on Linux the page
 must come from `loadResources`.
 
+### More than one window (pop-outs)
+
+`app.createWindow(...)` can be called as often as you like (on the UI thread), and `app.windows()` lists the windows that are open.
+A page can ask for another window, for example an email shown in its own window, but it never opens one itself: your Java code
+decides.
+
+```java
+main.enableOpenWindow(app, request -> {                          // runs on the UI thread, for each request from a page
+    if (!request.path().startsWith("/message/")) return null;   // null refuses; the page's promise resolves false
+    WebWindow popout = request.createWindow(app);                // title and size come from the page's suggestions
+    popout.loadResources(resources, router,
+            ResourceOptions.defaults().withStartPath(request.path()));   // the new window opens on /message/42
+    return popout;
+});
+```
+
+```js
+const opened = await jolt.openWindow("/message/42", { key: "message-42", title: "Re: lunch", width: 900, height: 700 });
+// true: a window opened, or the one with that key was brought to the front. false: the app refused.
+```
+
+- **`key`** stops duplicates: asking again for the same key focuses the window that is already open (your opener is not called).
+- **`path`** must be an address inside the app (one leading `/`); `//host`, `https://...` and the like are rejected.
+- The window you return gets `jolt.openWindow` and `jolt.broadcast` too, with the same opener; refuse inside the opener (look at
+  `request.opener()`) if pop-outs must not open more windows. At most 10 requests per window per 10 seconds.
+- The request is yours to check: `path`, `key`, `title` and the sizes come from the page. `request.options()` has no owner; use
+  `.withOwner(request.opener())` if the pop-out should stay in front of its window and close with it. Without an owner it is an
+  independent window.
+- **Talking between windows**: `jolt.broadcast(text)` goes to every other window that has called `enableOpenWindow`, and
+  `const stop = jolt.onBroadcast(text => ...)` receives it (a window never gets its own broadcasts; `text` is limited to 16 K characters).
+  To refresh the message list after a reply, broadcast a short event such as `"message-42:read"` and let each window fetch what it needs.
+- From Java: `window.focus()` brings a window to the front (restoring or showing it), `WindowOptions.withOwner(window)` makes a window
+  belong to another one.
+
 ## The frontend
 
 Your page is normal HTML, CSS and JavaScript. The web view is Chromium (Windows) or WebKit (Linux), so write for both.

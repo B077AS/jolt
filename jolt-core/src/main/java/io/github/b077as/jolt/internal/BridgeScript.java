@@ -38,6 +38,19 @@ public final class BridgeScript {
                         const f = window.__joltNotify;
                         return f ? f(title, body, options) : Promise.reject(new Error("notify is not enabled: call enableNotifications() on the Java window"));
                       },
+                      openWindow: (path, options) => {
+                        const w = window.__joltWindows;
+                        return w ? w.open(path, options) : Promise.reject(new Error("openWindow is not enabled: call enableOpenWindow() on the Java window"));
+                      },
+                      broadcast: (message) => {
+                        const w = window.__joltWindows;
+                        return w ? w.broadcast(message) : Promise.reject(new Error("broadcast is not enabled: call enableOpenWindow() on the Java window"));
+                      },
+                      onBroadcast: (callback) => {
+                        const w = window.__joltWindows;
+                        if (!w) throw new Error("onBroadcast is not enabled: call enableOpenWindow() on the Java window");
+                        return w.onBroadcast(callback);
+                      },
                       channel: (name, options) => {
                         const open = window.__joltChannelFactory;
                         if (!open) throw new Error("no binary channel: call openChannel(name) on the Java side before the page loads");

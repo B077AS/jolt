@@ -84,11 +84,15 @@ final class WindowsWindow implements WebWindow, NativeResourceHost, NativeDialog
         this.options = options;
         this.guard = new SecurityGuard(options.security(), app::dispatch);
 
+        // An owner (not a parent: the style is not WS_CHILD) keeps this window in front of it, minimizes with it and takes it
+        // down when it is destroyed. A closed owner, or one from another application, is ignored.
+        MemorySegment ownerHandle = options.owner() instanceof WindowsWindow o && o.app == app && !o.destroyed
+                ? o.hwnd : MemorySegment.NULL;
         int[] error = new int[1];
         try (Arena arena = Arena.ofConfined()) {
             this.hwnd = Win32.createWindow(0, app.className(), Native.allocWide(arena, options.title()), STYLE,
                     Win32.CW_USEDEFAULT, Win32.CW_USEDEFAULT, Win32.CW_USEDEFAULT, Win32.CW_USEDEFAULT,
-                    MemorySegment.NULL, app.hInstance(), error);
+                    ownerHandle, app.hInstance(), error);
         }
         if (hwnd.equals(MemorySegment.NULL)) {
             throw new JoltException("CreateWindowExW failed: Win32 error " + error[0]);
@@ -143,7 +147,7 @@ public boolean loadResources(ResourceService service) {
     whenReady(() -> {
         resourceService = service;
         installResourceInterception();
-        navigate(WebView2Abi.ICoreWebView2.NAVIGATE, VIRTUAL_ORIGIN + "/");
+        navigate(WebView2Abi.ICoreWebView2.NAVIGATE, VIRTUAL_ORIGIN + service.startPath());
     });
     return true;
 }
@@ -264,6 +268,21 @@ public CompletableFuture<String> eval(String script) {
             if (!destroyed) {
                 Win32.showWindow(hwnd, Win32.SW_HIDE);
             }
+        });
+    }
+
+    @Override
+    public void focus() {
+        app.dispatch(() -> {
+            if (destroyed) {
+                return;
+            }
+            if (!Win32.isWindowVisible(hwnd)) {
+                display();
+            } else if (Win32.isIconic(hwnd)) {
+                Win32.showWindow(hwnd, Win32.SW_RESTORE);
+            }
+            Win32.setForegroundWindow(hwnd);
         });
     }
 

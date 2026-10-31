@@ -11,7 +11,7 @@ import java.lang.foreign.MemorySegment;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -39,7 +39,7 @@ final class LinuxApplication implements Application {
     private final AtomicBoolean wakePending = new AtomicBoolean();
 
     // UI thread only
-    private final Map<Long, LinuxWindow> windows = new HashMap<>();
+    private final Map<Long, LinuxWindow> windows = new java.util.concurrent.ConcurrentHashMap<>();
     private MemorySegment webContext = MemorySegment.NULL;
     private boolean resourceSchemeRegistered;
     private boolean mainLoopRunning;
@@ -231,6 +231,11 @@ final class LinuxApplication implements Application {
             throw new IllegalStateException("createWindow must be called on the UI thread (inside run's onStart)");
         }
         return new LinuxWindow(this, windowOptions);
+    }
+
+    @Override
+    public List<WebWindow> windows() {
+        return List.copyOf(windows.values());
     }
 
     @Override

@@ -70,7 +70,10 @@ final class Gtk {
     private static final MethodHandle GTK_WINDOW_RESIZE = h(GTK, "gtk_window_resize", FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT, JAVA_INT));
     private static final MethodHandle GTK_WINDOW_MAXIMIZE = h(GTK, "gtk_window_maximize", FunctionDescriptor.ofVoid(ADDRESS));
     private static final MethodHandle GTK_WINDOW_UNMAXIMIZE = h(GTK, "gtk_window_unmaximize", FunctionDescriptor.ofVoid(ADDRESS));
-    private static final MethodHandle GTK_WINDOW_SET_POSITION = h(GTK, "gtk_window_set_position", FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT));
+    private static final MethodHandle GTK_WINDOW_SET_TRANSIENT_FOR = h(GTK, "gtk_window_set_transient_for", FunctionDescriptor.ofVoid(ADDRESS, ADDRESS));
+    private static final MethodHandle GTK_WINDOW_SET_DESTROY_WITH_PARENT = h(GTK, "gtk_window_set_destroy_with_parent", FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT));
+    private static final MethodHandle GTK_WINDOW_PRESENT = h(GTK, "gtk_window_present", FunctionDescriptor.ofVoid(ADDRESS));
+    private static final MethodHandle GTK_WINDOW_SET_POSITION =h(GTK, "gtk_window_set_position", FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT));
     private static final MethodHandle GTK_WINDOW_GET_POSITION = h(GTK, "gtk_window_get_position", FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, ADDRESS));
     private static final MethodHandle GTK_WINDOW_GET_SIZE = h(GTK, "gtk_window_get_size", FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, ADDRESS));
     private static final MethodHandle GDK_SCREEN_GET_DEFAULT = h(GTK, "gdk_screen_get_default", FunctionDescriptor.of(ADDRESS));
@@ -313,6 +316,17 @@ final class Gtk {
     /** Asks the window manager to maximize; on a window that is not shown yet it sets the state the window opens in. */
     static void windowMaximize(MemorySegment window) {
         call(GTK_WINDOW_MAXIMIZE, window);
+    }
+
+    /** Makes {@code window} belong to {@code parent}: kept in front of it by the window manager, and destroyed with it. */
+    static void windowSetOwner(MemorySegment window, MemorySegment parent) {
+        call(GTK_WINDOW_SET_TRANSIENT_FOR, window, parent);
+        call(GTK_WINDOW_SET_DESTROY_WITH_PARENT, window, 1);
+    }
+
+    /** Raises the window and asks for the focus; shows it first if it is hidden. */
+    static void windowPresent(MemorySegment window) {
+        call(GTK_WINDOW_PRESENT, window);
     }
 
     static void windowUnmaximize(MemorySegment window) {
