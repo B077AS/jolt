@@ -1,6 +1,7 @@
 package io.github.b077as.jolt.win32;
 
 import io.github.b077as.jolt.BlockedEvent;
+import io.github.b077as.jolt.CloseBehavior;
 import io.github.b077as.jolt.ColorScheme;
 import io.github.b077as.jolt.JoltException;
 import io.github.b077as.jolt.SecurityPolicy;
@@ -8,6 +9,8 @@ import io.github.b077as.jolt.WebWindow;
 import io.github.b077as.jolt.WindowClosedException;
 import io.github.b077as.jolt.WindowOptions;
 import io.github.b077as.jolt.internal.BridgeScript;
+import io.github.b077as.jolt.internal.FrameProtocol;
+import io.github.b077as.jolt.internal.FrameScript;
 import io.github.b077as.jolt.internal.Icons;
 import io.github.b077as.jolt.internal.NativeDialogHost;
 import io.github.b077as.jolt.internal.NativeResourceHost;
@@ -38,10 +41,16 @@ import static java.lang.foreign.ValueLayout.JAVA_LONG;
  * <p>Public methods may be called from any thread; they hop to the UI thread. Everything below the
  * "UI thread" marker must only run there.
  */
-final class WindowsWindow implements WebWindow, NativeResourceHost, NativeDialogHost {
+final class WindowsWindow implements WebWindow, NativeResourceHost, NativeDialogHost, FrameProtocol.Host {
 
     private static final System.Logger LOG = System.getLogger("io.github.b077as.jolt.win32");
     private static final int STYLE = Win32.WS_OVERLAPPEDWINDOW | Win32.WS_CLIPCHILDREN | Win32.WS_CLIPSIBLINGS;
+    /**
+     * No caption: the page draws the title bar. The sizing frame is kept so Windows still snaps, animates and shades the window;
+     * WM_NCCALCSIZE gives the whole window to the web view, so the frame itself is never visible.
+     */
+    private static final int FRAMELESS_STYLE = Win32.WS_THICKFRAME | Win32.WS_SYSMENU | Win32.WS_MINIMIZEBOX | Win32.WS_MAXIMIZEBOX
+            | Win32.WS_CLIPCHILDREN | Win32.WS_CLIPSIBLINGS;
     private static final int MOVE_FOCUS_PROGRAMMATIC = 0;
     /** Requests to this origin are answered from memory and never reach the network. */
     private static final String VIRTUAL_ORIGIN = SecurityPolicy.APP_ORIGIN;
@@ -50,6 +59,8 @@ final class WindowsWindow implements WebWindow, NativeResourceHost, NativeDialog
 
     private final WindowsApplication app;
     private final WindowOptions options;
+    private final int style;
+    private volatile CloseBehavior closeBehavior = CloseBehavior.CLOSE;
     private final SecurityGuard guard;
     private final MemorySegment hwnd;
     private final CompletableFuture<Void> ready = new CompletableFuture<>();
@@ -82,18 +93,29 @@ final class WindowsWindow implements WebWindow, NativeResourceHost, NativeDialog
     WindowsWindow(WindowsApplication app, WindowOptions options) {
         this.app = app;
         this.options = options;
+        this.style = options.frameless() ? FRAMELESS_STYLE : STYLE;
         this.guard = new SecurityGuard(options.security(), app::dispatch);
 
+        // An owner (not a parent: the style is not WS_CHILD) keeps this window in front of it, minimizes with it and takes it
+        // down when it is destroyed. A closed owner, or one from another application, is ignored.
+        MemorySegment ownerHandle = options.owner() instanceof WindowsWindow o && o.app == app && !o.destroyed
+                ? o.hwnd : MemorySegment.NULL;
         int[] error = new int[1];
         try (Arena arena = Arena.ofConfined()) {
-            this.hwnd = Win32.createWindow(0, app.className(), Native.allocWide(arena, options.title()), STYLE,
+            this.hwnd = Win32.createWindow(0, app.className(), Native.allocWide(arena, options.title()), style,
                     Win32.CW_USEDEFAULT, Win32.CW_USEDEFAULT, Win32.CW_USEDEFAULT, Win32.CW_USEDEFAULT,
-                    MemorySegment.NULL, app.hInstance(), error);
+                    ownerHandle, app.hInstance(), error);
         }
         if (hwnd.equals(MemorySegment.NULL)) {
             throw new JoltException("CreateWindowExW failed: Win32 error " + error[0]);
         }
         app.register(hwnd, this);
+        if (options.frameless()) {
+            // The first WM_NCCALCSIZE came before this window was known to the application; ask for it again now.
+            Win32.setWindowPos(hwnd, 0, 0, 0, 0, Win32.SWP_FRAMECHANGED | Win32.SWP_NOMOVE | Win32.SWP_NOSIZE
+                    | Win32.SWP_NOZORDER | Win32.SWP_NOACTIVATE);
+            Win32.extendFrameIntoClientArea(hwnd, 0, 0, 1, 0); // a one-pixel frame is what makes Windows draw the shadow
+        }
         // Appearance is applied before the window is first shown, so it never flashes the wrong title bar colour.
         if (options.titleBarScheme() != null) {
             applyTitleBarScheme(options.titleBarScheme());
@@ -143,7 +165,7 @@ public boolean loadResources(ResourceService service) {
     whenReady(() -> {
         resourceService = service;
         installResourceInterception();
-        navigate(WebView2Abi.ICoreWebView2.NAVIGATE, VIRTUAL_ORIGIN + "/");
+        navigate(WebView2Abi.ICoreWebView2.NAVIGATE, VIRTUAL_ORIGIN + service.startPath());
     });
     return true;
 }
@@ -268,6 +290,80 @@ public CompletableFuture<String> eval(String script) {
     }
 
     @Override
+    public void minimize() {
+        app.dispatch(() -> {
+            if (!destroyed) {
+                Win32.showWindow(hwnd, Win32.SW_MINIMIZE);
+            }
+        });
+    }
+
+    @Override
+    public boolean isMinimized() {
+        return !destroyed && Win32.isIconic(hwnd);
+    }
+
+    @Override
+    public boolean isVisible() {
+        return !destroyed && Win32.isWindowVisible(hwnd);
+    }
+
+    @Override
+    public void setCloseBehavior(CloseBehavior behavior) {
+        closeBehavior = java.util.Objects.requireNonNull(behavior, "behavior");
+    }
+
+    @Override
+    public CloseBehavior closeBehavior() {
+        return closeBehavior;
+    }
+
+    // ---- FrameProtocol.Host (UI thread) ----
+
+    @Override
+    public void toggleMaximize() {
+        if (destroyed) {
+            return;
+        }
+        Win32.showWindow(hwnd, Win32.isZoomed(hwnd) ? Win32.SW_RESTORE : Win32.SW_SHOWMAXIMIZED);
+    }
+
+    @Override
+    public void beginMove() {
+        beginNonClientDrag(Win32.HTCAPTION);
+    }
+
+    @Override
+    public void beginResize(int edge) {
+        beginNonClientDrag(9 + edge); // edges 1 (left) .. 8 (bottom-right) are HTLEFT (10) .. HTBOTTOMRIGHT (17) minus 9
+    }
+
+    /** Hands the pointer, which is down, to Windows as if it had pressed a caption or a sizing border. */
+    private void beginNonClientDrag(int hitTest) {
+        if (destroyed || Win32.isZoomed(hwnd) && hitTest != Win32.HTCAPTION) {
+            return;
+        }
+        int[] cursor = Win32.cursorPosition();
+        Win32.releaseCapture();
+        Win32.postMessage(hwnd, Win32.WM_NCLBUTTONDOWN, hitTest, ((long) (cursor[1] & 0xFFFF) << 16) | (cursor[0] & 0xFFFF));
+    }
+
+    @Override
+    public void focus() {
+        app.dispatch(() -> {
+            if (destroyed) {
+                return;
+            }
+            if (!Win32.isWindowVisible(hwnd)) {
+                display();
+            } else if (Win32.isIconic(hwnd)) {
+                Win32.showWindow(hwnd, Win32.SW_RESTORE);
+            }
+            Win32.setForegroundWindow(hwnd);
+        });
+    }
+
+    @Override
     public void maximize() {
         app.dispatch(() -> {
             if (destroyed) {
@@ -354,6 +450,23 @@ public CompletableFuture<String> eval(String script) {
     /** Window messages for this window; returns the LRESULT, or {@code null} for default processing. */
     Long handleMessage(int msg, long wParam, long lParam) {
         switch (msg) {
+            case Win32.WM_NCCALCSIZE -> {
+                if (!options.frameless() || wParam == 0) {
+                    return null;
+                }
+                if (Win32.isZoomed(hwnd)) {
+                    // A maximized window with a sizing frame is laid out that many pixels past each screen edge; pull it back.
+                    int dpi = Win32.dpiForWindow(hwnd);
+                    int x = Win32.systemMetricForDpi(Win32.SM_CXSIZEFRAME, dpi) + Win32.systemMetricForDpi(Win32.SM_CXPADDEDBORDER, dpi);
+                    int y = Win32.systemMetricForDpi(Win32.SM_CYSIZEFRAME, dpi) + Win32.systemMetricForDpi(Win32.SM_CXPADDEDBORDER, dpi);
+                    MemorySegment rect = MemorySegment.ofAddress(lParam).reinterpret(16); // NCCALCSIZE_PARAMS starts with RECT rgrc[3]
+                    rect.set(JAVA_INT, 0, rect.get(JAVA_INT, 0) + x);
+                    rect.set(JAVA_INT, 4, rect.get(JAVA_INT, 4) + y);
+                    rect.set(JAVA_INT, 8, rect.get(JAVA_INT, 8) - x);
+                    rect.set(JAVA_INT, 12, rect.get(JAVA_INT, 12) - y);
+                }
+                return 0L; // the client area is the whole window
+            }
             case Win32.WM_SIZE -> {
                 resizeWebView();
                 return 0L;
@@ -397,7 +510,11 @@ public CompletableFuture<String> eval(String script) {
                 return 0L;
             }
             case Win32.WM_CLOSE -> {
-                Win32.destroyWindow(hwnd);
+                if (closeBehavior == CloseBehavior.HIDE && !closing) {
+                    Win32.showWindow(hwnd, Win32.SW_HIDE); // the application lives on, for example in the tray
+                } else {
+                    Win32.destroyWindow(hwnd);
+                }
                 return 0L;
             }
             case Win32.WM_DESTROY -> {
@@ -627,7 +744,9 @@ public CompletableFuture<String> eval(String script) {
             MemorySegment rect = arena.allocate(Win32.RECT);
             rect.set(JAVA_INT, 8, Math.round(logicalWidth * dpi / 96f));
             rect.set(JAVA_INT, 12, Math.round(logicalHeight * dpi / 96f));
-            Win32.adjustWindowRectExForDpi(rect, STYLE, 0, dpi);
+            if (!options.frameless()) {
+                Win32.adjustWindowRectExForDpi(rect, style, 0, dpi); // a frameless window is all client area
+            }
             Win32.setWindowPos(hwnd, 0, 0, rect.get(JAVA_INT, 8) - rect.get(JAVA_INT, 0),
                     rect.get(JAVA_INT, 12) - rect.get(JAVA_INT, 4),
                     Win32.SWP_NOMOVE | Win32.SWP_NOZORDER | Win32.SWP_NOACTIVATE);
@@ -725,7 +844,12 @@ public CompletableFuture<String> eval(String script) {
             Com.call(controller, WebView2Abi.ICoreWebView2Controller.MOVE_FOCUS, Com.HR_INT, MOVE_FOCUS_PROGRAMMATIC);
 
             // Operations queued by callers run only after the bridge script is registered, so every navigation sees it.
-            addScriptOnDocumentCreated(BridgeScript.build("window.chrome.webview.postMessage(m)", options.security().bridgeInSubframes()), this::finishInit);
+            String bridge = BridgeScript.build("window.chrome.webview.postMessage(m)", options.security().bridgeInSubframes());
+            if (options.frameless()) {
+                addScriptOnDocumentCreated(bridge, () -> addScriptOnDocumentCreated(FrameScript.build(), this::finishInit));
+            } else {
+                addScriptOnDocumentCreated(bridge, this::finishInit);
+            }
         } catch (RuntimeException e) {
             ready.completeExceptionally(e);
             LOG.log(System.Logger.Level.ERROR, "WebView2 initialization failed", e);
@@ -821,6 +945,12 @@ public CompletableFuture<String> eval(String script) {
             MemorySegment raw = Native.readPointer(out);
             text = Native.readWide(raw);
             Win32.coTaskMemFree(raw);
+        }
+        if (FrameProtocol.isFrameMessage(text)) {
+            if (options.frameless()) {
+                FrameProtocol.handle(text, this);
+            }
+            return; // never reaches the application, frameless or not
         }
         for (Consumer<String> listener : messageListeners) {
             try {

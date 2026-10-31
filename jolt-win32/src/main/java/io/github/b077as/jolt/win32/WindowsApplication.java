@@ -1,6 +1,8 @@
 package io.github.b077as.jolt.win32;
 
 import io.github.b077as.jolt.AppOptions;
+import io.github.b077as.jolt.Autostart;
+import io.github.b077as.jolt.Tray;
 import io.github.b077as.jolt.Application;
 import io.github.b077as.jolt.JoltException;
 import io.github.b077as.jolt.WebWindow;
@@ -18,7 +20,7 @@ import java.lang.invoke.MethodType;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -49,8 +51,10 @@ final class WindowsApplication implements Application {
     private final ConcurrentLinkedQueue<Runnable> frees = new ConcurrentLinkedQueue<>();
     private volatile boolean loopRunning;
     private final AtomicBoolean wakePending = new AtomicBoolean();
-    /** Live windows by HWND; UI thread only. */
-    private final Map<Long, WindowsWindow> windows = new HashMap<>();
+    /** Live windows by HWND; changed on the UI thread only, readable from any thread. */
+    private final Map<Long, WindowsWindow> windows = new java.util.concurrent.ConcurrentHashMap<>();
+    /** Tray icons; UI thread only. */
+    private final List<WindowsTray> trays = new ArrayList<>();
 
     private volatile Thread uiThread;
     private volatile MemorySegment dispatchWindow;
@@ -177,12 +181,54 @@ final class WindowsApplication implements Application {
         return submit(() -> Win32.shellOpen(target));
     }
 
+    private WindowsToasts toasts;
+
+    @Override
+    public CompletableFuture<Boolean> notify(io.github.b077as.jolt.Notification notification) {
+        java.util.Objects.requireNonNull(notification, "notification");
+        return submit(() -> {
+            if (toasts == null) {
+                toasts = new WindowsToasts(options.appId(), this);
+            }
+            return toasts.show(notification);
+        });
+    }
+
+    @Override
+    public boolean isTraySupported() {
+        return true;
+    }
+
+    @Override
+    public Tray createTray(byte[] icon, String tooltip) {
+        if (!isUiThread()) {
+            throw new IllegalStateException("createTray must be called on the UI thread (inside run's onStart)");
+        }
+        WindowsTray tray = new WindowsTray(this, icon, tooltip);
+        trays.add(tray);
+        return tray;
+    }
+
+    void trayClosed(WindowsTray tray) {
+        trays.remove(tray);
+    }
+
+    @Override
+    public Autostart autostart() {
+        return new WindowsAutostart(options.appId());
+    }
+
     @Override
     public WebWindow createWindow(WindowOptions windowOptions) {
         if (!isUiThread()) {
             throw new IllegalStateException("createWindow must be called on the UI thread (inside run's onStart)");
         }
         return new WindowsWindow(this, windowOptions);
+    }
+
+    @Override
+    public List<WebWindow> windows() {
+        return List.copyOf(windows.values());
     }
 
     @Override
@@ -324,6 +370,12 @@ final class WindowsApplication implements Application {
     private void shutdown(boolean comInitialized) {
         loopRunning = false; // windows destroyed below must not leave a quit flag on this thread
         try {
+            if (toasts != null) {
+                toasts.close(); // a click after this point must not reach callbacks that are about to be freed
+            }
+            for (WindowsTray tray : new ArrayList<>(trays)) {
+                tray.closeNow(); // a tray icon left behind stays in the notification area until the pointer passes over it
+            }
             for (WindowsWindow window : new ArrayList<>(windows.values())) {
                 window.destroyNow();
             }
@@ -354,6 +406,12 @@ final class WindowsApplication implements Application {
             if (target != null && target.address() == hwnd.address()) {
                 drain();
                 return 0;
+            }
+        }
+        for (WindowsTray tray : trays) {
+            if (tray.owns(hwnd)) {
+                Long handled = tray.handle(msg, wParam, lParam);
+                return handled != null ? handled : Win32.defWindowProc(hwnd, msg, wParam, lParam);
             }
         }
         WindowsWindow window = windows.get(hwnd.address());

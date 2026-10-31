@@ -62,6 +62,19 @@ final class Win32 {
     static final int SW_SHOWMAXIMIZED = 3;
     static final int SW_SHOW = 5;
     static final int SW_RESTORE = 9;
+    static final int SW_MINIMIZE = 6;
+
+    // frameless windows
+    static final int WS_SYSMENU = 0x00080000;
+    static final int WS_THICKFRAME = 0x00040000;
+    static final int WS_MINIMIZEBOX = 0x00020000;
+    static final int WS_MAXIMIZEBOX = 0x00010000;
+    static final int WM_NCCALCSIZE = 0x0083;
+    static final int WM_NCLBUTTONDOWN = 0x00A1;
+    static final int HTCAPTION = 2;
+    static final int SM_CXSIZEFRAME = 32;
+    static final int SM_CYSIZEFRAME = 33;
+    static final int SM_CXPADDEDBORDER = 92;
 
     /** {@code MONITOR_DEFAULTTONEAREST}: the monitor closest to the window if it is on none. */
     static final int MONITOR_DEFAULTTONEAREST = 2;
@@ -176,6 +189,16 @@ final class Win32 {
     private static final MethodHandle IS_ZOOMED = Native.downcall(USER32, "IsZoomed",
             FunctionDescriptor.of(JAVA_INT, ADDRESS));
     private static final MethodHandle IS_WINDOW_VISIBLE = Native.downcall(USER32, "IsWindowVisible",
+            FunctionDescriptor.of(JAVA_INT, ADDRESS));
+    private static final MethodHandle RELEASE_CAPTURE = Native.downcall(USER32, "ReleaseCapture",
+            FunctionDescriptor.of(JAVA_INT));
+    private static final MethodHandle GET_CURSOR_POS = Native.downcall(USER32, "GetCursorPos",
+            FunctionDescriptor.of(JAVA_INT, ADDRESS));
+    private static final MethodHandle DWM_EXTEND_FRAME = Native.downcall(DWMAPI, "DwmExtendFrameIntoClientArea",
+            FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+    private static final MethodHandle IS_ICONIC = Native.downcall(USER32, "IsIconic",
+            FunctionDescriptor.of(JAVA_INT, ADDRESS));
+    private static final MethodHandle SET_FOREGROUND_WINDOW = Native.downcall(USER32, "SetForegroundWindow",
             FunctionDescriptor.of(JAVA_INT, ADDRESS));
     private static final MethodHandle MONITOR_FROM_WINDOW = Native.downcall(USER32, "MonitorFromWindow",
             FunctionDescriptor.of(ADDRESS, ADDRESS, JAVA_INT));
@@ -489,6 +512,56 @@ final class Win32 {
     static boolean isZoomed(MemorySegment hwnd) {
         try {
             return (int) IS_ZOOMED.invokeExact(hwnd) != 0;
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    static void releaseCapture() {
+        try {
+            int ignored = (int) RELEASE_CAPTURE.invokeExact();
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    /** The pointer position in screen pixels as {x, y}. */
+    static int[] cursorPosition() {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment point = arena.allocate(8, 4);
+            int ignored = (int) GET_CURSOR_POS.invokeExact(point);
+            return new int[] {point.get(JAVA_INT, 0), point.get(JAVA_INT, 4)};
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    /** Extends the window frame (and so its shadow) by these margins into the client area. */
+    static void extendFrameIntoClientArea(MemorySegment hwnd, int left, int right, int top, int bottom) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment margins = arena.allocate(16, 4); // MARGINS: left, right, top, bottom
+            margins.set(JAVA_INT, 0, left);
+            margins.set(JAVA_INT, 4, right);
+            margins.set(JAVA_INT, 8, top);
+            margins.set(JAVA_INT, 12, bottom);
+            int ignored = (int) DWM_EXTEND_FRAME.invokeExact(hwnd, margins);
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    static boolean isIconic(MemorySegment hwnd) {
+        try {
+            return (int) IS_ICONIC.invokeExact(hwnd) != 0;
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    /** May be refused by the system when another application has the foreground; the taskbar button then flashes instead. */
+    static void setForegroundWindow(MemorySegment hwnd) {
+        try {
+            int ignored = (int) SET_FOREGROUND_WINDOW.invokeExact(hwnd);
         } catch (Throwable t) {
             throw rethrow(t);
         }

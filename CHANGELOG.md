@@ -6,6 +6,61 @@ this file says when they do.
 
 The latest version is the one on [Maven Central](https://central.sonatype.com/artifact/io.github.b077as/jolt-core).
 
+## 0.3.0 - 2026-10-31
+
+### Added
+- **System notifications**: `Application.notify(Notification)` shows a toast (WinRT `Windows.UI.Notifications` on Windows, the
+  `org.freedesktop.Notifications` D-Bus service on Linux). On Windows the first call registers `appId` as a display name under
+  `HKCU\Software\Classes\AppUserModelId`; nothing is installed. It completes with `false` when Windows has notifications turned
+  off for the user or the app. `Notification.withOnClick`, `withButton` (up to 5) and `withReply` (a text field with a send button,
+  Windows only: the Linux specification has no text input) run on the UI thread while the application is running.
+  `WebWindow.enableNotifications(app)` lets trusted pages call `jolt.notify(title, body)` (a promise of whether the system showed it;
+  at most 5 per 10 seconds per window). The page can pass `{ onclick, buttons: [{ label, onclick }], reply: { label,
+  placeholder, onreply } }` as a third argument; the callbacks run in the page when the user uses the notification.
+
+- **More than one window (pop-outs)**: `WebWindow.enableOpenWindow(app, WindowOpener)` lets trusted pages call
+  `jolt.openWindow(path, { key, title, width, height })`. The page never opens anything itself: the app's `WindowOpener` receives an
+  `OpenWindowRequest`, creates the window (with `request.createWindow(app)`, which enables the new window before it can load a page) or
+  refuses, and the promise resolves with whether a window opened. `path` must be an address inside the app (one leading `/`), a window
+  may make at most 10 requests per 10 seconds, and asking again for the same `key` brings the existing window to the front instead of
+  opening another. `ResourceOptions.withStartPath("/message/42")` makes a window open on its own page. `jolt.broadcast(text)` and
+  `jolt.onBroadcast(callback)` send short text between the windows of an application (never back to the sender).
+- **Owner windows**: `WindowOptions.withOwner(window)`: the new window stays in front of its owner, minimizes with it and closes with it
+  (Win32 owner window; `gtk_window_set_transient_for` on Linux). `Application.windows()` lists the open windows.
+- **Window state**: `WebWindow.focus()` (shows, restores and raises the window), `minimize()`, `isMinimized()`, `isVisible()`.
+- **Close to tray**: `WebWindow.setCloseBehavior(CloseBehavior.HIDE)` makes the close button (and Alt+F4) only hide the window, and can be
+  changed at any time. `close()`, `Application.quit()` and the end of the user's session still close it.
+- **Tray icon**: `Application.isTraySupported()` and `createTray(icon, tooltip)` return a `Tray` with `setIcon`, `setTooltip`, `onClick` and
+  `setMenu(TrayMenu)`; a `TrayMenu` holds actions, checkboxes, separators and submenus and is rebuilt to change it. Windows: a notification-area
+  icon with a native menu (dark when the system is dark, through an undocumented call that is skipped if missing); the icon comes back if
+  Explorer restarts. Linux: a StatusNotifierItem with a `dbusmenu` menu, shown by KDE Plasma, XFCE, Cinnamon, MATE, Budgie and others; stock
+  GNOME needs its AppIndicator extension, and without a tray host `isTraySupported()` is `false` and `createTray` throws
+  `UnsupportedOperationException`. A Linux icon is not registered again if the tray host restarts while the application runs.
+- **Start with the computer**: `Application.autostart()` returns an `Autostart` (`enable(command)`, `disable()`, `isEnabled()`,
+  `Autostart.currentCommand(extraArgs)`): a value under `HKCU\...\Run` on Windows, a `~/.config/autostart/<appId>.desktop` file on Linux; no
+  administrator rights. Add an argument such as `--minimized` to the command and read it at launch to start hidden in the tray.
+- **`SingleInstance.acquire(options, args, onOtherLaunch)`**: keeps one copy of the application per user. A second copy hands its arguments
+  to the first (a lock file in the data directory and a Unix domain socket only the same user can reach) and learns it is not the primary.
+- **Frameless windows**: `WindowOptions.withFrameless(true)` removes the system title bar and border. In the page, `data-jolt-drag` marks the
+  area that moves the window (a double click maximizes or restores it), thin invisible handles resize it, and `jolt.frame.minimize()`,
+  `toggleMaximize()` and `close()` are the window buttons. The commands travel over the normal message bridge, work with `loadHtml`, and never
+  reach the application's `onMessage` listeners. Windows keeps the sizing frame, so the system should still draw the shadow and snap the
+  window; Linux draws no shadow.
+
+### Changed
+- **API changes that can break code that implements Jolt's interfaces or builds its records with the long constructors** (0.x): `WebWindow`
+  has the new abstract methods `focus`, `minimize`, `isMinimized`, `isVisible`, `setCloseBehavior` and `closeBehavior`; `Application` has the new
+  abstract method `windows()`; the `WindowOptions` record gained the components `owner` and `frameless` (use `defaults()` and the `with...`
+  methods), and `ResourceOptions` gained `startPath` (`new ResourceOptions(maxBytes)` still works).
+- The README documents notifications, pop-outs, the tray, autostart, single instance and frameless windows.
+- README, Linux uploads: Jolt's workaround for the WebKitGTK crash on `Blob` request bodies does not reach Web Workers. A worker must send
+  strings or `ArrayBuffer`s (`await blob.arrayBuffer()`), never a `Blob` or a `FormData` holding one, because WebKitGTK aborts the whole
+  process. A new Linux test checks that strings and bytes from a worker work over the in-process transport.
+
+### Not verified
+- How the new window and tray features look: the Windows shadow, snapping and dark tray menu; and a tray on a real KDE, XFCE or GNOME
+  (with the extension) desktop. On Linux, minimizing and dragging need a window manager and were not run in the test containers.
+
 ## 0.2.5 - 2026-10-30
 
 ### Added

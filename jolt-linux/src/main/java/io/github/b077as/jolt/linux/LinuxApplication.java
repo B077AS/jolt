@@ -1,8 +1,10 @@
 package io.github.b077as.jolt.linux;
 
 import io.github.b077as.jolt.AppOptions;
+import io.github.b077as.jolt.Autostart;
 import io.github.b077as.jolt.Application;
 import io.github.b077as.jolt.JoltException;
+import io.github.b077as.jolt.Tray;
 import io.github.b077as.jolt.WebWindow;
 import io.github.b077as.jolt.WindowOptions;
 
@@ -11,7 +13,7 @@ import java.lang.foreign.MemorySegment;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -39,7 +41,9 @@ final class LinuxApplication implements Application {
     private final AtomicBoolean wakePending = new AtomicBoolean();
 
     // UI thread only
-    private final Map<Long, LinuxWindow> windows = new HashMap<>();
+    private final Map<Long, LinuxWindow> windows = new java.util.concurrent.ConcurrentHashMap<>();
+    /** Tray icons; UI thread only. */
+    private final List<GtkTray> trays = new ArrayList<>();
     private MemorySegment webContext = MemorySegment.NULL;
     private boolean resourceSchemeRegistered;
     private boolean mainLoopRunning;
@@ -198,11 +202,68 @@ final class LinuxApplication implements Application {
     }
 
     @Override
+    public CompletableFuture<Boolean> notify(io.github.b077as.jolt.Notification notification) {
+        java.util.Objects.requireNonNull(notification, "notification");
+        // D-Bus call that can wait for the notification service: keep it off the UI thread
+        return CompletableFuture.supplyAsync(() -> notifications().send(options.appId(), notification),
+                Thread::startVirtualThread);
+    }
+
+    private GtkNotifications notifications;
+
+    private synchronized GtkNotifications notifications() {
+        if (notifications == null) {
+            notifications = new GtkNotifications(this, id);
+        }
+        return notifications;
+    }
+
+    /** A signal from the notification service (button pressed, notification closed); GLib main loop thread. */
+    void onNotificationSignal(String signal, MemorySegment parameters) {
+        GtkNotifications n;
+        synchronized (this) {
+            n = notifications;
+        }
+        if (n != null) {
+            n.onSignal(signal, parameters);
+        }
+    }
+
+    @Override
+    public boolean isTraySupported() {
+        return GtkTray.hostAvailable();
+    }
+
+    @Override
+    public Tray createTray(byte[] icon, String tooltip) {
+        if (!isUiThread()) {
+            throw new IllegalStateException("createTray must be called on the UI thread (inside run's onStart)");
+        }
+        GtkTray tray = new GtkTray(this, options.appId(), icon, tooltip);
+        trays.add(tray);
+        return tray;
+    }
+
+    void trayClosed(GtkTray tray) {
+        trays.remove(tray);
+    }
+
+    @Override
+    public Autostart autostart() {
+        return new XdgAutostart(options.appId(), XdgAutostart.defaultDirectory());
+    }
+
+    @Override
     public WebWindow createWindow(WindowOptions windowOptions) {
         if (!isUiThread()) {
             throw new IllegalStateException("createWindow must be called on the UI thread (inside run's onStart)");
         }
         return new LinuxWindow(this, windowOptions);
+    }
+
+    @Override
+    public List<WebWindow> windows() {
+        return List.copyOf(windows.values());
     }
 
     @Override
@@ -289,6 +350,15 @@ final class LinuxApplication implements Application {
 
     private void shutdown() {
         try {
+            synchronized (this) {
+                if (notifications != null) {
+                    notifications.close();
+                    notifications = null;
+                }
+                for (GtkTray tray : new ArrayList<>(trays)) {
+                    tray.closeNow(); // leaves the bus name and the exported objects before the callbacks go away
+                }
+            }
             for (LinuxWindow window : new ArrayList<>(windows.values())) {
                 window.destroyNow();
             }

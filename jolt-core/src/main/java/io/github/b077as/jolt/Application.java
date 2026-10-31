@@ -69,8 +69,53 @@ public interface Application extends AutoCloseable {
         throw new UnsupportedOperationException("this platform cannot open external addresses");
     }
 
+    /**
+     * Shows a system notification. The future completes with whether the system accepted it; it does not say whether
+     * the user saw it (they may have notifications turned off, or be in a focus mode). Safe from any thread.
+     *
+     * <p>Windows: a WinRT toast. The first call registers {@code appId} under
+     * {@code HKCU\Software\Classes\AppUserModelId} so Windows has a name to show; nothing is installed. Linux: the
+     * desktop's notification service ({@code org.freedesktop.Notifications}); the future completes with {@code false}
+     * when there is none.
+     */
+    default CompletableFuture<Boolean> notify(Notification notification) {
+        throw new UnsupportedOperationException("this platform cannot show notifications");
+    }
+
+    /**
+     * Whether the desktop can show a tray icon. Windows always can. On Linux it needs a status notifier host: KDE Plasma and many other
+     * desktops have one, GNOME shows tray icons only with its AppIndicator extension. Check it before relying on
+     * {@link CloseBehavior#HIDE}: with no tray, a hidden window has no way back. It is a snapshot; a desktop may gain or lose a host later.
+     */
+    default boolean isTraySupported() {
+        return false;
+    }
+
+    /**
+     * Adds an icon to the system tray. Must be called on the UI thread. Close the returned {@link Tray} to remove it; it goes away by
+     * itself when the application ends.
+     *
+     * @param icon    PNG data or Windows {@code .ico} bytes, as for {@link WebWindow#setIcon}
+     * @param tooltip the text shown when the pointer rests on it, or {@code null}
+     * @throws UnsupportedOperationException if {@link #isTraySupported()} is false
+     */
+    default Tray createTray(byte[] icon, String tooltip) {
+        throw new UnsupportedOperationException("this platform cannot show a tray icon");
+    }
+
+    /** Starting the application when the user signs in, see {@link Autostart}. */
+    default Autostart autostart() {
+        throw new UnsupportedOperationException("this platform cannot start applications at sign-in");
+    }
+
     /** Creates a window hosting a web view. Must be called on the UI thread. */
     WebWindow createWindow(WindowOptions options);
+
+    /**
+     * The windows that are open right now, in no particular order. A snapshot: windows opened or closed afterwards are not
+     * reflected in it. Safe from any thread.
+     */
+    java.util.List<WebWindow> windows();
 
     /** Releases native resources. Call after {@link #run(Runnable)} has returned. */
     @Override

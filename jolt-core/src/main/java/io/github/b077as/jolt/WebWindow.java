@@ -95,7 +95,7 @@ public interface WebWindow {
             addInitScript(server.initScript());
         }
         setSecurity(security().withTrustedOrigins(server.origin()));
-        loadUrl(server.origin() + "/");
+        loadUrl(server.origin() + options.startPath());
     }
 
     /** Navigates to a document built from {@code html}. The page gets the origin {@link SecurityPolicy#APP_ORIGIN}, which is always trusted. */
@@ -131,6 +131,46 @@ public interface WebWindow {
     /** Like {@link #enableSaveAs()}, with the folder the save dialog starts in ({@code null}: where the system last had the user). */
     default void enableSaveAs(java.nio.file.Path initialDirectory) {
         io.github.b077as.jolt.internal.PageSaveAs.enable(this, initialDirectory);
+    }
+
+    /**
+     * Lets the pages of this window show system notifications with {@code jolt.notify(title, body)}, sent through
+     * {@code app} (see {@link Application#notify}). Only pages whose origin the {@link SecurityPolicy} trusts can use it,
+     * and a window is limited to 5 notifications per 10 seconds. Enable it before the page loads.
+     *
+     * <pre>{@code
+     * const shown = await jolt.notify("Export finished", "report.pdf is ready", {   // resolves false if the system did not show it
+     *   onclick: () => console.log("opened"),
+     *   buttons: [{ label: "Open", onclick: () => open() }, { label: "Later", onclick: () => {} }],   // up to 5
+     *   reply: { label: "Send", placeholder: "Reply", onreply: (text) => send(text) },               // Windows only
+     * });
+     * }</pre>
+     * The callbacks stay in the page and run when the user uses the notification, for as long as the page and the application
+     * are alive; the page remembers the last 32 notifications.
+     */
+    default void enableNotifications(Application app) {
+        io.github.b077as.jolt.internal.PageNotify.enable(this, app);
+    }
+
+    /**
+     * Lets the pages of this window open other windows with {@code jolt.openWindow(path, options)} and talk to the pages of the
+     * app's other windows with {@code jolt.broadcast(text)}. The page never opens anything by itself: {@code opener} is asked
+     * for every request and creates the window, or refuses (see {@link WindowOpener}). Only pages whose origin the
+     * {@link SecurityPolicy} trusts can use it, and a window is limited to 10 requests per 10 seconds. Enable it before the
+     * page loads.
+     *
+     * <pre>{@code
+     * const opened = await jolt.openWindow("/message/42", { key: "message-42", title: "Re: lunch", width: 900, height: 700 });
+     * // true: a window opened, or the one with that key was brought to the front; false: the app refused
+     *
+     * jolt.broadcast("message-42:read");                        // goes to every other window that has enabled this
+     * const stop = jolt.onBroadcast((text) => refreshList(text)); // call stop() to unsubscribe
+     * }</pre>
+     * {@code path} is an address inside the app (it must start with one {@code /}); anything else is rejected. Pass {@code null}
+     * as {@code opener} to give a window {@code broadcast} only. Windows created by the opener get the same abilities.
+     */
+    default void enableOpenWindow(Application app, WindowOpener opener) {
+        io.github.b077as.jolt.internal.PageWindows.enable(this, app, opener);
     }
 
     /** Opens a {@link BinaryChannel} with the default {@link ChannelOptions}. */
@@ -214,6 +254,33 @@ public interface WebWindow {
     void show();
 
     void hide();
+
+    /** Minimizes the window to the taskbar (or dock); {@link #focus()} or {@link #restore()} brings it back. */
+    void minimize();
+
+    /** Whether the window is minimized. Can be called from any thread. */
+    boolean isMinimized();
+
+    /** Whether the window is shown (not hidden with {@link #hide()}, by {@link CloseBehavior#HIDE} or before {@link #show()}). Can be called from any thread. */
+    boolean isVisible();
+
+    /**
+     * Chooses what the close button does: {@link CloseBehavior#CLOSE} (the default) destroys the window, {@link CloseBehavior#HIDE}
+     * only hides it so the application keeps running, for example in the tray. It can be changed at any time and applies to the
+     * next click. A window that is hidden this way comes back with {@link #focus()} or {@link #show()}. Closing from code
+     * ({@link #close()}, {@link Application#quit()}) always closes.
+     */
+    void setCloseBehavior(CloseBehavior behavior);
+
+    /** The current setting, see {@link #setCloseBehavior}. */
+    CloseBehavior closeBehavior();
+
+    /**
+     * Brings the window to the front and gives it the keyboard focus; a minimized window is restored and a hidden one is shown.
+     * The system may refuse to take focus away from another application (Windows and Wayland compositors both can); the
+     * window is then raised or flashes in the taskbar instead. Does nothing once the window is closed.
+     */
+    void focus();
 
     /**
      * Maximizes the window. On a window that is still hidden it is remembered and takes effect when the window is first

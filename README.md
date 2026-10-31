@@ -78,7 +78,7 @@ Add the API and both backends; each one only activates on its own OS.
 ```xml
 <properties>
   <maven.compiler.release>25</maven.compiler.release>
-  <jolt.version>0.2.5</jolt.version>
+  <jolt.version>0.3.0</jolt.version>
 </properties>
 
 <dependencies>
@@ -103,9 +103,9 @@ Add the API and both backends; each one only activates on its own OS.
 Gradle:
 
 ```kotlin
-implementation("io.github.b077as:jolt-core:0.2.5")
-implementation("io.github.b077as:jolt-win32:0.2.5")
-implementation("io.github.b077as:jolt-linux:0.2.5")
+implementation("io.github.b077as:jolt-core:0.3.0")
+implementation("io.github.b077as:jolt-win32:0.3.0")
+implementation("io.github.b077as:jolt-linux:0.3.0")
 ```
 
 Run Java with `--enable-native-access=ALL-UNNAMED`, or put `Enable-Native-Access: ALL-UNNAMED` in your jar manifest
@@ -211,6 +211,60 @@ const saved = await jolt.saveAs(blobOrBytesOrText, { name: "report.pdf", filters
 The data is written to a temporary file and moved into place when complete. Only trusted origins may use it, and on Linux the page
 must come from `loadResources`.
 
+### System notifications
+
+Show a toast from Java (since 0.3.0): WinRT on Windows, the desktop's notification service on Linux.
+
+```java
+app.notify(Notification.of("Export finished", "report.pdf is ready")
+        .withOnClick(() -> window.focus())
+        .withButton("Open", () -> open())               // up to 5 buttons
+        .withReply("Send", "Reply", text -> send(text)))  // a text field: Windows only
+    .thenAccept(shown -> { /* false: the system did not show it */ });
+```
+
+Callbacks run on the UI thread while the app runs. On Windows the first call registers your `appId` as the display name under
+`HKCU\Software\Classes\AppUserModelId` (nothing is installed), and the future is `false` if the user turned notifications off. On Linux it
+is `false` when there is no notification service. To let trusted pages do it, call `window.enableNotifications(app)` before the page
+loads, then `await jolt.notify(title, body, { onclick, buttons: [{ label, onclick }], reply: { label, placeholder, onreply } })`
+(at most 5 per 10 seconds per window).
+
+### More than one window (pop-outs)
+
+Available since **0.3.0**.
+
+`app.createWindow(...)` can be called as often as you like (on the UI thread), and `app.windows()` lists the windows that are open.
+A page can ask for another window, for example an email shown in its own window, but it never opens one itself: your Java code
+decides.
+
+```java
+main.enableOpenWindow(app, request -> {                          // runs on the UI thread, for each request from a page
+    if (!request.path().startsWith("/message/")) return null;   // null refuses; the page's promise resolves false
+    WebWindow popout = request.createWindow(app);                // title and size come from the page's suggestions
+    popout.loadResources(resources, router,
+            ResourceOptions.defaults().withStartPath(request.path()));   // the new window opens on /message/42
+    return popout;
+});
+```
+
+```js
+const opened = await jolt.openWindow("/message/42", { key: "message-42", title: "Re: lunch", width: 900, height: 700 });
+// true: a window opened, or the one with that key was brought to the front. false: the app refused.
+```
+
+- **`key`** stops duplicates: asking again for the same key focuses the window that is already open (your opener is not called).
+- **`path`** must be an address inside the app (one leading `/`); `//host`, `https://...` and the like are rejected.
+- The window you return gets `jolt.openWindow` and `jolt.broadcast` too, with the same opener; refuse inside the opener (look at
+  `request.opener()`) if pop-outs must not open more windows. At most 10 requests per window per 10 seconds.
+- The request is yours to check: `path`, `key`, `title` and the sizes come from the page. `request.options()` has no owner; use
+  `.withOwner(request.opener())` if the pop-out should stay in front of its window and close with it. Without an owner it is an
+  independent window.
+- **Talking between windows**: `jolt.broadcast(text)` goes to every other window that has called `enableOpenWindow`, and
+  `const stop = jolt.onBroadcast(text => ...)` receives it (a window never gets its own broadcasts; `text` is limited to 16 K characters).
+  To refresh the message list after a reply, broadcast a short event such as `"message-42:read"` and let each window fetch what it needs.
+- From Java: `window.focus()` brings a window to the front (restoring or showing it), `WindowOptions.withOwner(window)` makes a window
+  belong to another one.
+
 ## The frontend
 
 Your page is normal HTML, CSS and JavaScript. The web view is Chromium (Windows) or WebKit (Linux), so write for both.
@@ -285,7 +339,8 @@ if (file != null && !file.filename().isEmpty()) {
 Treat uploaded files as hostile: `filename()` and `contentType()` come from the user's machine. Bodies are held in memory, 8 MB
 by default (413 above that); raise it with `ResourceOptions.defaults().withMaxRequestBytes(...)` (up to 1 GB). On Linux, Jolt works
 around a WebKitGTK crash on `Blob` request bodies by turning them into bytes inside the page; a synchronous `XMLHttpRequest` with a
-`Blob` throws `NotSupportedError`.
+`Blob` throws `NotSupportedError`. That workaround does not reach Web Workers: on Linux a worker must send strings or
+`ArrayBuffer`s (`await blob.arrayBuffer()`), never a `Blob` or a `FormData` holding one, because WebKitGTK aborts the whole process.
 
 **Loopback fallback.** The in-process transport needs WebKitGTK 2.40+ on Linux. Older systems fall back to a guarded server on
 `127.0.0.1` automatically (per-run CSRF token, `Origin`/`Host`/`Sec-Fetch-Site` checks, no CORS). You can also ask for it, for
@@ -317,8 +372,95 @@ window.maximize(); window.restore(); window.isMaximized();
   Jolt names the process after your app id, which is what lets the compositor find it (since 0.2.5).
 - On Linux, GTK sometimes prints harmless warnings to the console (for example from its file chooser).
   `AppOptions.of(id).withQuietNativeLogs(true)` hides that known list and leaves other messages alone (since 0.2.5).
-- A fully custom (frameless) title bar is not available yet.
+- A fully custom title bar: see [Frameless windows](#frameless-windows) below.
 - Developer tools: `WindowOptions.defaults().withDevTools(true)`, then right-click, Inspect, or `window.openDevTools()`.
+
+### Frameless windows
+
+Available since **0.3.0**.
+
+`WindowOptions.defaults().withFrameless(true)` removes the operating system's title bar and border, so the page draws its own:
+
+```html
+<header data-jolt-drag>                       <!-- drag here to move the window; double-click maximizes or restores -->
+  <span>Parsel</span>
+  <button onclick="jolt.frame.minimize()">–</button>
+  <button onclick="jolt.frame.toggleMaximize()">☐</button>
+  <button onclick="jolt.frame.close()">✕</button>
+</header>
+```
+
+- `data-jolt-drag` marks the draggable area. Buttons, links and form fields inside it keep working; add `data-jolt-no-drag` to
+  exclude anything else. (CSS `app-region: drag` is not used: WebKitGTK does not support it.)
+- The window can be resized from thin invisible handles along its edges and corners, which Jolt adds to the page.
+- `jolt.frame.close()` closes the window as the close button would, so `setCloseBehavior(HIDE)` applies to it too.
+- On Windows the window keeps its sizing frame (the page is given the whole window), which is what lets Windows draw the shadow and
+  snap it (Win+arrows); the tests check the layout, not how the shadow and snapping look. Linux draws no shadow and snaps only as your
+  window manager does; on Wayland, moving and resizing needs a compositor that accepts the request.
+- Frame commands only work on windows created `frameless`, and only for pages the `SecurityPolicy` trusts like any other message.
+
+## Tray icon, close to tray, start with the computer
+
+Available since **0.3.0**.
+
+A mail client or chat app usually lives in the tray, hides instead of quitting when its window is closed, and can start with the
+computer. These are separate pieces, so you choose which to use, and each can be changed while the app runs.
+
+```java
+Application app = ...;
+WebWindow main = ...;
+
+if (app.isTraySupported()) {                                   // Windows: always. Linux: needs a tray host (see below)
+    Tray tray = app.createTray(iconBytes, "Parsel");           // call on the UI thread
+    tray.onClick(main::focus);                                 // primary click: bring the window back
+    tray.setMenu(TrayMenu.of(
+            TrayMenu.action("Open Parsel", main::focus),
+            TrayMenu.separator(),
+            TrayMenu.check("Close to tray", closeToTray, on -> setCloseToTray(on)),
+            TrayMenu.check("Start with the computer", autostart, on -> setAutostart(on)),
+            TrayMenu.separator(),
+            TrayMenu.action("Quit", app::quit)));
+}
+```
+
+```java
+main.setCloseBehavior(closeToTray ? CloseBehavior.HIDE : CloseBehavior.CLOSE);    // takes effect on the next click of the close button
+
+Autostart autostart = app.autostart();
+autostart.enable(List.of(exePath, "--minimized"));     // start with the computer, minimized...
+autostart.enable(List.of(exePath));                    // ...or not: calling it again replaces the entry
+autostart.disable(); autostart.isEnabled();
+```
+
+- **Menus are immutable.** To tick a box or change a label, build the menu again and call `tray.setMenu(...)`; `tray.setIcon` and
+  `tray.setTooltip` do the same for the icon and its text (for example "3 unread"). Menu callbacks run on the UI thread.
+- **Start minimized** is an argument you choose: put `--minimized` in the autostart command, and in `main` create the window with
+  `withVisible(false)` (and a tray) when `args` contains it. Only hide at startup if `app.isTraySupported()`, or the user cannot reach the app.
+- **Close to tray needs a tray.** `CloseBehavior.HIDE` only hides the window; `focus()` or `show()` brings it back, `close()` and `app.quit()`
+  still really close it. Check `isTraySupported()` before choosing `HIDE`.
+- **The command**: give the launcher of your installed or packaged app (on Windows a quoted path in the Run key, on Linux the `Exec=`
+  line of `~/.config/autostart/<appId>.desktop`). `Autostart.currentCommand(extraArgs)` describes the running process, which is fine for
+  `java -jar` while developing.
+- **Windows**: the tray menu is a native menu; Jolt asks Windows to draw it in dark mode when the system is dark, using an undocumented
+  call that is skipped if it is missing. It supports checks, disabled entries, separators and submenus, but not icons. If Explorer restarts, the icon is put back.
+- **Linux**: the tray is a StatusNotifierItem with a `dbusmenu` menu, which KDE Plasma, XFCE, Cinnamon, MATE, Budgie and others show.
+  Stock GNOME does not show tray icons unless the user installed the AppIndicator extension, so `isTraySupported()` is `false` there.
+  If the tray host restarts while the app runs, the icon is not registered again.
+- **One copy only**: a tray app that starts at sign-in should not start twice.
+
+```java
+public static void main(String[] args) {
+    AppOptions options = AppOptions.of("com.example.parsel");
+    SingleInstance instance = SingleInstance.acquire(options, List.of(args), otherArgs -> app.dispatch(() -> main.focus()));
+    if (!instance.isPrimary()) {
+        return;                       // the running copy was told (and receives this copy's arguments); nothing more to do
+    }
+    ...
+}
+```
+
+`SingleInstance` takes a lock file in the data directory (released by the system if the app dies) and talks to the running copy over a
+Unix domain socket that only the same user can reach. The callback runs on a thread of its own: use `app.dispatch`.
 
 ## Security
 
