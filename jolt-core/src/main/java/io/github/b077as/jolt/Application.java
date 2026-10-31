@@ -69,6 +69,19 @@ public interface Application extends AutoCloseable {
         throw new UnsupportedOperationException("this platform cannot open external addresses");
     }
 
+    /**
+     * Shows a system notification. The future completes with whether the system accepted it; it does not say whether
+     * the user saw it (they may have notifications turned off, or be in a focus mode). Safe from any thread.
+     *
+     * <p>Windows: a WinRT toast. The first call registers {@code appId} under
+     * {@code HKCU\Software\Classes\AppUserModelId} so Windows has a name to show; nothing is installed. Linux: the
+     * desktop's notification service ({@code org.freedesktop.Notifications}); the future completes with {@code false}
+     * when there is none.
+     */
+    default CompletableFuture<Boolean> notify(Notification notification) {
+        throw new UnsupportedOperationException("this platform cannot show notifications");
+    }
+
     /** Creates a window hosting a web view. Must be called on the UI thread. */
     WebWindow createWindow(WindowOptions options);
 

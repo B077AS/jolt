@@ -177,6 +177,19 @@ final class WindowsApplication implements Application {
         return submit(() -> Win32.shellOpen(target));
     }
 
+    private WindowsToasts toasts;
+
+    @Override
+    public CompletableFuture<Boolean> notify(io.github.b077as.jolt.Notification notification) {
+        java.util.Objects.requireNonNull(notification, "notification");
+        return submit(() -> {
+            if (toasts == null) {
+                toasts = new WindowsToasts(options.appId(), this);
+            }
+            return toasts.show(notification);
+        });
+    }
+
     @Override
     public WebWindow createWindow(WindowOptions windowOptions) {
         if (!isUiThread()) {
@@ -324,6 +337,9 @@ final class WindowsApplication implements Application {
     private void shutdown(boolean comInitialized) {
         loopRunning = false; // windows destroyed below must not leave a quit flag on this thread
         try {
+            if (toasts != null) {
+                toasts.close(); // a click after this point must not reach callbacks that are about to be freed
+            }
             for (WindowsWindow window : new ArrayList<>(windows.values())) {
                 window.destroyNow();
             }

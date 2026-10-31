@@ -198,6 +198,34 @@ final class LinuxApplication implements Application {
     }
 
     @Override
+    public CompletableFuture<Boolean> notify(io.github.b077as.jolt.Notification notification) {
+        java.util.Objects.requireNonNull(notification, "notification");
+        // D-Bus call that can wait for the notification service: keep it off the UI thread
+        return CompletableFuture.supplyAsync(() -> notifications().send(options.appId(), notification),
+                Thread::startVirtualThread);
+    }
+
+    private GtkNotifications notifications;
+
+    private synchronized GtkNotifications notifications() {
+        if (notifications == null) {
+            notifications = new GtkNotifications(this, id);
+        }
+        return notifications;
+    }
+
+    /** A signal from the notification service (button pressed, notification closed); GLib main loop thread. */
+    void onNotificationSignal(String signal, MemorySegment parameters) {
+        GtkNotifications n;
+        synchronized (this) {
+            n = notifications;
+        }
+        if (n != null) {
+            n.onSignal(signal, parameters);
+        }
+    }
+
+    @Override
     public WebWindow createWindow(WindowOptions windowOptions) {
         if (!isUiThread()) {
             throw new IllegalStateException("createWindow must be called on the UI thread (inside run's onStart)");
@@ -289,6 +317,12 @@ final class LinuxApplication implements Application {
 
     private void shutdown() {
         try {
+            synchronized (this) {
+                if (notifications != null) {
+                    notifications.close();
+                    notifications = null;
+                }
+            }
             for (LinuxWindow window : new ArrayList<>(windows.values())) {
                 window.destroyNow();
             }

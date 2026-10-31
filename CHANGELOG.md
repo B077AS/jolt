@@ -6,6 +6,18 @@ this file says when they do.
 
 The latest version is the one on [Maven Central](https://central.sonatype.com/artifact/io.github.b077as/jolt-core).
 
+## Unreleased
+
+### Added
+- **System notifications**: `Application.notify(Notification)` shows a toast (WinRT `Windows.UI.Notifications` on Windows, the
+  `org.freedesktop.Notifications` D-Bus service on Linux). On Windows the first call registers `appId` as a display name under
+  `HKCU\Software\Classes\AppUserModelId`; nothing is installed. It completes with `false` when Windows has notifications turned
+  off for the user or the app. `Notification.withOnClick`, `withButton` (up to 5) and `withReply` (a text field with a send button,
+  Windows only: the Linux specification has no text input) run on the UI thread while the application is running.
+  `WebWindow.enableNotifications(app)` lets trusted pages call `jolt.notify(title, body)` (a promise of whether the system showed it;
+  at most 5 per 10 seconds per window). The page can pass `{ onclick, buttons: [{ label, onclick }], reply: { label,
+  placeholder, onreply } }` as a third argument; the callbacks run in the page when the user uses the notification.
+
 ## 0.2.5 - 2026-10-30
 
 ### Added

@@ -44,6 +44,8 @@ final class Callbacks {
     static final MemorySegment URI_SCHEME_REQUEST;
     /** {@code GAsyncReadyCallback} for {@code webkit_web_view_evaluate_javascript}: user_data is the eval id. */
     static final MemorySegment EVAL_DONE;
+    /** {@code GDBusSignalCallback} for the notification service's signals: user_data is the application id. */
+    static final MemorySegment NOTIFY_SIGNAL;
     /** {@code GLogFunc}: drops {@link Gtk#KNOWN_NOISE}, prints everything else as GLib would. */
     static final MemorySegment LOG;
 
@@ -78,6 +80,10 @@ final class Callbacks {
         EVAL_DONE = stub(lookup, forever, "onEvalDone",
                 MethodType.methodType(void.class, MemorySegment.class, MemorySegment.class, MemorySegment.class),
                 FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, ADDRESS), 0);
+        NOTIFY_SIGNAL = stub(lookup, forever, "onNotifySignal",
+                MethodType.methodType(void.class, MemorySegment.class, MemorySegment.class, MemorySegment.class,
+                        MemorySegment.class, MemorySegment.class, MemorySegment.class, MemorySegment.class),
+                FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS), 0);
         LOG = stub(lookup, forever, "onLog",
                 MethodType.methodType(void.class, MemorySegment.class, int.class, MemorySegment.class, MemorySegment.class),
                 FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT, ADDRESS, ADDRESS), 0);
@@ -104,6 +110,15 @@ final class Callbacks {
             app.drain();
         }
         return 0;
+    }
+
+    private static void onNotifySignal(MemorySegment connection, MemorySegment sender, MemorySegment path,
+                                       MemorySegment interfaceName, MemorySegment signal, MemorySegment parameters,
+                                       MemorySegment data) {
+        LinuxApplication app = Registry.get(data.address(), LinuxApplication.class);
+        if (app != null) {
+            app.onNotificationSignal(Gtk.readUtf8(signal), parameters);
+        }
     }
 
     private static void onDestroy(MemorySegment widget, MemorySegment data) {

@@ -5,6 +5,7 @@ import io.github.b077as.jolt.AppOptions;
 import io.github.b077as.jolt.Application;
 import io.github.b077as.jolt.BinaryChannel;
 import io.github.b077as.jolt.BlockedEvent;
+import io.github.b077as.jolt.Notification;
 import io.github.b077as.jolt.SecurityPolicy;
 import io.github.b077as.jolt.WebWindow;
 import io.github.b077as.jolt.WindowClosedException;
@@ -111,6 +112,58 @@ public abstract class WebWindowContract {
     private static void loadChannelPage(WebWindow window, String script) {
         byte[] page = ("<script>" + script + "</script>").getBytes(StandardCharsets.UTF_8);
         window.loadResources(path -> path.endsWith("index.html") ? page : null);
+    }
+
+    /** An Application that behaves as the real one, except that notify records the notification instead of showing it. */
+    private static Application recordingNotifications(Application real, CompletableFuture<Notification> sink) {
+        return (Application) java.lang.reflect.Proxy.newProxyInstance(Application.class.getClassLoader(), new Class<?>[]{Application.class},
+                (proxy, method, args) -> {
+                    if (method.getName().equals("notify")) {
+                        sink.complete((Notification) args[0]);
+                        return CompletableFuture.completedFuture(true);
+                    }
+                    try {
+                        return method.invoke(real, args);
+                    } catch (java.lang.reflect.InvocationTargetException e) {
+                        throw e.getCause();
+                    }
+                });
+    }
+
+    @Test
+    public void aPageNotificationCarriesButtonsAndReportsClicksButtonsAndRepliesBackToThePage() {
+        CompletableFuture<Notification> shown = new CompletableFuture<>();
+        CompletableFuture<String> report = new CompletableFuture<>();
+        runApp(40, app -> {
+            WebWindow window = app.createWindow(WindowOptions.defaults().withSize(400, 300));
+            window.enableNotifications(recordingNotifications(app, shown));
+            window.onMessage(message -> {
+                if (message.equals("shown:true")) {
+                    // the user clicks the notification, presses the second button, then sends a reply
+                    Notification n = shown.join();
+                    n.onClick().run();
+                    n.buttons().get(1).action().run();
+                    n.reply().onReply().accept("it's \"fine\" ü");
+                } else {
+                    report.complete(message);
+                    window.close();
+                }
+            });
+            loadChannelPage(window, "const seen = [];"
+                    + "const done = () => { if (seen.length === 3) jolt.postMessage(seen.join('|')); };"
+                    + "jolt.notify('Build', 'finished', {"
+                    + "  onclick: () => { seen.push('click'); done(); },"
+                    + "  buttons: [{ label: 'Open', onclick: () => seen.push('wrong') }, { label: 'Later', onclick: () => { seen.push('later'); done(); } }],"
+                    + "  reply: { label: 'Send', placeholder: 'Say', onreply: (t) => { seen.push('reply=' + t); done(); } }"
+                    + "}).then(ok => jolt.postMessage('shown:' + ok), e => jolt.postMessage('error: ' + e.message));");
+        });
+        assertTrue(report.isDone(), "the page never reported");
+        assertEquals("click|later|reply=it's \"fine\" ü", report.getNow(null));
+        Notification n = shown.getNow(null);
+        assertEquals("Build", n.title());
+        assertEquals("finished", n.body());
+        assertEquals(List.of("Open", "Later"), n.buttons().stream().map(Notification.Button::label).toList());
+        assertEquals("Say", n.reply().placeholder());
     }
 
     @Test

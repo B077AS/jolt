@@ -34,6 +34,10 @@ public final class BridgeScript {
                         const f = window.__joltSaveAs;
                         return f ? f(data, options) : Promise.reject(new Error("saveAs is not enabled: call enableSaveAs() on the Java window"));
                       },
+                      notify: (title, body, options) => {
+                        const f = window.__joltNotify;
+                        return f ? f(title, body, options) : Promise.reject(new Error("notify is not enabled: call enableNotifications() on the Java window"));
+                      },
                       channel: (name, options) => {
                         const open = window.__joltChannelFactory;
                         if (!open) throw new Error("no binary channel: call openChannel(name) on the Java side before the page loads");

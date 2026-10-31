@@ -40,6 +40,7 @@ final class ComHandler {
     }
 
     private static final byte[] IID_IUNKNOWN = Guid.bytes("00000000-0000-0000-c000-000000000046");
+    private static final byte[] IID_IAGILE_OBJECT = Guid.bytes("94ea2b94-e9cc-49e0-c0ff-ee64ca8f5b90");
     private static final MethodHandles.Lookup LOOKUP = MethodHandles.lookup();
 
     private final Arena arena = Arena.ofShared();
@@ -48,19 +49,30 @@ final class ComHandler {
     private final AtomicInteger refs = new AtomicInteger(1);
     private final HrPtr hrPtr;
     private final PtrPtr ptrPtr;
+    private final boolean agile;
 
     /** Pointer to hand to WebView2 (an {@code IFoo*}). */
     final MemorySegment object;
 
     static ComHandler hrPtr(String iid, HrPtr callback, Consumer<Runnable> deferFree) {
-        return new ComHandler(iid, callback, null, deferFree);
+        return new ComHandler(iid, callback, null, deferFree, false);
     }
 
     static ComHandler ptrPtr(String iid, PtrPtr callback, Consumer<Runnable> deferFree) {
-        return new ComHandler(iid, null, callback, deferFree);
+        return new ComHandler(iid, null, callback, deferFree, false);
     }
 
-    private ComHandler(String iid, HrPtr hrPtr, PtrPtr ptrPtr, Consumer<Runnable> deferFree) {
+    /**
+     * Like {@link #ptrPtr}, but declares itself {@code IAgileObject}: the caller (WinRT) may invoke it on any thread
+     * instead of marshalling the call to the creating thread, which it cannot do for a generic delegate. The callback
+     * therefore runs on a thread of the system's choosing and must hand work to the UI thread itself.
+     */
+    static ComHandler agilePtrPtr(String iid, PtrPtr callback, Consumer<Runnable> deferFree) {
+        return new ComHandler(iid, null, callback, deferFree, true);
+    }
+
+    private ComHandler(String iid, HrPtr hrPtr, PtrPtr ptrPtr, Consumer<Runnable> deferFree, boolean agile) {
+        this.agile = agile;
         this.iid = Guid.bytes(iid);
         this.hrPtr = hrPtr;
         this.ptrPtr = ptrPtr;
@@ -118,7 +130,7 @@ final class ComHandler {
 
     private int queryInterface(MemorySegment self, MemorySegment riid, MemorySegment ppv) {
         MemorySegment out = ppv.reinterpret(ADDRESS.byteSize());
-        if (Guid.matches(riid, IID_IUNKNOWN) || Guid.matches(riid, iid)) {
+        if (Guid.matches(riid, IID_IUNKNOWN) || Guid.matches(riid, iid) || (agile && Guid.matches(riid, IID_IAGILE_OBJECT))) {
             refs.incrementAndGet();
             out.set(ADDRESS, 0, self);
             return Com.S_OK;

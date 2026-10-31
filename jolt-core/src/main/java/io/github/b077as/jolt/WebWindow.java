@@ -133,6 +133,25 @@ public interface WebWindow {
         io.github.b077as.jolt.internal.PageSaveAs.enable(this, initialDirectory);
     }
 
+    /**
+     * Lets the pages of this window show system notifications with {@code jolt.notify(title, body)}, sent through
+     * {@code app} (see {@link Application#notify}). Only pages whose origin the {@link SecurityPolicy} trusts can use it,
+     * and a window is limited to 5 notifications per 10 seconds. Enable it before the page loads.
+     *
+     * <pre>{@code
+     * const shown = await jolt.notify("Export finished", "report.pdf is ready", {   // resolves false if the system did not show it
+     *   onclick: () => console.log("opened"),
+     *   buttons: [{ label: "Open", onclick: () => open() }, { label: "Later", onclick: () => {} }],   // up to 5
+     *   reply: { label: "Send", placeholder: "Reply", onreply: (text) => send(text) },               // Windows only
+     * });
+     * }</pre>
+     * The callbacks stay in the page and run when the user uses the notification, for as long as the page and the application
+     * are alive; the page remembers the last 32 notifications.
+     */
+    default void enableNotifications(Application app) {
+        io.github.b077as.jolt.internal.PageNotify.enable(this, app);
+    }
+
     /** Opens a {@link BinaryChannel} with the default {@link ChannelOptions}. */
     default BinaryChannel openChannel(String name) {
         return openChannel(name, ChannelOptions.defaults());
