@@ -39,4 +39,22 @@ class LinuxBackendTest extends WebWindowContract {
                 + "window.jolt.postMessage(result);</script>");
         assertEquals("NotSupportedError", resourceApp(app, request -> null, false));
     }
+
+    /**
+     * A Web Worker is out of BlobBodyShim's reach, so the README tells workers to send strings or bytes. Those must work over the
+     * in-process transport. (A worker's Blob body aborts the JVM inside webkit_uri_scheme_request_get_http_body: not testable here.)
+     */
+    @Test
+    void aWorkerCanPostStringsAndBytes() {
+        java.util.Map<String, String> app = java.util.Map.of(
+                "index.html", "<script>const w = new Worker('worker.js'); w.onmessage = e => window.jolt.postMessage(e.data);"
+                        + "w.onerror = e => window.jolt.postMessage('worker error: ' + e.message);</script>",
+                "worker.js", "(async () => { try {"
+                        + "const a = await (await fetch('/echo', { method: 'POST', body: 'text ü' })).text();"
+                        + "const b = await (await fetch('/echo', { method: 'POST', body: new TextEncoder().encode('bytes').buffer })).text();"
+                        + "postMessage(a + '|' + b); } catch (e) { postMessage('failed: ' + e); } })();");
+        io.github.b077as.jolt.RequestHandler echo = request -> request.method().equals("POST") && request.path().equals("/echo")
+                ? io.github.b077as.jolt.AppResponse.text("got " + request.bodyText()) : null;
+        assertEquals("got text ü|got bytes", resourceApp(app, echo, false));
+    }
 }

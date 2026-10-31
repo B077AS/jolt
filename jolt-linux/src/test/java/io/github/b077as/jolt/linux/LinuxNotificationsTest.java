@@ -19,6 +19,7 @@ import java.util.concurrent.TimeUnit;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
 /**
  * Notifications over the session bus. With {@code JOLT_TEST_NOTIFY_MOCK=1} (set by {@code run-notify-tests.sh}) a stand-in for a
@@ -41,6 +42,7 @@ class LinuxNotificationsTest {
     @Test
     @DisabledIfEnvironmentVariable(named = "JOLT_TEST_NOTIFY_MOCK", matches = "1")
     void withoutANotificationServiceNotifyReportsNotShown() {
+        assumeFalse(aNotificationServiceIsRunning(), "a real notification service owns " + GtkNotifications.SERVICE + " on this session bus");
         CompletableFuture<Boolean> result = new CompletableFuture<>();
         WebWindowContract.runApp(40, app -> app.notify(Notification.of("nobody home", "x")).whenComplete((shown, error) -> {
             if (error != null) {
@@ -74,6 +76,22 @@ class LinuxNotificationsTest {
         assertTrue(line.contains("\"summary\": \"Build done\""), line);
         assertTrue(line.contains("\"body\": \"it's \\\"ready\\\"\\nline two \\u00fc\""), line);
         assertTrue(line.contains("\"actions\": [\"default\", \"\", \"button0\", \"Open\", \"button1\", \"Dismiss\"]"), line);
+    }
+
+    /** Asks the session bus (through {@code gdbus}) whether a real notification service is running, as on a desktop session. */
+    private static boolean aNotificationServiceIsRunning() {
+        try {
+            Process p = new ProcessBuilder("gdbus", "call", "--session", "--dest", "org.freedesktop.DBus",
+                    "--object-path", "/org/freedesktop/DBus", "--method", "org.freedesktop.DBus.NameHasOwner", GtkNotifications.SERVICE)
+                    .redirectErrorStream(true).start();
+            String out = new String(p.getInputStream().readAllBytes());
+            return p.waitFor(5, TimeUnit.SECONDS) && p.exitValue() == 0 && out.contains("true");
+        } catch (IOException e) {
+            return false; // no gdbus: cannot tell, assume a bare session as in the test image
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
     }
 
     private record Outcome(String action, boolean onUiThread) {}

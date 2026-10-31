@@ -285,7 +285,8 @@ if (file != null && !file.filename().isEmpty()) {
 Treat uploaded files as hostile: `filename()` and `contentType()` come from the user's machine. Bodies are held in memory, 8 MB
 by default (413 above that); raise it with `ResourceOptions.defaults().withMaxRequestBytes(...)` (up to 1 GB). On Linux, Jolt works
 around a WebKitGTK crash on `Blob` request bodies by turning them into bytes inside the page; a synchronous `XMLHttpRequest` with a
-`Blob` throws `NotSupportedError`.
+`Blob` throws `NotSupportedError`. That workaround does not reach Web Workers: on Linux a worker must send strings or
+`ArrayBuffer`s (`await blob.arrayBuffer()`), never a `Blob` or a `FormData` holding one, because WebKitGTK aborts the whole process.
 
 **Loopback fallback.** The in-process transport needs WebKitGTK 2.40+ on Linux. Older systems fall back to a guarded server on
 `127.0.0.1` automatically (per-run CSRF token, `Origin`/`Host`/`Sec-Fetch-Site` checks, no CORS). You can also ask for it, for
