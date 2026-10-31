@@ -125,8 +125,14 @@ final class WindowsToasts {
                 toast = createToast(arena, document);
                 notifier = createNotifier(arena);
                 MemorySegment setting = arena.allocate(JAVA_INT);
-                Com.check("Reading the notification setting", Com.call(notifier, FIRST_METHOD + 2, Com.HR_PTR, setting)); // get_Setting
-                int enabled = setting.get(JAVA_INT, 0);
+                // Windows only has a settings entry for an app after its first toast, and can answer ERROR_NOT_FOUND (0x80070490) before
+                // that. The setting is only there to tell the caller why nothing appeared, so when it cannot be read the toast is tried
+                // anyway: Show reports a real failure itself, and showing it is what creates the entry.
+                int settingHr = Com.call(notifier, FIRST_METHOD + 2, Com.HR_PTR, setting); // get_Setting
+                int enabled = settingValue(settingHr, setting.get(JAVA_INT, 0));
+                if (settingHr < 0) {
+                    LOG.log(System.Logger.Level.DEBUG, "The notification setting could not be read ({0}); showing the toast anyway", Com.hex(settingHr));
+                }
                 if (enabled != 0) { // NotificationSetting: 1 off for the app, 2 off for the user, 3 policy, 4 manifest
                     LOG.log(System.Logger.Level.INFO, "Windows has notifications turned off for this app (NotificationSetting {0})", enabled);
                     return false;
@@ -147,6 +153,11 @@ final class WindowsToasts {
     }
 
     private static final int RPC_E_CHANGED_MODE = 0x80010106;
+
+    /** The NotificationSetting to act on: the one Windows reported, or 0 (enabled) when it could not be read, so the toast is still tried. */
+    static int settingValue(int hresult, int reported) {
+        return hresult < 0 ? 0 : reported;
+    }
 
     /**
      * The toast was clicked, a button pressed, or the reply sent. Runs on a thread Windows chose, so it only reads what the

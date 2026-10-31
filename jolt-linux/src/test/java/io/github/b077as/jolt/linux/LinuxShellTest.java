@@ -100,6 +100,27 @@ class LinuxShellTest {
     }
 
     @Test
+    void aShownWindowThatTheWindowManagerFocusedIsFocusedAndAHiddenOneIsNot() {
+        assumeTrue(System.getenv("JOLT_TEST_NO_WINDOW_MANAGER") == null && System.getenv("JOLT_TEST_KIOSK_COMPOSITOR") == null,
+                "focus is given by a window manager");
+        CompletableFuture<String> result = new CompletableFuture<>();
+        WebWindowContract.runApp(30, app -> {
+            LinuxWindow window = (LinuxWindow) app.createWindow(WindowOptions.defaults().withSize(300, 200));
+            window.ready().thenRun(() -> {
+                window.focus();
+                WebWindowContract.eventually(window::isFocused, 5000).thenAccept(focused -> {
+                    window.hide();
+                    WebWindowContract.eventually(() -> !window.isFocused(), 5000).thenAccept(notWhileHidden -> {
+                        result.complete(focused + "," + notWhileHidden);
+                        window.close();
+                    });
+                });
+            });
+        });
+        assertEquals("true,true", result.getNow(null));
+    }
+
+    @Test
     void aFramelessPagesMinimizeButtonMinimizesTheWindow() {
         assumeTrue(System.getenv("JOLT_TEST_NO_WINDOW_MANAGER") == null && System.getenv("JOLT_TEST_KIOSK_COMPOSITOR") == null,
                 "minimizing needs a window manager that honours it");

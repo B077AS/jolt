@@ -105,6 +105,36 @@ class WindowsShellTest {
     }
 
     @Test
+    void aWindowIsFocusedOnlyWhileItIsTheOneInFrontAndShown() {
+        CompletableFuture<String> result = new CompletableFuture<>();
+        WebWindowContract.runApp(30, app -> {
+            WindowsWindow window = (WindowsWindow) app.createWindow(WindowOptions.defaults().withSize(300, 200));
+            window.ready().thenRun(() -> {
+                window.focus();
+                WebWindowContract.eventually(window::isFocused, 5000).thenAccept(focused -> {
+                    window.minimize();
+                    WebWindowContract.eventually(() -> !window.isFocused(), 5000).thenAccept(notWhileMinimized -> {
+                        window.focus();
+                        WebWindowContract.eventually(window::isFocused, 5000).thenAccept(back -> {
+                            window.hide();
+                            WebWindowContract.eventually(() -> !window.isFocused(), 5000).thenAccept(notWhileHidden -> {
+                                result.complete(focused + "," + notWhileMinimized + "," + back + "," + notWhileHidden);
+                                window.close();
+                            });
+                        });
+                    });
+                });
+            });
+        });
+        String[] seen = result.getNow("").split(",");
+        assertEquals("true", seen[1], "a minimized window is not focused");
+        assertEquals("true", seen[3], "a hidden window is not focused");
+        // Windows only lets the foreground process take the foreground; a test started from a background shell may be refused.
+        org.junit.jupiter.api.Assumptions.assumeTrue(seen[0].equals("true") && seen[2].equals("true"),
+                "Windows did not give this test process the foreground, so 'focused' could not be shown to be true");
+    }
+
+    @Test
     void aFramelessWindowIsAllClientAreaHasItsResizeHandlesAndObeysFrameMessagesWithoutLeakingThem() {
         CompletableFuture<String> result = new CompletableFuture<>();
         CompletableFuture<Boolean> minimized = new CompletableFuture<>();

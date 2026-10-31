@@ -51,6 +51,14 @@ class WindowsToastXmlTest {
     }
 
     @Test
+    void aSettingWindowCannotReadDoesNotBlockTheToast() {
+        assertEquals(0, WindowsToasts.settingValue(0x80070490, 0), "ERROR_NOT_FOUND (an app with no settings entry yet) means try anyway");
+        assertEquals(0, WindowsToasts.settingValue(0x80070490, 2), "a value that was not filled in must not be believed");
+        assertEquals(2, WindowsToasts.settingValue(0, 2), "a setting Windows did report (off for the user) is respected");
+        assertEquals(0, WindowsToasts.settingValue(0, 0));
+    }
+
+    @Test
     void aPlainNotificationHasNoActionsElement() throws Exception {
         assertEquals(0, parse(WindowsToasts.toastXml(Notification.of("t"))).getElementsByTagName("actions").getLength());
     }

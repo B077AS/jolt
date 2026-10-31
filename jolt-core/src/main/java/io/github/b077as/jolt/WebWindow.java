@@ -261,6 +261,14 @@ public interface WebWindow {
     /** Whether the window is minimized. Can be called from any thread. */
     boolean isMinimized();
 
+    /**
+     * Whether this window is the one the user is typing into: shown, not minimized, and the active window of the system. It is
+     * {@code false} while another application (or another window of this one, such as a file dialog) is in front. Use it to decide,
+     * for example, whether a new message needs a notification or can just appear in the list. A snapshot that can change at any
+     * moment; can be called from any thread.
+     */
+    boolean isFocused();
+
     /** Whether the window is shown (not hidden with {@link #hide()}, by {@link CloseBehavior#HIDE} or before {@link #show()}). Can be called from any thread. */
     boolean isVisible();
 

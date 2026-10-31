@@ -304,6 +304,11 @@ public CompletableFuture<String> eval(String script) {
     }
 
     @Override
+    public boolean isFocused() {
+        return !destroyed && Win32.isForeground(hwnd) && Win32.isWindowVisible(hwnd) && !Win32.isIconic(hwnd);
+    }
+
+    @Override
     public boolean isVisible() {
         return !destroyed && Win32.isWindowVisible(hwnd);
     }
