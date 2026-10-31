@@ -78,7 +78,7 @@ Add the API and both backends; each one only activates on its own OS.
 ```xml
 <properties>
   <maven.compiler.release>25</maven.compiler.release>
-  <jolt.version>0.3.0</jolt.version>
+  <jolt.version>0.3.1</jolt.version>
 </properties>
 
 <dependencies>
@@ -103,9 +103,9 @@ Add the API and both backends; each one only activates on its own OS.
 Gradle:
 
 ```kotlin
-implementation("io.github.b077as:jolt-core:0.3.0")
-implementation("io.github.b077as:jolt-win32:0.3.0")
-implementation("io.github.b077as:jolt-linux:0.3.0")
+implementation("io.github.b077as:jolt-core:0.3.1")
+implementation("io.github.b077as:jolt-win32:0.3.1")
+implementation("io.github.b077as:jolt-linux:0.3.1")
 ```
 
 Run Java with `--enable-native-access=ALL-UNNAMED`, or put `Enable-Native-Access: ALL-UNNAMED` in your jar manifest
@@ -262,7 +262,7 @@ const opened = await jolt.openWindow("/message/42", { key: "message-42", title: 
 - **Talking between windows**: `jolt.broadcast(text)` goes to every other window that has called `enableOpenWindow`, and
   `const stop = jolt.onBroadcast(text => ...)` receives it (a window never gets its own broadcasts; `text` is limited to 16 K characters).
   To refresh the message list after a reply, broadcast a short event such as `"message-42:read"` and let each window fetch what it needs.
-- From Java: `window.focus()` brings a window to the front (restoring or showing it), `WindowOptions.withOwner(window)` makes a window
+- From Java: `window.isFocused()` tells whether the window is the one the user is working in (since 0.3.1; for example, skip a notification while it is), `window.focus()` brings a window to the front (restoring or showing it), `WindowOptions.withOwner(window)` makes a window
   belong to another one.
 
 ## The frontend

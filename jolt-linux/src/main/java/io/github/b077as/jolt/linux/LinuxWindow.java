@@ -63,6 +63,8 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
     /** Mirrors of the window's state for callers on other threads; kept up to date on the UI thread. */
     private volatile boolean visible;
     private volatile boolean iconified;
+    /** Fed by the window-state signal (GDK_WINDOW_STATE_FOCUSED): the window manager gave this window the keyboard focus. */
+    private volatile boolean focused;
     private volatile CloseBehavior closeBehavior = CloseBehavior.CLOSE;
     private ResourceService resourceService;
 
@@ -320,6 +322,11 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
     }
 
     @Override
+    public boolean isFocused() {
+        return focused && visible && !iconified && !destroyed;
+    }
+
+    @Override
     public boolean isVisible() {
         return visible;
     }
@@ -407,6 +414,11 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
     /** The window-state signal: the window manager maximized or restored the window. */
     void onIconifiedChanged(boolean nowIconified) {
         iconified = nowIconified;
+    }
+
+    /** The window-state signal: the window gained or lost the keyboard focus. */
+    void onFocusedChanged(boolean nowFocused) {
+        focused = nowFocused;
     }
 
     /** The close button was pressed. Returns true to keep the window (it is only hidden). */

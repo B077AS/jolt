@@ -198,6 +198,8 @@ final class Win32 {
             FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
     private static final MethodHandle IS_ICONIC = Native.downcall(USER32, "IsIconic",
             FunctionDescriptor.of(JAVA_INT, ADDRESS));
+    private static final MethodHandle GET_FOREGROUND_WINDOW = Native.downcall(USER32, "GetForegroundWindow",
+            FunctionDescriptor.of(ADDRESS));
     private static final MethodHandle SET_FOREGROUND_WINDOW = Native.downcall(USER32, "SetForegroundWindow",
             FunctionDescriptor.of(JAVA_INT, ADDRESS));
     private static final MethodHandle MONITOR_FROM_WINDOW = Native.downcall(USER32, "MonitorFromWindow",
@@ -553,6 +555,16 @@ final class Win32 {
     static boolean isIconic(MemorySegment hwnd) {
         try {
             return (int) IS_ICONIC.invokeExact(hwnd) != 0;
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    /** Whether {@code hwnd} is the window the user is working in (the foreground window of the system). */
+    static boolean isForeground(MemorySegment hwnd) {
+        try {
+            MemorySegment foreground = (MemorySegment) GET_FOREGROUND_WINDOW.invokeExact();
+            return foreground.address() != 0 && foreground.address() == hwnd.address();
         } catch (Throwable t) {
             throw rethrow(t);
         }

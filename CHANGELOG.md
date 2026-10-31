@@ -6,6 +6,24 @@ this file says when they do.
 
 The latest version is the one on [Maven Central](https://central.sonatype.com/artifact/io.github.b077as/jolt-core).
 
+## 0.3.1 - 2026-10-31
+
+### Fixed
+- **Windows: no notification was shown when Windows could not read the app's notification setting.** Windows keeps a settings entry for
+  an app, and reading it (`get_Setting`) can fail with `ERROR_NOT_FOUND` (0x80070490). Jolt treated that as an error, so
+  `Application.notify` failed with "Reading the notification setting failed" and the toast was never tried. Now a setting that cannot be
+  read is treated as unknown and the toast is attempted anyway (`Show` still reports a real failure). A setting that Windows does report
+  (off for the app, off for the user, policy) is still respected and still completes the future with `false`.
+
+### Added
+- **`WebWindow.isFocused()`**: whether the window is the one the user is typing into (shown, not minimized, and the active window of the
+  system). Windows: the foreground window (`GetForegroundWindow`). Linux: GDK's `FOCUSED` window state, kept up to date from the
+  window-state signal. Use it to decide, for example, whether new mail needs a notification or can just appear in the list. It is `false`
+  while a dialog of the application is in front.
+
+### Changed
+- **API change that can break code that implements `WebWindow`** (0.x): `WebWindow` has the new abstract method `isFocused`.
+
 ## 0.3.0 - 2026-10-31
 
 ### Added

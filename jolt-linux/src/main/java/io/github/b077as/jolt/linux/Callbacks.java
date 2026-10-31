@@ -165,6 +165,7 @@ final class Callbacks {
     /** GdkEventWindowState on 64-bit: type(4) pad(4) window(8) send_event(1) pad(3) changed_mask(4) new_window_state(4). */
     private static final int GDK_WINDOW_STATE_MAXIMIZED = 1 << 2;
     private static final int GDK_WINDOW_STATE_ICONIFIED = 1 << 1;
+    private static final int GDK_WINDOW_STATE_FOCUSED = 1 << 7;
 
     private static int onWindowState(MemorySegment widget, MemorySegment event, MemorySegment data) {
         LinuxWindow window = Registry.get(data.address(), LinuxWindow.class);
@@ -177,6 +178,9 @@ final class Callbacks {
             }
             if ((changed & GDK_WINDOW_STATE_ICONIFIED) != 0) {
                 window.onIconifiedChanged((now & GDK_WINDOW_STATE_ICONIFIED) != 0);
+            }
+            if ((changed & GDK_WINDOW_STATE_FOCUSED) != 0) {
+                window.onFocusedChanged((now & GDK_WINDOW_STATE_FOCUSED) != 0);
             }
         }
         return 0; // FALSE: let GTK handle the event too
