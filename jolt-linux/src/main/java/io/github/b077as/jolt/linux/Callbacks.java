@@ -30,6 +30,8 @@ final class Callbacks {
     static final MemorySegment DESTROY;
     /** {@code window-state-event} on the top-level window (maximized or not): returns FALSE; user_data is the window id. */
     static final MemorySegment WINDOW_STATE;
+    /** {@code delete-event} on the top-level window (the close button): returns TRUE to keep the window; user_data is the window id. */
+    static final MemorySegment DELETE_EVENT;
     /** {@code script-message-received::<name>} on the content manager: user_data is the window id. */
     static final MemorySegment SCRIPT_MESSAGE;
     /** {@code close} signal on the web view (page called {@code window.close()}): user_data is the window id. */
@@ -46,6 +48,10 @@ final class Callbacks {
     static final MemorySegment EVAL_DONE;
     /** {@code GDBusSignalCallback} for the notification service's signals: user_data is the application id. */
     static final MemorySegment NOTIFY_SIGNAL;
+    /** {@code GDBusInterfaceVTable.method_call} for the tray's exported objects: user_data is the tray's registry id. */
+    static final MemorySegment DBUS_METHOD_CALL;
+    /** {@code GDBusInterfaceVTable.get_property} for the tray's exported objects: returns a GVariant; user_data is the tray's registry id. */
+    static final MemorySegment DBUS_GET_PROPERTY;
     /** {@code GLogFunc}: drops {@link Gtk#KNOWN_NOISE}, prints everything else as GLib would. */
     static final MemorySegment LOG;
 
@@ -57,6 +63,9 @@ final class Callbacks {
         DESTROY = stub(lookup, forever, "onDestroy", MethodType.methodType(void.class, MemorySegment.class, MemorySegment.class),
                 FunctionDescriptor.ofVoid(ADDRESS, ADDRESS), 0);
         WINDOW_STATE = stub(lookup, forever, "onWindowState",
+                MethodType.methodType(int.class, MemorySegment.class, MemorySegment.class, MemorySegment.class),
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS), 0);
+        DELETE_EVENT = stub(lookup, forever, "onDeleteEvent",
                 MethodType.methodType(int.class, MemorySegment.class, MemorySegment.class, MemorySegment.class),
                 FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS), 0);
         SCRIPT_MESSAGE = stub(lookup, forever, "onScriptMessage",
@@ -84,6 +93,14 @@ final class Callbacks {
                 MethodType.methodType(void.class, MemorySegment.class, MemorySegment.class, MemorySegment.class,
                         MemorySegment.class, MemorySegment.class, MemorySegment.class, MemorySegment.class),
                 FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS), 0);
+        DBUS_METHOD_CALL = stub(lookup, forever, "onDbusMethodCall",
+                MethodType.methodType(void.class, MemorySegment.class, MemorySegment.class, MemorySegment.class, MemorySegment.class,
+                        MemorySegment.class, MemorySegment.class, MemorySegment.class, MemorySegment.class),
+                FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS), 0);
+        DBUS_GET_PROPERTY = stub(lookup, forever, "onDbusGetProperty",
+                MethodType.methodType(MemorySegment.class, MemorySegment.class, MemorySegment.class, MemorySegment.class,
+                        MemorySegment.class, MemorySegment.class, MemorySegment.class, MemorySegment.class),
+                FunctionDescriptor.of(ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS), 0);
         LOG = stub(lookup, forever, "onLog",
                 MethodType.methodType(void.class, MemorySegment.class, int.class, MemorySegment.class, MemorySegment.class),
                 FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT, ADDRESS, ADDRESS), 0);
@@ -112,6 +129,23 @@ final class Callbacks {
         return 0;
     }
 
+    private static void onDbusMethodCall(MemorySegment connection, MemorySegment sender, MemorySegment path, MemorySegment interfaceName,
+                                         MemorySegment method, MemorySegment parameters, MemorySegment invocation, MemorySegment data) {
+        GtkTray tray = Registry.get(data.address(), GtkTray.class);
+        if (tray != null) {
+            tray.onMethodCall(Gtk.readUtf8(interfaceName), Gtk.readUtf8(method), parameters, invocation);
+        } else {
+            GtkTray.fail(invocation, "org.freedesktop.DBus.Error.UnknownObject", "the tray icon has been removed");
+        }
+    }
+
+    private static MemorySegment onDbusGetProperty(MemorySegment connection, MemorySegment sender, MemorySegment path,
+                                                   MemorySegment interfaceName, MemorySegment property, MemorySegment error,
+                                                   MemorySegment data) {
+        GtkTray tray = Registry.get(data.address(), GtkTray.class);
+        return tray == null ? MemorySegment.NULL : tray.onGetProperty(Gtk.readUtf8(interfaceName), Gtk.readUtf8(property));
+    }
+
     private static void onNotifySignal(MemorySegment connection, MemorySegment sender, MemorySegment path,
                                        MemorySegment interfaceName, MemorySegment signal, MemorySegment parameters,
                                        MemorySegment data) {
@@ -130,6 +164,7 @@ final class Callbacks {
 
     /** GdkEventWindowState on 64-bit: type(4) pad(4) window(8) send_event(1) pad(3) changed_mask(4) new_window_state(4). */
     private static final int GDK_WINDOW_STATE_MAXIMIZED = 1 << 2;
+    private static final int GDK_WINDOW_STATE_ICONIFIED = 1 << 1;
 
     private static int onWindowState(MemorySegment widget, MemorySegment event, MemorySegment data) {
         LinuxWindow window = Registry.get(data.address(), LinuxWindow.class);
@@ -140,8 +175,16 @@ final class Callbacks {
             if ((changed & GDK_WINDOW_STATE_MAXIMIZED) != 0) {
                 window.onMaximizedChanged((now & GDK_WINDOW_STATE_MAXIMIZED) != 0);
             }
+            if ((changed & GDK_WINDOW_STATE_ICONIFIED) != 0) {
+                window.onIconifiedChanged((now & GDK_WINDOW_STATE_ICONIFIED) != 0);
+            }
         }
         return 0; // FALSE: let GTK handle the event too
+    }
+
+    private static int onDeleteEvent(MemorySegment widget, MemorySegment event, MemorySegment data) {
+        LinuxWindow window = Registry.get(data.address(), LinuxWindow.class);
+        return window != null && window.onDeleteEvent() ? 1 : 0;
     }
 
     private static void onScriptMessage(MemorySegment contentManager, MemorySegment javascriptResult, MemorySegment data) {

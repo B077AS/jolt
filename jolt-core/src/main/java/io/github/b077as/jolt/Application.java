@@ -82,6 +82,32 @@ public interface Application extends AutoCloseable {
         throw new UnsupportedOperationException("this platform cannot show notifications");
     }
 
+    /**
+     * Whether the desktop can show a tray icon. Windows always can. On Linux it needs a status notifier host: KDE Plasma and many other
+     * desktops have one, GNOME shows tray icons only with its AppIndicator extension. Check it before relying on
+     * {@link CloseBehavior#HIDE}: with no tray, a hidden window has no way back. It is a snapshot; a desktop may gain or lose a host later.
+     */
+    default boolean isTraySupported() {
+        return false;
+    }
+
+    /**
+     * Adds an icon to the system tray. Must be called on the UI thread. Close the returned {@link Tray} to remove it; it goes away by
+     * itself when the application ends.
+     *
+     * @param icon    PNG data or Windows {@code .ico} bytes, as for {@link WebWindow#setIcon}
+     * @param tooltip the text shown when the pointer rests on it, or {@code null}
+     * @throws UnsupportedOperationException if {@link #isTraySupported()} is false
+     */
+    default Tray createTray(byte[] icon, String tooltip) {
+        throw new UnsupportedOperationException("this platform cannot show a tray icon");
+    }
+
+    /** Starting the application when the user signs in, see {@link Autostart}. */
+    default Autostart autostart() {
+        throw new UnsupportedOperationException("this platform cannot start applications at sign-in");
+    }
+
     /** Creates a window hosting a web view. Must be called on the UI thread. */
     WebWindow createWindow(WindowOptions options);
 

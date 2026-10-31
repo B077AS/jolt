@@ -37,11 +37,14 @@ import java.util.Objects;
  *                       a tool window) stays in front of its owner, is minimized and restored with it, and is closed when the
  *                       owner closes. If the owner is already closed when the window is created, the window is simply
  *                       independent. The owner must belong to the same {@link Application}
+ * @param frameless      whether the window has no title bar and no border of the operating system: the page draws its own
+ *                       (see {@code data-jolt-drag} and {@code jolt.frame} in the guide). The window can still be moved, resized
+ *                       from its edges, minimized and maximized, and keeps the system's shadow and snapping where there is one
  */
 public record WindowOptions(String title, int width, int height, boolean devTools, boolean visible,
                             byte[] icon, ColorScheme titleBarScheme, Integer backgroundRgb,
                             SecurityPolicy security, boolean maximized, boolean centered,
-                            int minWidth, int minHeight, WebWindow owner) {
+                            int minWidth, int minHeight, WebWindow owner, boolean frameless) {
 
     public WindowOptions {
         Objects.requireNonNull(title, "title");
@@ -59,61 +62,66 @@ public record WindowOptions(String title, int width, int height, boolean devTool
     }
 
     public static WindowOptions defaults() {
-        return new WindowOptions("Jolt", 1024, 720, false, true, null, null, null, null, false, true, 0, 0, null);
+        return new WindowOptions("Jolt", 1024, 720, false, true, null, null, null, null, false, true, 0, 0, null, false);
     }
 
     public WindowOptions withTitle(String title) {
-        return new WindowOptions(title, width, height, devTools, visible, icon, titleBarScheme, backgroundRgb, security, maximized, centered, minWidth, minHeight, owner);
+        return new WindowOptions(title, width, height, devTools, visible, icon, titleBarScheme, backgroundRgb, security, maximized, centered, minWidth, minHeight, owner, frameless);
     }
 
     public WindowOptions withSize(int width, int height) {
-        return new WindowOptions(title, width, height, devTools, visible, icon, titleBarScheme, backgroundRgb, security, maximized, centered, minWidth, minHeight, owner);
+        return new WindowOptions(title, width, height, devTools, visible, icon, titleBarScheme, backgroundRgb, security, maximized, centered, minWidth, minHeight, owner, frameless);
     }
 
     public WindowOptions withDevTools(boolean devTools) {
-        return new WindowOptions(title, width, height, devTools, visible, icon, titleBarScheme, backgroundRgb, security, maximized, centered, minWidth, minHeight, owner);
+        return new WindowOptions(title, width, height, devTools, visible, icon, titleBarScheme, backgroundRgb, security, maximized, centered, minWidth, minHeight, owner, frameless);
     }
 
     public WindowOptions withVisible(boolean visible) {
-        return new WindowOptions(title, width, height, devTools, visible, icon, titleBarScheme, backgroundRgb, security, maximized, centered, minWidth, minHeight, owner);
+        return new WindowOptions(title, width, height, devTools, visible, icon, titleBarScheme, backgroundRgb, security, maximized, centered, minWidth, minHeight, owner, frameless);
     }
 
     /** @param png the icon as PNG or {@code .ico} data, see {@link #icon()} */
     public WindowOptions withIcon(byte[] png) {
-        return new WindowOptions(title, width, height, devTools, visible, png, titleBarScheme, backgroundRgb, security, maximized, centered, minWidth, minHeight, owner);
+        return new WindowOptions(title, width, height, devTools, visible, png, titleBarScheme, backgroundRgb, security, maximized, centered, minWidth, minHeight, owner, frameless);
     }
 
     public WindowOptions withTitleBarScheme(ColorScheme scheme) {
-        return new WindowOptions(title, width, height, devTools, visible, icon, scheme, backgroundRgb, security, maximized, centered, minWidth, minHeight, owner);
+        return new WindowOptions(title, width, height, devTools, visible, icon, scheme, backgroundRgb, security, maximized, centered, minWidth, minHeight, owner, frameless);
     }
 
     /** @param rgb {@code 0xRRGGBB} */
     public WindowOptions withBackgroundColor(int rgb) {
-        return new WindowOptions(title, width, height, devTools, visible, icon, titleBarScheme, rgb, security, maximized, centered, minWidth, minHeight, owner);
+        return new WindowOptions(title, width, height, devTools, visible, icon, titleBarScheme, rgb, security, maximized, centered, minWidth, minHeight, owner, frameless);
     }
 
     /** What pages in this window may do; can also be changed later with {@link WebWindow#setSecurity}. */
     public WindowOptions withSecurity(SecurityPolicy policy) {
-        return new WindowOptions(title, width, height, devTools, visible, icon, titleBarScheme, backgroundRgb, policy, maximized, centered, minWidth, minHeight, owner);
+        return new WindowOptions(title, width, height, devTools, visible, icon, titleBarScheme, backgroundRgb, policy, maximized, centered, minWidth, minHeight, owner, frameless);
     }
 
     /** Whether the window starts maximized, see {@link #maximized()}. */
     public WindowOptions withMaximized(boolean maximized) {
-        return new WindowOptions(title, width, height, devTools, visible, icon, titleBarScheme, backgroundRgb, security, maximized, centered, minWidth, minHeight, owner);
+        return new WindowOptions(title, width, height, devTools, visible, icon, titleBarScheme, backgroundRgb, security, maximized, centered, minWidth, minHeight, owner, frameless);
     }
 
     /** The smallest size the user can resize the window to, see {@link #minWidth()}; {@code 0} means no minimum. */
     public WindowOptions withMinSize(int minWidth, int minHeight) {
-        return new WindowOptions(title, width, height, devTools, visible, icon, titleBarScheme, backgroundRgb, security, maximized, centered, minWidth, minHeight, owner);
+        return new WindowOptions(title, width, height, devTools, visible, icon, titleBarScheme, backgroundRgb, security, maximized, centered, minWidth, minHeight, owner, frameless);
+    }
+
+    /** Whether the window has no operating-system title bar and border, see {@link #frameless()}. */
+    public WindowOptions withFrameless(boolean frameless) {
+        return new WindowOptions(title, width, height, devTools, visible, icon, titleBarScheme, backgroundRgb, security, maximized, centered, minWidth, minHeight, owner, frameless);
     }
 
     /** Makes the window belong to {@code owner} (stays in front of it, closes with it), see {@link #owner()}; {@code null}: independent. */
     public WindowOptions withOwner(WebWindow owner) {
-        return new WindowOptions(title, width, height, devTools, visible, icon, titleBarScheme, backgroundRgb, security, maximized, centered, minWidth, minHeight, owner);
+        return new WindowOptions(title, width, height, devTools, visible, icon, titleBarScheme, backgroundRgb, security, maximized, centered, minWidth, minHeight, owner, frameless);
     }
 
     /** Whether the window is centered on the screen when created, see {@link #centered()}. */
     public WindowOptions withCentered(boolean centered) {
-        return new WindowOptions(title, width, height, devTools, visible, icon, titleBarScheme, backgroundRgb, security, maximized, centered, minWidth, minHeight, owner);
+        return new WindowOptions(title, width, height, devTools, visible, icon, titleBarScheme, backgroundRgb, security, maximized, centered, minWidth, minHeight, owner, frameless);
     }
 }

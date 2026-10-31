@@ -70,6 +70,20 @@ final class Gtk {
     private static final MethodHandle GTK_WINDOW_RESIZE = h(GTK, "gtk_window_resize", FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT, JAVA_INT));
     private static final MethodHandle GTK_WINDOW_MAXIMIZE = h(GTK, "gtk_window_maximize", FunctionDescriptor.ofVoid(ADDRESS));
     private static final MethodHandle GTK_WINDOW_UNMAXIMIZE = h(GTK, "gtk_window_unmaximize", FunctionDescriptor.ofVoid(ADDRESS));
+    private static final MethodHandle GTK_WINDOW_SET_DECORATED = h(GTK, "gtk_window_set_decorated", FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT));
+    private static final MethodHandle GTK_WINDOW_CLOSE = h(GTK, "gtk_window_close", FunctionDescriptor.ofVoid(ADDRESS));
+    private static final MethodHandle GTK_WINDOW_GET_DECORATED = h(GTK, "gtk_window_get_decorated", FunctionDescriptor.of(JAVA_INT, ADDRESS));
+    private static final MethodHandle GTK_WINDOW_ICONIFY = h(GTK, "gtk_window_iconify", FunctionDescriptor.ofVoid(ADDRESS));
+    private static final MethodHandle GTK_WINDOW_DEICONIFY = h(GTK, "gtk_window_deiconify", FunctionDescriptor.ofVoid(ADDRESS));
+    private static final MethodHandle GTK_WINDOW_BEGIN_MOVE_DRAG = h(GTK, "gtk_window_begin_move_drag",
+            FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT));
+    private static final MethodHandle GTK_WINDOW_BEGIN_RESIZE_DRAG = h(GTK, "gtk_window_begin_resize_drag",
+            FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT));
+    private static final MethodHandle GDK_DISPLAY_GET_DEFAULT = h(GTK, "gdk_display_get_default", FunctionDescriptor.of(ADDRESS));
+    private static final MethodHandle GDK_DISPLAY_GET_DEFAULT_SEAT = h(GTK, "gdk_display_get_default_seat", FunctionDescriptor.of(ADDRESS, ADDRESS));
+    private static final MethodHandle GDK_SEAT_GET_POINTER = h(GTK, "gdk_seat_get_pointer", FunctionDescriptor.of(ADDRESS, ADDRESS));
+    private static final MethodHandle GDK_DEVICE_GET_POSITION = h(GTK, "gdk_device_get_position",
+            FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, ADDRESS, ADDRESS));
     private static final MethodHandle GTK_WINDOW_SET_TRANSIENT_FOR = h(GTK, "gtk_window_set_transient_for", FunctionDescriptor.ofVoid(ADDRESS, ADDRESS));
     private static final MethodHandle GTK_WINDOW_SET_DESTROY_WITH_PARENT = h(GTK, "gtk_window_set_destroy_with_parent", FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT));
     private static final MethodHandle GTK_WINDOW_PRESENT = h(GTK, "gtk_window_present", FunctionDescriptor.ofVoid(ADDRESS));
@@ -322,6 +336,53 @@ final class Gtk {
     static void windowSetOwner(MemorySegment window, MemorySegment parent) {
         call(GTK_WINDOW_SET_TRANSIENT_FOR, window, parent);
         call(GTK_WINDOW_SET_DESTROY_WITH_PARENT, window, 1);
+    }
+
+    /** Removes (or restores) the window manager's title bar and border. Before the window is shown. */
+    static void windowSetDecorated(MemorySegment window, boolean decorated) {
+        call(GTK_WINDOW_SET_DECORATED, window, decorated ? 1 : 0);
+    }
+
+    /** Asks the window to close as its close button does: the {@code delete-event} signal, which may keep it. For tests. */
+    static void windowClose(MemorySegment window) {
+        call(GTK_WINDOW_CLOSE, window);
+    }
+
+    static boolean windowGetDecorated(MemorySegment window) {
+        return (int) call(GTK_WINDOW_GET_DECORATED, window) != 0;
+    }
+
+    static void windowIconify(MemorySegment window) {
+        call(GTK_WINDOW_ICONIFY, window);
+    }
+
+    static void windowDeiconify(MemorySegment window) {
+        call(GTK_WINDOW_DEICONIFY, window);
+    }
+
+    /** The pointer's position on the screen as {x, y}. */
+    static int[] pointerPosition() {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment display = (MemorySegment) call(GDK_DISPLAY_GET_DEFAULT);
+            MemorySegment seat = (MemorySegment) call(GDK_DISPLAY_GET_DEFAULT_SEAT, display);
+            MemorySegment pointer = (MemorySegment) call(GDK_SEAT_GET_POINTER, seat);
+            MemorySegment x = arena.allocate(4);
+            MemorySegment y = arena.allocate(4);
+            call(GDK_DEVICE_GET_POSITION, pointer, MemorySegment.NULL, x, y);
+            return new int[] {x.get(JAVA_INT, 0), y.get(JAVA_INT, 0)};
+        }
+    }
+
+    /** Hands the pointer, whose button 1 is down, to the window manager to move the window. */
+    static void windowBeginMoveDrag(MemorySegment window) {
+        int[] at = pointerPosition();
+        call(GTK_WINDOW_BEGIN_MOVE_DRAG, window, 1, at[0], at[1], 0 /* GDK_CURRENT_TIME */);
+    }
+
+    /** @param edge a {@code GdkWindowEdge}: 0 north-west, 1 north, 2 north-east, 3 west, 4 east, 5 south-west, 6 south, 7 south-east */
+    static void windowBeginResizeDrag(MemorySegment window, int edge) {
+        int[] at = pointerPosition();
+        call(GTK_WINDOW_BEGIN_RESIZE_DRAG, window, edge, 1, at[0], at[1], 0 /* GDK_CURRENT_TIME */);
     }
 
     /** Raises the window and asks for the focus; shows it first if it is hidden. */

@@ -574,7 +574,7 @@ public abstract class WebWindowContract {
     }
 
     /** Polls on a helper thread (the test thread is the UI thread and has to stay free) until the condition holds or time runs out. */
-    protected static CompletableFuture<Boolean> eventually(java.util.function.BooleanSupplier condition, long timeoutMillis) {
+    public static CompletableFuture<Boolean> eventually(java.util.function.BooleanSupplier condition, long timeoutMillis) {
         CompletableFuture<Boolean> result = new CompletableFuture<>();
         Thread poller = new Thread(() -> {
             long deadline = System.nanoTime() + timeoutMillis * 1_000_000;

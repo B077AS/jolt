@@ -255,6 +255,26 @@ public interface WebWindow {
 
     void hide();
 
+    /** Minimizes the window to the taskbar (or dock); {@link #focus()} or {@link #restore()} brings it back. */
+    void minimize();
+
+    /** Whether the window is minimized. Can be called from any thread. */
+    boolean isMinimized();
+
+    /** Whether the window is shown (not hidden with {@link #hide()}, by {@link CloseBehavior#HIDE} or before {@link #show()}). Can be called from any thread. */
+    boolean isVisible();
+
+    /**
+     * Chooses what the close button does: {@link CloseBehavior#CLOSE} (the default) destroys the window, {@link CloseBehavior#HIDE}
+     * only hides it so the application keeps running, for example in the tray. It can be changed at any time and applies to the
+     * next click. A window that is hidden this way comes back with {@link #focus()} or {@link #show()}. Closing from code
+     * ({@link #close()}, {@link Application#quit()}) always closes.
+     */
+    void setCloseBehavior(CloseBehavior behavior);
+
+    /** The current setting, see {@link #setCloseBehavior}. */
+    CloseBehavior closeBehavior();
+
     /**
      * Brings the window to the front and gives it the keyboard focus; a minimized window is restored and a hidden one is shown.
      * The system may refuse to take focus away from another application (Windows and Wayland compositors both can); the

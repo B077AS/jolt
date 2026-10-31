@@ -1,6 +1,8 @@
 package io.github.b077as.jolt.win32;
 
 import io.github.b077as.jolt.AppOptions;
+import io.github.b077as.jolt.Autostart;
+import io.github.b077as.jolt.Tray;
 import io.github.b077as.jolt.Application;
 import io.github.b077as.jolt.JoltException;
 import io.github.b077as.jolt.WebWindow;
@@ -51,6 +53,8 @@ final class WindowsApplication implements Application {
     private final AtomicBoolean wakePending = new AtomicBoolean();
     /** Live windows by HWND; changed on the UI thread only, readable from any thread. */
     private final Map<Long, WindowsWindow> windows = new java.util.concurrent.ConcurrentHashMap<>();
+    /** Tray icons; UI thread only. */
+    private final List<WindowsTray> trays = new ArrayList<>();
 
     private volatile Thread uiThread;
     private volatile MemorySegment dispatchWindow;
@@ -188,6 +192,30 @@ final class WindowsApplication implements Application {
             }
             return toasts.show(notification);
         });
+    }
+
+    @Override
+    public boolean isTraySupported() {
+        return true;
+    }
+
+    @Override
+    public Tray createTray(byte[] icon, String tooltip) {
+        if (!isUiThread()) {
+            throw new IllegalStateException("createTray must be called on the UI thread (inside run's onStart)");
+        }
+        WindowsTray tray = new WindowsTray(this, icon, tooltip);
+        trays.add(tray);
+        return tray;
+    }
+
+    void trayClosed(WindowsTray tray) {
+        trays.remove(tray);
+    }
+
+    @Override
+    public Autostart autostart() {
+        return new WindowsAutostart(options.appId());
     }
 
     @Override
@@ -345,6 +373,9 @@ final class WindowsApplication implements Application {
             if (toasts != null) {
                 toasts.close(); // a click after this point must not reach callbacks that are about to be freed
             }
+            for (WindowsTray tray : new ArrayList<>(trays)) {
+                tray.closeNow(); // a tray icon left behind stays in the notification area until the pointer passes over it
+            }
             for (WindowsWindow window : new ArrayList<>(windows.values())) {
                 window.destroyNow();
             }
@@ -375,6 +406,12 @@ final class WindowsApplication implements Application {
             if (target != null && target.address() == hwnd.address()) {
                 drain();
                 return 0;
+            }
+        }
+        for (WindowsTray tray : trays) {
+            if (tray.owns(hwnd)) {
+                Long handled = tray.handle(msg, wParam, lParam);
+                return handled != null ? handled : Win32.defWindowProc(hwnd, msg, wParam, lParam);
             }
         }
         WindowsWindow window = windows.get(hwnd.address());

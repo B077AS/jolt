@@ -1,8 +1,10 @@
 package io.github.b077as.jolt.linux;
 
 import io.github.b077as.jolt.AppOptions;
+import io.github.b077as.jolt.Autostart;
 import io.github.b077as.jolt.Application;
 import io.github.b077as.jolt.JoltException;
+import io.github.b077as.jolt.Tray;
 import io.github.b077as.jolt.WebWindow;
 import io.github.b077as.jolt.WindowOptions;
 
@@ -40,6 +42,8 @@ final class LinuxApplication implements Application {
 
     // UI thread only
     private final Map<Long, LinuxWindow> windows = new java.util.concurrent.ConcurrentHashMap<>();
+    /** Tray icons; UI thread only. */
+    private final List<GtkTray> trays = new ArrayList<>();
     private MemorySegment webContext = MemorySegment.NULL;
     private boolean resourceSchemeRegistered;
     private boolean mainLoopRunning;
@@ -226,6 +230,30 @@ final class LinuxApplication implements Application {
     }
 
     @Override
+    public boolean isTraySupported() {
+        return GtkTray.hostAvailable();
+    }
+
+    @Override
+    public Tray createTray(byte[] icon, String tooltip) {
+        if (!isUiThread()) {
+            throw new IllegalStateException("createTray must be called on the UI thread (inside run's onStart)");
+        }
+        GtkTray tray = new GtkTray(this, options.appId(), icon, tooltip);
+        trays.add(tray);
+        return tray;
+    }
+
+    void trayClosed(GtkTray tray) {
+        trays.remove(tray);
+    }
+
+    @Override
+    public Autostart autostart() {
+        return new XdgAutostart(options.appId(), XdgAutostart.defaultDirectory());
+    }
+
+    @Override
     public WebWindow createWindow(WindowOptions windowOptions) {
         if (!isUiThread()) {
             throw new IllegalStateException("createWindow must be called on the UI thread (inside run's onStart)");
@@ -326,6 +354,9 @@ final class LinuxApplication implements Application {
                 if (notifications != null) {
                     notifications.close();
                     notifications = null;
+                }
+                for (GtkTray tray : new ArrayList<>(trays)) {
+                    tray.closeNow(); // leaves the bus name and the exported objects before the callbacks go away
                 }
             }
             for (LinuxWindow window : new ArrayList<>(windows.values())) {

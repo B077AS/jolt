@@ -1,6 +1,7 @@
 package io.github.b077as.jolt.linux;
 
 import io.github.b077as.jolt.BlockedEvent;
+import io.github.b077as.jolt.CloseBehavior;
 import io.github.b077as.jolt.ColorScheme;
 import io.github.b077as.jolt.JoltException;
 import io.github.b077as.jolt.SecurityPolicy;
@@ -9,6 +10,8 @@ import io.github.b077as.jolt.WindowClosedException;
 import io.github.b077as.jolt.WindowOptions;
 import io.github.b077as.jolt.internal.BlobBodyShim;
 import io.github.b077as.jolt.internal.BridgeScript;
+import io.github.b077as.jolt.internal.FrameProtocol;
+import io.github.b077as.jolt.internal.FrameScript;
 import io.github.b077as.jolt.internal.NativeDialogHost;
 import io.github.b077as.jolt.internal.NativeResourceHost;
 import io.github.b077as.jolt.internal.ResourceService;
@@ -28,7 +31,7 @@ import java.util.function.Consumer;
  * <p>Public methods may be called from any thread; they hop to the UI thread. Unlike WebView2, WebKitGTK creates
  * the web view synchronously, so the window is ready as soon as the constructor returns.
  */
-final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHost {
+final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHost, FrameProtocol.Host {
 
     private static final System.Logger LOG = System.getLogger("io.github.b077as.jolt.linux");
     /** Name of the {@code window.webkit.messageHandlers.<name>} channel; must match the bridge script. */
@@ -57,6 +60,10 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
     private volatile boolean maximizeWhenShown;
     /** The window manager's word on it, kept up to date by the window-state signal. Readable from any thread. */
     private volatile boolean maximized;
+    /** Mirrors of the window's state for callers on other threads; kept up to date on the UI thread. */
+    private volatile boolean visible;
+    private volatile boolean iconified;
+    private volatile CloseBehavior closeBehavior = CloseBehavior.CLOSE;
     private ResourceService resourceService;
 
     /** Must be called on the UI thread. */
@@ -68,6 +75,9 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
         window = Gtk.windowNew();
         Gtk.windowSetTitle(window, options.title());
         Gtk.windowSetDefaultSize(window, options.width(), options.height());
+        if (options.frameless()) {
+            Gtk.windowSetDecorated(window, false); // the page draws the title bar
+        }
         // A closed owner, or one from another application, is ignored.
         if (options.owner() instanceof LinuxWindow owner && owner.app == app && !owner.destroyed) {
             Gtk.windowSetOwner(window, owner.window);
@@ -81,12 +91,17 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
         Gtk.addUserScript(contentManager,
                 BridgeScript.build("window.webkit.messageHandlers." + MESSAGE_HANDLER + ".postMessage(m)", subframes),
                 subframes ? Gtk.USER_CONTENT_INJECT_ALL_FRAMES : Gtk.USER_CONTENT_INJECT_TOP_FRAME);
+        if (options.frameless()) {
+            // after the bridge: the frame script talks through window.jolt
+            Gtk.addUserScript(contentManager, FrameScript.build(), Gtk.USER_CONTENT_INJECT_TOP_FRAME);
+        }
         webView = Gtk.newWebView(app.webContext(), contentManager);
         Gtk.setDeveloperExtras(webView, options.devTools());
 
         this.id = app.register(this);
         MemorySegment key = MemorySegment.ofAddress(id);
         Gtk.connect(window, "destroy", Callbacks.DESTROY, key);
+        Gtk.connect(window, "delete-event", Callbacks.DELETE_EVENT, key);
         Gtk.connect(window, "window-state-event", Callbacks.WINDOW_STATE, key);
         Gtk.connect(contentManager, "script-message-received::" + MESSAGE_HANDLER, Callbacks.SCRIPT_MESSAGE, key);
         Gtk.connect(webView, "close", Callbacks.WEB_VIEW_CLOSE, key);
@@ -122,6 +137,7 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
         if (options.visible()) {
             Gtk.widgetShow(window);
             shown = true;
+            visible = true;
             maximizeWhenShown = false; // from here the window manager's state counts
         }
         ready.complete(null);
@@ -273,6 +289,7 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
             if (!destroyed) {
                 Gtk.widgetShow(window);
                 shown = true;
+                visible = true;
                 maximizeWhenShown = false;
             }
         });
@@ -283,16 +300,78 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
         app.dispatch(() -> {
             if (!destroyed) {
                 Gtk.widgetHide(window);
+                visible = false;
             }
         });
+    }
+
+    @Override
+    public void minimize() {
+        app.dispatch(() -> {
+            if (!destroyed) {
+                Gtk.windowIconify(window);
+            }
+        });
+    }
+
+    @Override
+    public boolean isMinimized() {
+        return iconified;
+    }
+
+    @Override
+    public boolean isVisible() {
+        return visible;
+    }
+
+    @Override
+    public void setCloseBehavior(CloseBehavior behavior) {
+        closeBehavior = java.util.Objects.requireNonNull(behavior, "behavior");
+    }
+
+    @Override
+    public CloseBehavior closeBehavior() {
+        return closeBehavior;
+    }
+
+    // ---- FrameProtocol.Host (UI thread) ----
+
+    @Override
+    public void toggleMaximize() {
+        if (destroyed) {
+            return;
+        }
+        if (maximized) {
+            Gtk.windowUnmaximize(window);
+        } else {
+            Gtk.windowMaximize(window);
+        }
+    }
+
+    @Override
+    public void beginMove() {
+        if (!destroyed) {
+            Gtk.windowBeginMoveDrag(window);
+        }
+    }
+
+    @Override
+    public void beginResize(int edge) {
+        if (!destroyed && !maximized) {
+            // protocol edges 1 left, 2 right, 3 top, 4 top-left, 5 top-right, 6 bottom, 7 bottom-left, 8 bottom-right
+            final int[] gdkEdges = {3, 4, 1, 0, 2, 6, 5, 7};
+            Gtk.windowBeginResizeDrag(window, gdkEdges[edge - 1]);
+        }
     }
 
     @Override
     public void focus() {
         app.dispatch(() -> {
             if (!destroyed) {
+                Gtk.windowDeiconify(window);
                 Gtk.windowPresent(window); // also shows a hidden window; on Wayland the compositor may only mark it as wanting attention
                 shown = true;
+                visible = true;
                 maximizeWhenShown = false;
             }
         });
@@ -326,6 +405,20 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
     }
 
     /** The window-state signal: the window manager maximized or restored the window. */
+    void onIconifiedChanged(boolean nowIconified) {
+        iconified = nowIconified;
+    }
+
+    /** The close button was pressed. Returns true to keep the window (it is only hidden). */
+    boolean onDeleteEvent() {
+        if (closeBehavior == CloseBehavior.HIDE && !closing) {
+            Gtk.widgetHide(window);
+            visible = false;
+            return true;
+        }
+        return false;
+    }
+
     void onMaximizedChanged(boolean nowMaximized) {
         maximized = nowMaximized;
     }
@@ -438,6 +531,12 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
         // locked, no untrusted frame can be inside a trusted page.
         if (!guard.allowMessageFrom(Gtk.webViewUri(webView))) {
             return;
+        }
+        if (FrameProtocol.isFrameMessage(text)) {
+            if (options.frameless()) {
+                FrameProtocol.handle(text, this);
+            }
+            return; // never reaches the application, frameless or not
         }
         for (Consumer<String> listener : messageListeners) {
             try {

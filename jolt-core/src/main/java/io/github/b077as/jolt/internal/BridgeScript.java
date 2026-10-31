@@ -38,6 +38,11 @@ public final class BridgeScript {
                         const f = window.__joltNotify;
                         return f ? f(title, body, options) : Promise.reject(new Error("notify is not enabled: call enableNotifications() on the Java window"));
                       },
+                      frame: Object.freeze({
+                        minimize: () => send('\\u0001jolt-frame:minimize'),
+                        toggleMaximize: () => send('\\u0001jolt-frame:maximize'),
+                        close: () => send('\\u0001jolt-frame:close'),
+                      }),
                       openWindow: (path, options) => {
                         const w = window.__joltWindows;
                         return w ? w.open(path, options) : Promise.reject(new Error("openWindow is not enabled: call enableOpenWindow() on the Java window"));

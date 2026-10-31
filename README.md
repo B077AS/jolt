@@ -352,8 +352,91 @@ window.maximize(); window.restore(); window.isMaximized();
   Jolt names the process after your app id, which is what lets the compositor find it (since 0.2.5).
 - On Linux, GTK sometimes prints harmless warnings to the console (for example from its file chooser).
   `AppOptions.of(id).withQuietNativeLogs(true)` hides that known list and leaves other messages alone (since 0.2.5).
-- A fully custom (frameless) title bar is not available yet.
+- A fully custom title bar: see [Frameless windows](#frameless-windows) below.
 - Developer tools: `WindowOptions.defaults().withDevTools(true)`, then right-click, Inspect, or `window.openDevTools()`.
+
+### Frameless windows
+
+`WindowOptions.defaults().withFrameless(true)` removes the operating system's title bar and border, so the page draws its own:
+
+```html
+<header data-jolt-drag>                       <!-- drag here to move the window; double-click maximizes or restores -->
+  <span>Parsel</span>
+  <button onclick="jolt.frame.minimize()">–</button>
+  <button onclick="jolt.frame.toggleMaximize()">☐</button>
+  <button onclick="jolt.frame.close()">✕</button>
+</header>
+```
+
+- `data-jolt-drag` marks the draggable area. Buttons, links and form fields inside it keep working; add `data-jolt-no-drag` to
+  exclude anything else. (CSS `app-region: drag` is not used: WebKitGTK does not support it.)
+- The window can be resized from thin invisible handles along its edges and corners, which Jolt adds to the page.
+- `jolt.frame.close()` closes the window as the close button would, so `setCloseBehavior(HIDE)` applies to it too.
+- On Windows the window keeps its sizing frame (the page is given the whole window), which is what lets Windows draw the shadow and
+  snap it (Win+arrows); the tests check the layout, not how the shadow and snapping look. Linux draws no shadow and snaps only as your
+  window manager does; on Wayland, moving and resizing needs a compositor that accepts the request.
+- Frame commands only work on windows created `frameless`, and only for pages the `SecurityPolicy` trusts like any other message.
+
+## Tray icon, close to tray, start with the computer
+
+A mail client or chat app usually lives in the tray, hides instead of quitting when its window is closed, and can start with the
+computer. These are separate pieces, so you choose which to use, and each can be changed while the app runs.
+
+```java
+Application app = ...;
+WebWindow main = ...;
+
+if (app.isTraySupported()) {                                   // Windows: always. Linux: needs a tray host (see below)
+    Tray tray = app.createTray(iconBytes, "Parsel");           // call on the UI thread
+    tray.onClick(main::focus);                                 // primary click: bring the window back
+    tray.setMenu(TrayMenu.of(
+            TrayMenu.action("Open Parsel", main::focus),
+            TrayMenu.separator(),
+            TrayMenu.check("Close to tray", closeToTray, on -> setCloseToTray(on)),
+            TrayMenu.check("Start with the computer", autostart, on -> setAutostart(on)),
+            TrayMenu.separator(),
+            TrayMenu.action("Quit", app::quit)));
+}
+```
+
+```java
+main.setCloseBehavior(closeToTray ? CloseBehavior.HIDE : CloseBehavior.CLOSE);    // takes effect on the next click of the close button
+
+Autostart autostart = app.autostart();
+autostart.enable(List.of(exePath, "--minimized"));     // start with the computer, minimized...
+autostart.enable(List.of(exePath));                    // ...or not: calling it again replaces the entry
+autostart.disable(); autostart.isEnabled();
+```
+
+- **Menus are immutable.** To tick a box or change a label, build the menu again and call `tray.setMenu(...)`; `tray.setIcon` and
+  `tray.setTooltip` do the same for the icon and its text (for example "3 unread"). Menu callbacks run on the UI thread.
+- **Start minimized** is an argument you choose: put `--minimized` in the autostart command, and in `main` create the window with
+  `withVisible(false)` (and a tray) when `args` contains it. Only hide at startup if `app.isTraySupported()`, or the user cannot reach the app.
+- **Close to tray needs a tray.** `CloseBehavior.HIDE` only hides the window; `focus()` or `show()` brings it back, `close()` and `app.quit()`
+  still really close it. Check `isTraySupported()` before choosing `HIDE`.
+- **The command**: give the launcher of your installed or packaged app (on Windows a quoted path in the Run key, on Linux the `Exec=`
+  line of `~/.config/autostart/<appId>.desktop`). `Autostart.currentCommand(extraArgs)` describes the running process, which is fine for
+  `java -jar` while developing.
+- **Windows**: the tray menu is a native menu; Jolt asks Windows to draw it in dark mode when the system is dark, using an undocumented
+  call that is skipped if it is missing. It supports checks, disabled entries, separators and submenus, but not icons. If Explorer restarts, the icon is put back.
+- **Linux**: the tray is a StatusNotifierItem with a `dbusmenu` menu, which KDE Plasma, XFCE, Cinnamon, MATE, Budgie and others show.
+  Stock GNOME does not show tray icons unless the user installed the AppIndicator extension, so `isTraySupported()` is `false` there.
+  If the tray host restarts while the app runs, the icon is not registered again.
+- **One copy only**: a tray app that starts at sign-in should not start twice.
+
+```java
+public static void main(String[] args) {
+    AppOptions options = AppOptions.of("com.example.parsel");
+    SingleInstance instance = SingleInstance.acquire(options, List.of(args), otherArgs -> app.dispatch(() -> main.focus()));
+    if (!instance.isPrimary()) {
+        return;                       // the running copy was told (and receives this copy's arguments); nothing more to do
+    }
+    ...
+}
+```
+
+`SingleInstance` takes a lock file in the data directory (released by the system if the app dies) and talks to the running copy over a
+Unix domain socket that only the same user can reach. The callback runs on a thread of its own: use `app.dispatch`.
 
 ## Security
 
