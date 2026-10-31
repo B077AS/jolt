@@ -78,7 +78,7 @@ Add the API and both backends; each one only activates on its own OS.
 ```xml
 <properties>
   <maven.compiler.release>25</maven.compiler.release>
-  <jolt.version>0.2.5</jolt.version>
+  <jolt.version>0.3.0</jolt.version>
 </properties>
 
 <dependencies>
@@ -103,9 +103,9 @@ Add the API and both backends; each one only activates on its own OS.
 Gradle:
 
 ```kotlin
-implementation("io.github.b077as:jolt-core:0.2.5")
-implementation("io.github.b077as:jolt-win32:0.2.5")
-implementation("io.github.b077as:jolt-linux:0.2.5")
+implementation("io.github.b077as:jolt-core:0.3.0")
+implementation("io.github.b077as:jolt-win32:0.3.0")
+implementation("io.github.b077as:jolt-linux:0.3.0")
 ```
 
 Run Java with `--enable-native-access=ALL-UNNAMED`, or put `Enable-Native-Access: ALL-UNNAMED` in your jar manifest
@@ -211,7 +211,27 @@ const saved = await jolt.saveAs(blobOrBytesOrText, { name: "report.pdf", filters
 The data is written to a temporary file and moved into place when complete. Only trusted origins may use it, and on Linux the page
 must come from `loadResources`.
 
+### System notifications
+
+Show a toast from Java (since 0.3.0): WinRT on Windows, the desktop's notification service on Linux.
+
+```java
+app.notify(Notification.of("Export finished", "report.pdf is ready")
+        .withOnClick(() -> window.focus())
+        .withButton("Open", () -> open())               // up to 5 buttons
+        .withReply("Send", "Reply", text -> send(text)))  // a text field: Windows only
+    .thenAccept(shown -> { /* false: the system did not show it */ });
+```
+
+Callbacks run on the UI thread while the app runs. On Windows the first call registers your `appId` as the display name under
+`HKCU\Software\Classes\AppUserModelId` (nothing is installed), and the future is `false` if the user turned notifications off. On Linux it
+is `false` when there is no notification service. To let trusted pages do it, call `window.enableNotifications(app)` before the page
+loads, then `await jolt.notify(title, body, { onclick, buttons: [{ label, onclick }], reply: { label, placeholder, onreply } })`
+(at most 5 per 10 seconds per window).
+
 ### More than one window (pop-outs)
+
+Available since **0.3.0**.
 
 `app.createWindow(...)` can be called as often as you like (on the UI thread), and `app.windows()` lists the windows that are open.
 A page can ask for another window, for example an email shown in its own window, but it never opens one itself: your Java code
@@ -357,6 +377,8 @@ window.maximize(); window.restore(); window.isMaximized();
 
 ### Frameless windows
 
+Available since **0.3.0**.
+
 `WindowOptions.defaults().withFrameless(true)` removes the operating system's title bar and border, so the page draws its own:
 
 ```html
@@ -378,6 +400,8 @@ window.maximize(); window.restore(); window.isMaximized();
 - Frame commands only work on windows created `frameless`, and only for pages the `SecurityPolicy` trusts like any other message.
 
 ## Tray icon, close to tray, start with the computer
+
+Available since **0.3.0**.
 
 A mail client or chat app usually lives in the tray, hides instead of quitting when its window is closed, and can start with the
 computer. These are separate pieces, so you choose which to use, and each can be changed while the app runs.

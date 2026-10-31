@@ -2,7 +2,7 @@
 
 > Jolt opens a native window on Windows and Linux whose contents are a web page, and lets that page talk to Java in the same process. It uses the web view the operating system already has (WebView2 on Windows, WebKitGTK 4.1 on Linux), so there is no bundled browser. It is built on Java 25's Foreign Function & Memory API: no JNI, no native code to compile. License: Apache 2.0. Status: early (0.x), APIs can still change.
 
-Current version: 0.2.5 (see CHANGELOG.md for what each version added; Maven Central is the source of truth for the latest).
+Current version: 0.3.0 (see CHANGELOG.md for what each version added; Maven Central is the source of truth for the latest).
 Group id: `io.github.b077as`. Java 25 or newer. macOS is not supported.
 
 Modules (all released with the same version):
@@ -13,6 +13,7 @@ Modules (all released with the same version):
 - `jolt-credentials`: optional, since 0.2.1. Stores passwords and tokens in the Windows Credential Manager or the Linux Secret Service. No dependency on `jolt-core`.
 - File dialogs and binary channels, since 0.2.4 and 0.2.3: `WebWindow.dialogs()` (open, save, choose-folder), `jolt.saveAs` in the page, `WebWindow.openChannel` for raw bytes between Java and the page.
 - `Application.openExternal(URI)` (http, https, mailto) and `AppOptions.withQuietNativeLogs`, since 0.2.5.
+- Since 0.3.0: system notifications (`Application.notify`, `jolt.notify`); pop-out windows (`WebWindow.enableOpenWindow` with a `WindowOpener`, `jolt.openWindow`, `jolt.broadcast`/`onBroadcast`, `WindowOptions.withOwner`, `ResourceOptions.withStartPath`, `Application.windows()`); `WebWindow.focus/minimize/isMinimized/isVisible`; tray icon (`Application.isTraySupported/createTray`, `Tray`, `TrayMenu`); close to tray (`WebWindow.setCloseBehavior(CloseBehavior.HIDE)`); start with the computer (`Application.autostart()`); one copy per user (`SingleInstance.acquire`); frameless windows (`WindowOptions.withFrameless`, `data-jolt-drag`, `jolt.frame`).
 
 Run with `--enable-native-access=ALL-UNNAMED` (or set `Enable-Native-Access: ALL-UNNAMED` in the jar manifest).
 
@@ -25,4 +26,4 @@ Run with `--enable-native-access=ALL-UNNAMED` (or set `Enable-Native-Access: ALL
 ## What is and is not verified
 - Windows: tested against real WebView2 windows and the real Credential Manager.
 - Linux: tested in Docker (Ubuntu 24.04) on X11 and Wayland; the credentials module only against gnome-keyring.
-- Not verified: other Linux distributions, KWallet, KeePassXC, real GPUs, Windows 10 specifics. See the README section "When something goes wrong".
+- Not verified: how the frameless window, tray and dark tray menu look, a tray on real KDE/XFCE/GNOME desktops (only a stand-in tray host was used), other Linux distributions, KWallet, KeePassXC, real GPUs, Windows 10 specifics. See the README section "When something goes wrong".
