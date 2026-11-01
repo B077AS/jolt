@@ -6,6 +6,18 @@ this file says when they do.
 
 The latest version is the one on [Maven Central](https://central.sonatype.com/artifact/io.github.b077as/jolt-core).
 
+## Unreleased
+
+### Fixed
+- **Linux (Wayland): the window icon was the compositor's placeholder (KDE: the Wayland "W") and `setIcon` had no effect.** A Wayland
+  window cannot set its own icon: the compositor shows the `Icon=` of `<appId>.desktop`. Now the icon given with `withIcon` or
+  `setIcon` is also written to the user's icon theme (`$XDG_DATA_HOME/icons/hicolor/<size>/apps/<appId>-<hash>.png`, one file per size
+  of an `.ico`) and `$XDG_DATA_HOME/applications/<appId>.desktop` points at it: a copy of the system's entry of that id with only the
+  icon replaced, or, with none (AppImage, archive, development run), a hidden entry that starts the running program. So the title bar,
+  task bar and alt-tab show the icon, it follows `setIcon` (an accent colour, say) in the task bar of a running window, and an
+  AppImage gets an icon without a desktop-integration tool. An entry in that folder that Jolt did not write is left alone. Not done
+  on X11, where the window icon property works.
+
 ## 0.3.1 - 2026-10-31
 
 ### Fixed

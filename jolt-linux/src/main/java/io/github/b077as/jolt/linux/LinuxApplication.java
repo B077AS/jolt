@@ -111,6 +111,20 @@ final class LinuxApplication implements Application {
         }
     }
 
+    private DesktopEntry desktopEntry;
+    private boolean desktopEntryChecked;
+
+    /** Wayland shows the icon of the application's desktop entry, not the one set on the window; see {@link DesktopEntry}. UI thread. */
+    void installDesktopIcon(String name, byte[] icon) {
+        if (!desktopEntryChecked) {
+            desktopEntryChecked = true;
+            desktopEntry = DesktopEntry.forThisProcess(options.appId(), name);
+        }
+        if (desktopEntry != null) {
+            desktopEntry.install(icon);
+        }
+    }
+
     private void runLoop(Runnable onStart) {
         uiThread = Thread.currentThread();
         Throwable startFailure = null;
