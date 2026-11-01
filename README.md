@@ -57,16 +57,11 @@ Java does everything a page may not: files, databases, native libraries, long-ru
 
 You need JDK 25 and Maven 3.9+. On Linux also `sudo apt install libgtk-3-0 libwebkit2gtk-4.1-0`.
 
-```powershell
-git clone https://github.com/B077AS/jolt.git
-cd jolt
-mvn install -DskipTests
-mvn -pl examples/notes-app -am install -DskipTests
-java --enable-native-access=ALL-UNNAMED -cp "examples/notes-app/target/package/*" io.github.b077as.jolt.examples.notes.NotesApp
-```
+[Add Jolt to your project](#add-jolt-to-your-project) below opens your first window in a few lines.
 
-The [notes example](examples/notes-app) is a small complete app: a Java data layer, JSON requests between Java and the page,
-light and dark themes, and an optional React frontend (`examples/notes-app/frontend`).
+For a complete app, see [Parsel](https://github.com/B077AS/parsel), a desktop mail client built on Jolt: Java for IMAP and SMTP,
+a Vue page for the interface, one process, packaged for Windows and Linux. It is the main example of how a real Jolt app is put
+together, and there is a [case study](https://jolt.williamsolari.com/parsel) on the Jolt site.
 
 > **Status: early.** Both backends pass the same integration suite (Windows; Linux on X11 and Wayland in containers). macOS is
 > not supported. If something is rough, please open an issue.
@@ -147,7 +142,7 @@ try {
 
 Messages are plain strings. For real apps, add a tiny request/response layer on top: the page sends
 `{"id": 1, "method": "notes.add", "params": {...}}` and Java answers `{"id": 1, "result": ...}` or `{"id": 1, "error": "..."}`.
-The notes example has both halves (`Rpc.java` and `ui/index.html`), about 40 lines each:
+A small `Rpc` helper of your own (about 40 lines on the Java side and as many on the page) is all it takes:
 
 ```java
 new Rpc(window)
@@ -286,11 +281,9 @@ Your page is normal HTML, CSS and JavaScript. The web view is Chromium (Windows)
   Separate HTML, CSS and JS files work, relative URLs and ES modules too, and the origin is stable so `localStorage` survives
   restarts. A single self-contained HTML file (Vite with `vite-plugin-singlefile`) can use `loadHtml` instead.
 
-`examples/notes-app/frontend` is the notes app in React, TypeScript, Vite and Tailwind. `src/jolt.ts` is the typed bridge
-(`call<T>(method, params)`), `src/api.ts` has one function per Java handler. Build it with `npm install; npm run build`, then run
-the example with `"-Dui.file=examples/notes-app/frontend/dist/index.html"`, or with `"-Dui.url=http://127.0.0.1:5173"` against
-`npm run dev`. (PowerShell splits `-D` flags at the dot, so keep the quotes.) Only React has been run; other frameworks go through
-the same Vite setup.
+A small typed wrapper around `jolt.postMessage` (for example a `call<T>(method, params)` function with one function per Java
+handler) keeps the rest of the frontend free of the bridge. [Parsel](https://github.com/B077AS/parsel) is built this way, with a
+Vue page on top of Vite. Other frameworks go through the same Vite setup.
 
 ## Serving files and answering requests from Java
 
@@ -505,13 +498,13 @@ the user unlocks the keyring.
 
 ## Package it
 
-`jpackage` turns your jars into a double-clickable app that bundles its own Java runtime:
+`jpackage` turns your jars into a double-clickable app that bundles its own Java runtime. Collect your app jar and its
+dependencies in one folder (here `target\package`), then point it at that folder:
 
 ```powershell
-mvn -pl examples/notes-app -am install
-jpackage --type app-image --name JoltNotes `
-  --input examples\notes-app\target\package `
-  --main-jar notes-app-0.1.0-SNAPSHOT.jar --main-class io.github.b077as.jolt.examples.notes.NotesApp `
+jpackage --type app-image --name MyApp `
+  --input target\package `
+  --main-jar my-app.jar --main-class com.example.MyApp `
   --java-options "--enable-native-access=ALL-UNNAMED" `
   --add-modules "java.base,java.logging,jdk.unsupported" `
   --jlink-options "--strip-debug --no-man-pages --no-header-files --compress zip-6" `
@@ -547,8 +540,6 @@ mvn install            # builds everything and runs all tests (they open real wi
 | `jolt-win32` | Windows backend: Win32 window and WebView2, driven through COM vtables from Java |
 | `jolt-linux` | Linux backend: GTK 3 and WebKitGTK 4.1 over FFM |
 | `jolt-credentials` | OS keystore for passwords and tokens |
-| `examples/hello-window` | Smallest app; `--smoke` runs a scripted round trip |
-| `examples/notes-app` | A complete small app, plus a React frontend |
 
 How it works, briefly: `Application.run` turns the calling thread into the UI thread and runs the platform message loop; other
 threads go through `dispatch`. On Windows, WebView2's COM interfaces are called through their vtables with FFM (slot numbers are

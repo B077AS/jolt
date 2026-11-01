@@ -40,8 +40,6 @@
     <module>jolt-win32</module>
     <module>jolt-linux</module>
     <module>jolt-credentials</module>
-    <module>examples/hello-window</module>
-    <module>examples/notes-app</module>
   </modules>
 
   <properties>
