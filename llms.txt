@@ -21,7 +21,7 @@ Run with `--enable-native-access=ALL-UNNAMED` (or set `Enable-Native-Access: ALL
 - [README](README.md): install, first window, messaging between page and Java, serving a multi-file frontend, request handlers and routing, uploads, security policy, packaging, troubleshooting.
 - [CHANGELOG](CHANGELOG.md): what changed in each version.
 - [Maven Central](https://central.sonatype.com/artifact/io.github.b077as/jolt-core): published artifacts.
-- [Examples](examples/): `hello-window` and `notes-app` (Java backend, optional React + TypeScript + Vite frontend).
+- [Parsel](https://github.com/B077AS/parsel): the reference example, a complete desktop mail client built on Jolt (Java backend, Vue frontend).
 
 ## What is and is not verified
 - Windows: tested against real WebView2 windows and the real Credential Manager.
