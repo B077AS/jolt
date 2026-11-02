@@ -73,7 +73,7 @@ Add the API and both backends; each one only activates on its own OS.
 ```xml
 <properties>
   <maven.compiler.release>25</maven.compiler.release>
-  <jolt.version>0.3.1</jolt.version>
+  <jolt.version>0.3.2</jolt.version>
 </properties>
 
 <dependencies>
@@ -98,9 +98,9 @@ Add the API and both backends; each one only activates on its own OS.
 Gradle:
 
 ```kotlin
-implementation("io.github.b077as:jolt-core:0.3.1")
-implementation("io.github.b077as:jolt-win32:0.3.1")
-implementation("io.github.b077as:jolt-linux:0.3.1")
+implementation("io.github.b077as:jolt-core:0.3.2")
+implementation("io.github.b077as:jolt-win32:0.3.2")
+implementation("io.github.b077as:jolt-linux:0.3.2")
 ```
 
 Run Java with `--enable-native-access=ALL-UNNAMED`, or put `Enable-Native-Access: ALL-UNNAMED` in your jar manifest

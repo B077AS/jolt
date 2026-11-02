@@ -6,7 +6,7 @@ this file says when they do.
 
 The latest version is the one on [Maven Central](https://central.sonatype.com/artifact/io.github.b077as/jolt-core).
 
-## Unreleased
+## 0.3.2 - 2026-11-02
 
 ### Fixed
 - **Linux (Wayland): the window icon was the compositor's placeholder (KDE: the Wayland "W") and `setIcon` had no effect.** A Wayland
