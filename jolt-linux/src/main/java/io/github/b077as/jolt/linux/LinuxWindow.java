@@ -120,6 +120,7 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
         if (options.icon() != null && !Gtk.setWindowIcon(window, options.icon())) {
             LOG.log(System.Logger.Level.WARNING, "The window icon could not be decoded; it must be PNG or ICO data");
         }
+        app.installDesktopIcon(options.title(), options.icon());
         if (options.backgroundRgb() != null) {
             Gtk.setBackgroundColor(webView, options.backgroundRgb());
         }
@@ -248,6 +249,9 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
         app.dispatch(() -> {
             if (!destroyed && copy != null && !Gtk.setWindowIcon(window, copy)) {
                 LOG.log(System.Logger.Level.WARNING, "The window icon could not be decoded; it must be PNG or ICO data");
+            }
+            if (!destroyed && copy != null) {
+                app.installDesktopIcon(options.title(), copy);
             }
         });
     }
