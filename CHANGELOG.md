@@ -6,6 +6,40 @@ this file says when they do.
 
 The latest version is the one on [Maven Central](https://central.sonatype.com/artifact/io.github.b077as/jolt-core).
 
+## Unreleased
+
+### Added
+- **Clipboard: `Application.clipboard()`** returns a `Clipboard` for Java code, with no AWT (on Linux AWT would load a second toolkit next
+  to GTK). It reads and writes text, an HTML fragment, a PNG image and a list of files; `formats()` says what is there, `clear()` empties
+  it, and `onChange` reports changes (the formats only, never the content). `ClipboardContent` combines several formats in one copy, for
+  example text plus HTML. Every call is asynchronous (a `CompletableFuture` completed on the UI thread), so never block the UI thread on
+  one. Windows writes `CF_UNICODETEXT`, "HTML Format", "PNG" plus `CF_DIBV5` (programs that only know bitmaps still work) and
+  `CF_HDROP`; Linux offers the text targets, `text/html`, `image/png`, and `text/uri-list` with `x-special/gnome-copied-files`.
+- **`ClipboardContent.secret(text)`** for passwords and tokens: the value is marked so Windows clipboard history, the cloud clipboard and
+  clipboard monitors skip it (Linux: `x-kde-passwordManagerHint`, honoured by Klipper and other managers), and it is taken off the
+  clipboard after 30 seconds (`secret(text, Duration)` to choose) unless something else was copied meanwhile. A secret still on the
+  clipboard is also removed when the application ends. Other programs can still read it while it is there.
+
+### Security
+- **The clipboard is treated as hostile input.** Content over 32 MB or more than 4096 files is refused; every length and offset in
+  data from another program is checked against the data actually present; images are validated and handed out as the PNG bytes, not
+  decoded by Jolt on read; text stops at the first NUL; file paths must be absolute and local (a network path such as
+  `\\server\share\x`, which would make Windows send the user's credentials to that server, is dropped). Contents are never logged and
+  `ClipboardContent.toString()` does not show them. Web pages get no access through Jolt: a page's own `navigator.clipboard` stays under
+  `SecurityPolicy` (the default denies permission requests).
+
+### Changed
+- **Windows: browser shortcuts are disabled in the web view** (`AreBrowserAcceleratorKeysEnabled` off): Ctrl+F no longer opens the
+  browser's find bar, and Ctrl+P, F5, Ctrl+R, zoom keys, F12 and Ctrl+Shift+I do nothing either. With `devTools` on, "Inspect" in the
+  context menu still opens the developer tools. Not changed on Linux, where WebKitGTK has no such shortcuts. Runtimes that lack the
+  setting keep the old behaviour.
+- **API addition that can break code that implements `Application`** (0.x): it has the new method `clipboard()`, which by default
+  throws `UnsupportedOperationException`, so only code that implements `Application` and calls it is affected.
+
+### Not yet verified
+- The Linux clipboard compiles but its tests have not been run. Still open: change events for our own writes, reads while another
+  program owns the clipboard and does not answer, Wayland focus rules, and the fallback for pictures that are not PNG.
+
 ## 0.3.2 - 2026-11-02
 
 ### Fixed

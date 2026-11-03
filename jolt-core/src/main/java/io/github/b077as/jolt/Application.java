@@ -103,6 +103,11 @@ public interface Application extends AutoCloseable {
         throw new UnsupportedOperationException("this platform cannot show a tray icon");
     }
 
+    /** The system clipboard, see {@link Clipboard}. Safe from any thread. */
+    default Clipboard clipboard() {
+        throw new UnsupportedOperationException("this platform has no clipboard support");
+    }
+
     /** Starting the application when the user signs in, see {@link Autostart}. */
     default Autostart autostart() {
         throw new UnsupportedOperationException("this platform cannot start applications at sign-in");

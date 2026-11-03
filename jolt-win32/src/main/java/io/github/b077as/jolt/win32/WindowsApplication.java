@@ -213,6 +213,21 @@ final class WindowsApplication implements Application {
         trays.remove(tray);
     }
 
+    private WindowsClipboard clipboard;
+
+    @Override
+    public synchronized io.github.b077as.jolt.Clipboard clipboard() {
+        if (clipboard == null) {
+            clipboard = new WindowsClipboard(this);
+        }
+        return clipboard;
+    }
+
+    /** The hidden window that owns the clipboard and receives its change notifications; {@code null} outside the loop. */
+    MemorySegment dispatchWindow() {
+        return dispatchWindow;
+    }
+
     @Override
     public Autostart autostart() {
         return new WindowsAutostart(options.appId());
@@ -373,6 +388,13 @@ final class WindowsApplication implements Application {
             if (toasts != null) {
                 toasts.close(); // a click after this point must not reach callbacks that are about to be freed
             }
+            WindowsClipboard c;
+            synchronized (this) {
+                c = clipboard;
+            }
+            if (c != null) {
+                c.shutdown(); // takes a secret the application put there off the clipboard before the process ends
+            }
             for (WindowsTray tray : new ArrayList<>(trays)) {
                 tray.closeNow(); // a tray icon left behind stays in the notification area until the pointer passes over it
             }
@@ -405,6 +427,19 @@ final class WindowsApplication implements Application {
             MemorySegment target = dispatchWindow;
             if (target != null && target.address() == hwnd.address()) {
                 drain();
+                return 0;
+            }
+        }
+        if (msg == WindowsClipboard.WM_CLIPBOARDUPDATE) {
+            MemorySegment target = dispatchWindow;
+            if (target != null && target.address() == hwnd.address()) {
+                WindowsClipboard c;
+                synchronized (this) {
+                    c = clipboard;
+                }
+                if (c != null) {
+                    c.onUpdate();
+                }
                 return 0;
             }
         }

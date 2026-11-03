@@ -52,6 +52,12 @@ final class Callbacks {
     static final MemorySegment DBUS_METHOD_CALL;
     /** {@code GDBusInterfaceVTable.get_property} for the tray's exported objects: returns a GVariant; user_data is the tray's registry id. */
     static final MemorySegment DBUS_GET_PROPERTY;
+    /** {@code GtkClipboardGetFunc}: a program wants our clipboard content; user_data is the content's registry id. */
+    static final MemorySegment CLIPBOARD_GET;
+    /** {@code GtkClipboardClearFunc}: our content is no longer on the clipboard; user_data is the content's registry id. */
+    static final MemorySegment CLIPBOARD_CLEAR;
+    /** {@code owner-change} on the clipboard: user_data is the clipboard's registry id. */
+    static final MemorySegment CLIPBOARD_OWNER_CHANGE;
     /** {@code GLogFunc}: drops {@link Gtk#KNOWN_NOISE}, prints everything else as GLib would. */
     static final MemorySegment LOG;
 
@@ -101,6 +107,15 @@ final class Callbacks {
                 MethodType.methodType(MemorySegment.class, MemorySegment.class, MemorySegment.class, MemorySegment.class,
                         MemorySegment.class, MemorySegment.class, MemorySegment.class, MemorySegment.class),
                 FunctionDescriptor.of(ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS), 0);
+        CLIPBOARD_GET = stub(lookup, forever, "onClipboardGet",
+                MethodType.methodType(void.class, MemorySegment.class, MemorySegment.class, int.class, MemorySegment.class),
+                FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, JAVA_INT, ADDRESS), 0);
+        CLIPBOARD_CLEAR = stub(lookup, forever, "onClipboardClear",
+                MethodType.methodType(void.class, MemorySegment.class, MemorySegment.class),
+                FunctionDescriptor.ofVoid(ADDRESS, ADDRESS), 0);
+        CLIPBOARD_OWNER_CHANGE = stub(lookup, forever, "onClipboardOwnerChange",
+                MethodType.methodType(void.class, MemorySegment.class, MemorySegment.class, MemorySegment.class),
+                FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, ADDRESS), 0);
         LOG = stub(lookup, forever, "onLog",
                 MethodType.methodType(void.class, MemorySegment.class, int.class, MemorySegment.class, MemorySegment.class),
                 FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT, ADDRESS, ADDRESS), 0);
@@ -224,6 +239,21 @@ final class Callbacks {
         LinuxApplication app = Registry.get(data.address(), LinuxApplication.class);
         if (app != null) {
             app.onSchemeRequest(request);
+        }
+    }
+
+    private static void onClipboardGet(MemorySegment clipboard, MemorySegment selectionData, int info, MemorySegment data) {
+        LinuxClipboard.provide(data.address(), selectionData, info);
+    }
+
+    private static void onClipboardClear(MemorySegment clipboard, MemorySegment data) {
+        LinuxClipboard.cleared(data.address());
+    }
+
+    private static void onClipboardOwnerChange(MemorySegment clipboard, MemorySegment event, MemorySegment data) {
+        LinuxClipboard board = Registry.get(data.address(), LinuxClipboard.class);
+        if (board != null) {
+            board.onOwnerChange();
         }
     }
 

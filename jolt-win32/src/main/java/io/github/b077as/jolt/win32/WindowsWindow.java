@@ -885,11 +885,25 @@ public CompletableFuture<String> eval(String script) {
                 Com.call(settings, WebView2Abi.ICoreWebView2Settings.PUT_ARE_DEV_TOOLS_ENABLED, Com.HR_INT, devTools);
                 Com.call(settings, WebView2Abi.ICoreWebView2Settings.PUT_ARE_DEFAULT_CONTEXT_MENUS_ENABLED, Com.HR_INT, devTools);
                 Com.call(settings, WebView2Abi.ICoreWebView2Settings.PUT_IS_STATUS_BAR_ENABLED, Com.HR_INT, 0);
+                // Browser shortcuts (Ctrl+F find bar, Ctrl+P, F5, Ctrl+R, zoom...) make no sense in an app window.
+                // The property lives in ICoreWebView2Settings3 (older runtimes lack it: ignore).
+                MemorySegment settings3 = Com.queryInterface(settings, IID_SETTINGS3);
+                if (settings3 != null && !settings3.equals(MemorySegment.NULL)) {
+                    try {
+                        Com.call(settings3, SETTINGS3_PUT_ARE_BROWSER_ACCELERATOR_KEYS_ENABLED, Com.HR_INT, 0);
+                    } finally {
+                        Com.release(settings3);
+                    }
+                }
             } finally {
                 Com.release(settings);
             }
         }
     }
+
+    /** {@code ICoreWebView2Settings3} (WebView2.h): Settings 0-20, Settings2 UserAgent 21-22, then 23 get / 24 put. */
+    private static final String IID_SETTINGS3 = "fdb5ab74-af33-4854-84f0-0a631deb5eba";
+    private static final int SETTINGS3_PUT_ARE_BROWSER_ACCELERATOR_KEYS_ENABLED = 24;
 
     private void addEvent(int addSlot, ComHandler handler) {
         handlers.add(handler);
