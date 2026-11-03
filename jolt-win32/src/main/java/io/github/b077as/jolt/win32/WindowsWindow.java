@@ -885,6 +885,8 @@ public CompletableFuture<String> eval(String script) {
                 Com.call(settings, WebView2Abi.ICoreWebView2Settings.PUT_ARE_DEV_TOOLS_ENABLED, Com.HR_INT, devTools);
                 Com.call(settings, WebView2Abi.ICoreWebView2Settings.PUT_ARE_DEFAULT_CONTEXT_MENUS_ENABLED, Com.HR_INT, devTools);
                 Com.call(settings, WebView2Abi.ICoreWebView2Settings.PUT_IS_STATUS_BAR_ENABLED, Com.HR_INT, 0);
+                // No zooming: Ctrl+plus/minus/0, Ctrl+wheel and pinch all stay at 100%.
+                Com.call(settings, WebView2Abi.ICoreWebView2Settings.PUT_IS_ZOOM_CONTROL_ENABLED, Com.HR_INT, 0);
                 // Browser shortcuts (Ctrl+F find bar, Ctrl+P, F5, Ctrl+R, zoom...) make no sense in an app window.
                 // The property lives in ICoreWebView2Settings3 (older runtimes lack it: ignore).
                 MemorySegment settings3 = Com.queryInterface(settings, IID_SETTINGS3);
