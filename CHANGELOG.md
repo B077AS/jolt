@@ -6,7 +6,7 @@ this file says when they do.
 
 The latest version is the one on [Maven Central](https://central.sonatype.com/artifact/io.github.b077as/jolt-core).
 
-## Unreleased
+## 0.3.3 - 2026-11-06
 
 ### Added
 - **Clipboard: `Application.clipboard()`** returns a `Clipboard` for Java code, with no AWT (on Linux AWT would load a second toolkit next
