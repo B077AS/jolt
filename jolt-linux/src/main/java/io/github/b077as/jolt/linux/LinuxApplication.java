@@ -262,6 +262,16 @@ final class LinuxApplication implements Application {
         trays.remove(tray);
     }
 
+    private LinuxClipboard clipboard;
+
+    @Override
+    public synchronized io.github.b077as.jolt.Clipboard clipboard() {
+        if (clipboard == null) {
+            clipboard = new LinuxClipboard(this);
+        }
+        return clipboard;
+    }
+
     @Override
     public Autostart autostart() {
         return new XdgAutostart(options.appId(), XdgAutostart.defaultDirectory());
@@ -368,6 +378,10 @@ final class LinuxApplication implements Application {
                 if (notifications != null) {
                     notifications.close();
                     notifications = null;
+                }
+                if (clipboard != null) {
+                    clipboard.shutdown(); // withdraws a secret still on offer
+                    clipboard = null;
                 }
                 for (GtkTray tray : new ArrayList<>(trays)) {
                     tray.closeNow(); // leaves the bus name and the exported objects before the callbacks go away
