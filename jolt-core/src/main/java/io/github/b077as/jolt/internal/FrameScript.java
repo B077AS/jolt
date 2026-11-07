@@ -40,24 +40,26 @@ public final class FrameScript {
               const R = () => document.documentElement; // not there yet when the script first runs
 
               // ---- state, pushed by the window ----
-              const state = { maximized: false, focused: true };
+              const state = { maximized: false, focused: true, fullscreen: false };
               Object.defineProperty(window, '__joltFrameState', { value: state });
               const handles = [];
               const kits = [];
 
-              const applyState = (maximized, focused) => {
-                const changed = state.maximized !== !!maximized || state.focused !== !!focused;
+              const applyState = (maximized, focused, fullscreen) => {
+                const changed = state.maximized !== !!maximized || state.focused !== !!focused || state.fullscreen !== !!fullscreen;
                 state.maximized = !!maximized;
                 state.focused = !!focused;
+                state.fullscreen = !!fullscreen;
                 if (R()) {
                   R().toggleAttribute('data-jolt-maximized', state.maximized);
                   R().toggleAttribute('data-jolt-inactive', !state.focused);
+                  R().toggleAttribute('data-jolt-fullscreen', state.fullscreen);
                 }
-                for (const h of handles) h.style.display = state.maximized ? 'none' : 'block';
+                for (const h of handles) h.style.display = state.maximized || state.fullscreen ? 'none' : 'block';
                 for (const kit of kits) kit.update();
                 reportMax();
                 if (changed) {
-                  window.dispatchEvent(new CustomEvent('jolt-frame', { detail: { maximized: state.maximized, focused: state.focused } }));
+                  window.dispatchEvent(new CustomEvent('jolt-frame', { detail: { maximized: state.maximized, focused: state.focused, fullscreen: state.fullscreen } }));
                 }
               };
               Object.defineProperty(window, '__joltFrameApply', { value: applyState });
@@ -96,7 +98,7 @@ public final class FrameScript {
                   const handle = document.createElement('div');
                   handle.setAttribute('data-jolt-handle', '');
                   handle.style.cssText = 'position:fixed;z-index:2147483647;background:transparent;' + geometry + 'cursor:' + cursor + ';'
-                    + (state.maximized ? 'display:none;' : '');
+                    + (state.maximized || state.fullscreen ? 'display:none;' : '');
                   handle.addEventListener('mousedown', (e) => {
                     if (e.button !== 0) return;
                     e.preventDefault();

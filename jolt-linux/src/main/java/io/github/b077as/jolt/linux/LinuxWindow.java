@@ -60,6 +60,10 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
     private volatile boolean maximizeWhenShown;
     /** The window manager's word on it, kept up to date by the window-state signal. Readable from any thread. */
     private volatile boolean maximized;
+    /** Asked to be full screen before it was first shown. Readable from any thread. */
+    private volatile boolean fullscreenWhenShown;
+    /** The window manager's word on it, kept up to date by the window-state signal. Readable from any thread. */
+    private volatile boolean fullscreen;
     /** Mirrors of the window's state for callers on other threads; kept up to date on the UI thread. */
     private volatile boolean visible;
     private volatile boolean iconified;
@@ -142,6 +146,7 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
             shown = true;
             visible = true;
             maximizeWhenShown = false; // from here the window manager's state counts
+            fullscreenWhenShown = false;
         }
         ready.complete(null);
     }
@@ -297,6 +302,7 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
                 shown = true;
                 visible = true;
                 maximizeWhenShown = false;
+                fullscreenWhenShown = false;
             }
         });
     }
@@ -384,6 +390,7 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
                 shown = true;
                 visible = true;
                 maximizeWhenShown = false;
+                fullscreenWhenShown = false;
             }
         });
     }
@@ -415,6 +422,40 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
         return maximizeWhenShown || maximized;
     }
 
+    @Override
+    public void setFullscreen(boolean on) {
+        app.dispatch(() -> {
+            if (destroyed) {
+                return;
+            }
+            if (on) {
+                Gtk.windowFullscreen(window); // before the window is shown this sets the state it opens in
+                if (!shown) {
+                    fullscreenWhenShown = true;
+                }
+            } else {
+                fullscreenWhenShown = false;
+                Gtk.windowUnfullscreen(window);
+            }
+        });
+    }
+
+    @Override
+    public void toggleFullscreen() {
+        setFullscreen(!isFullscreen());
+    }
+
+    @Override
+    public boolean isFullscreen() {
+        return fullscreenWhenShown || fullscreen;
+    }
+
+    /** The window-state signal: the window manager made the window full screen or took it out of it. */
+    void onFullscreenChanged(boolean now) {
+        fullscreen = now;
+        pushFrameState();
+    }
+
     /** The window-state signal: the window manager maximized or restored the window. */
     void onIconifiedChanged(boolean nowIconified) {
         iconified = nowIconified;
@@ -434,7 +475,7 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
     /** Tells a frameless page whether the window is maximized and in front. UI thread. */
     private void pushFrameState() {
         if (options.frameless() && !destroyed) {
-            eval(FrameProtocol.stateScript(maximized, focused || !shown)).exceptionally(t -> null);
+            eval(FrameProtocol.stateScript(maximized, focused || !shown, isFullscreen())).exceptionally(t -> null);
         }
     }
 

@@ -417,6 +417,8 @@ The window tells the page what state it is in, which you can use with or without
 - `<html data-jolt-maximized>` while maximized, `<html data-jolt-inactive>` while the window is not the one in front,
   `<html data-jolt-platform="windows|linux">` (for example to hide a rounded corner while maximized:
   `html[data-jolt-maximized] header { border-radius: 0 }`).
+- Full screen from Java: `window.setFullscreen(true)` / `window.isFullscreen()`. A frameless page can use `jolt.frame.setFullscreen(true)`,
+  `jolt.frame.toggleFullscreen()` and `jolt.frame.isFullscreen()`; `<html data-jolt-fullscreen>` is set while it is on.
 - `jolt.frame.isMaximized()`, `jolt.frame.isFocused()`, and `const stop = jolt.frame.onChange(({maximized, focused}) => ...)`.
 
 On **Windows 11**, resting the pointer on the maximize button shows the snap layouts. For that Jolt reports the button's position to the window

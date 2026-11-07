@@ -741,6 +741,60 @@ final class Win32 {
         }
     }
 
+    // ---- full screen ----
+
+    static final int GWL_STYLE = -16;
+    static final int WS_CAPTION = 0x00C00000;
+    static final int DWMWCP_DONOTROUND = 1;
+    private static final MethodHandle GET_WINDOW_LONG_PTR = Native.downcall(USER32, "GetWindowLongPtrW",
+            FunctionDescriptor.of(JAVA_LONG, ADDRESS, JAVA_INT));
+    private static final MethodHandle SET_WINDOW_LONG_PTR = Native.downcall(USER32, "SetWindowLongPtrW",
+            FunctionDescriptor.of(JAVA_LONG, ADDRESS, JAVA_INT, JAVA_LONG));
+
+    static long windowStyle(MemorySegment hwnd) {
+        try {
+            return (long) GET_WINDOW_LONG_PTR.invokeExact(hwnd, GWL_STYLE);
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    static void setWindowStyle(MemorySegment hwnd, long style) {
+        try {
+            long ignored = (long) SET_WINDOW_LONG_PTR.invokeExact(hwnd, GWL_STYLE, style);
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    /** The whole monitor the window is on (taskbar included) as {left, top, right, bottom}, or {@code null}. */
+    static int[] monitorRectOf(MemorySegment hwnd) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment monitor = (MemorySegment) MONITOR_FROM_WINDOW.invokeExact(hwnd, MONITOR_DEFAULTTONEAREST);
+            if (monitor.equals(MemorySegment.NULL)) {
+                return null;
+            }
+            MemorySegment info = arena.allocate(MONITORINFO_SIZE);
+            info.set(JAVA_INT, 0, (int) MONITORINFO_SIZE);
+            if ((int) GET_MONITOR_INFO.invokeExact(monitor, info) == 0) {
+                return null;
+            }
+            return new int[] {info.get(JAVA_INT, 4), info.get(JAVA_INT, 8), info.get(JAVA_INT, 12), info.get(JAVA_INT, 16)};
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    /** Moves and sizes a top-level window to these screen coordinates, to the front, and has Windows redo its frame. */
+    static void placeOnTop(MemorySegment hwnd, int left, int top, int width, int height) {
+        try {
+            int ignored = (int) SET_WINDOW_POS_AFTER.invokeExact(hwnd, MemorySegment.NULL /* HWND_TOP */, left, top, width, height,
+                    SWP_FRAMECHANGED | SWP_NOACTIVATE);
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
     // ---- frameless windows: snap-layout overlay and window menu ----
 
     static final int DWMWA_WINDOW_CORNER_PREFERENCE = 33; // Windows 11

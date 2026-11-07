@@ -305,6 +305,23 @@ public interface WebWindow {
      */
     boolean isMaximized();
 
+    /**
+     * Puts the window into, or takes it out of, full-screen mode: it covers the whole screen it is on, without title bar, border or
+     * taskbar. Leaving full screen returns the window to the size, position and maximized state it had before. On a window that is
+     * still hidden it is remembered and takes effect when the window is first shown. On Linux it needs a window manager or
+     * compositor that honours the request. The browser's own F11 stays disabled; this is the way to do it.
+     *
+     * <p>A frameless window can do the same from its page with {@code jolt.frame.setFullscreen(true)} or
+     * {@code jolt.frame.toggleFullscreen()}; the page sees it as {@code data-jolt-fullscreen} on {@code <html>}.
+     */
+    void setFullscreen(boolean fullscreen);
+
+    /**
+     * Whether the window is full screen, or will be when it is first shown. Can be called from any thread. A request is carried out
+     * on the UI thread, so right after {@link #setFullscreen} this may still say the old value.
+     */
+    boolean isFullscreen();
+
     /** Opens the browser developer tools, if enabled in {@link WindowOptions}. */
     void openDevTools();
 

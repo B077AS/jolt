@@ -39,6 +39,12 @@ public final class FrameProtocol {
          */
         default void setMaximizeButton(int x, int y, int width, int height) {}
 
+        /** The page asks for full screen on or off (see {@code WebWindow.setFullscreen}). */
+        default void setFullscreen(boolean fullscreen) {}
+
+        /** The page asks to switch full screen. */
+        default void toggleFullscreen() {}
+
         /** The page has no maximize button (any more). */
         default void clearMaximizeButton() {}
 
@@ -68,6 +74,9 @@ public final class FrameProtocol {
             case "move" -> host.beginMove();
             case "state" -> host.reportState();
             case "menu" -> host.showWindowMenu();
+            case "fullscreen:on" -> host.setFullscreen(true);
+            case "fullscreen:off" -> host.setFullscreen(false);
+            case "fullscreen:toggle" -> host.toggleFullscreen();
             case "maxbtn:none" -> host.clearMaximizeButton();
             default -> {
                 if (command.startsWith("resize:") && command.length() == "resize:".length() + 1) {
@@ -110,8 +119,8 @@ public final class FrameProtocol {
     }
 
     /** The script that tells the page (a frameless window's frame script) the window's state. Safe before the page has a frame script. */
-    public static String stateScript(boolean maximized, boolean focused) {
-        return "window.__joltFrameApply && window.__joltFrameApply(" + maximized + "," + focused + ");";
+    public static String stateScript(boolean maximized, boolean focused, boolean fullscreen) {
+        return "window.__joltFrameApply && window.__joltFrameApply(" + maximized + "," + focused + "," + fullscreen + ");";
     }
 
     /** The script that tells the page which of its buttons the pointer is over or pressing: {@code "max"} or {@code null}. */

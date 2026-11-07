@@ -9,6 +9,12 @@ The latest version is the one on [Maven Central](https://central.sonatype.com/ar
 ## Unreleased
 
 ### Added
+- **Full screen: `WebWindow.setFullscreen(boolean)` and `isFullscreen()`.** The window covers the whole screen it is on, without title bar,
+  border or taskbar; leaving it brings back the size, position and maximized state it had. The browser's F11 stays disabled, this is the
+  way to do it. A window that is still hidden is full screen when first shown. A frameless page can do the same with
+  `jolt.frame.setFullscreen(true)`, `toggleFullscreen()` and `isFullscreen()`, and sees `data-jolt-fullscreen` on `<html>` (the resize
+  handles hide); `onChange` reports `fullscreen` too. Windows places a frameless-style window over the monitor (taskbar included); Linux
+  uses `gtk_window_fullscreen`, which needs a window manager or compositor that honours it. `WebWindow` gained two abstract methods.
 - **Ready-made title bar for frameless windows.** Put `data-jolt-titlebar` on an element and it becomes a title bar: it moves the window,
   and the minimize, maximize/restore and close buttons are added at its right end (`data-jolt-titlebar="close"` for just a close button,
   for dialogs). Their colours are CSS custom properties, so a theme is a few lines of CSS: `--jolt-caption-fg`, `--jolt-caption-bg`,

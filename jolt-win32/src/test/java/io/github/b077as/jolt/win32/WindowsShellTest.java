@@ -242,6 +242,55 @@ class WindowsShellTest {
         assertEquals("true", parts[8], "the overlay must go away with the button");
     }
 
+    /** Full screen covers the whole monitor (taskbar included) without a frame, and leaving it brings everything back. */
+    @Test
+    void fullScreenCoversTheWholeMonitorWithoutAFrameAndLeavingItRestoresTheWindow() {
+        CompletableFuture<String> result = new CompletableFuture<>();
+        WebWindowContract.runApp(40, app -> {
+            WindowsWindow window = (WindowsWindow) app.createWindow(WindowOptions.defaults().withSize(500, 400));
+            window.ready().thenRun(() -> app.dispatch(() -> {
+                try (Arena arena = Arena.ofConfined()) {
+                    MemorySegment rect = arena.allocate(Win32.RECT);
+                    Win32.getWindowRect(window.hwnd(), rect);
+                    String before = rect.get(JAVA_INT, 0) + "," + rect.get(JAVA_INT, 4) + "," + rect.get(JAVA_INT, 8) + "," + rect.get(JAVA_INT, 12);
+                    long styleBefore = Win32.windowStyle(window.hwnd());
+                    window.maximize();
+                    app.dispatch(() -> {
+                        window.setFullscreen(true);
+                        app.dispatch(() -> {
+                            try (Arena inner = Arena.ofConfined()) {
+                                MemorySegment full = inner.allocate(Win32.RECT);
+                                Win32.getWindowRect(window.hwnd(), full);
+                                int[] monitor = Win32.monitorRectOf(window.hwnd());
+                                String covers = (full.get(JAVA_INT, 0) == monitor[0]) + "," + (full.get(JAVA_INT, 4) == monitor[1])
+                                        + "," + (full.get(JAVA_INT, 8) == monitor[2]) + "," + (full.get(JAVA_INT, 12) == monitor[3]);
+                                boolean framed = (Win32.windowStyle(window.hwnd()) & Win32.WS_CAPTION) != 0;
+                                boolean says = window.isFullscreen();
+                                window.setFullscreen(false);
+                                app.dispatch(() -> {
+                                    boolean maximizedAgain = Win32.isZoomed(window.hwnd());
+                                    boolean styleBack = (Win32.windowStyle(window.hwnd()) & ~0x01000000L) == (styleBefore & ~0x01000000L); // WS_MAXIMIZE comes and goes by itself
+                                    window.restore();
+                                    app.dispatch(() -> {
+                                        try (Arena last = Arena.ofConfined()) { // not `inner`: that one is closed by now
+                                            MemorySegment after = last.allocate(Win32.RECT);
+                                            Win32.getWindowRect(window.hwnd(), after);
+                                            String at = after.get(JAVA_INT, 0) + "," + after.get(JAVA_INT, 4) + "," + after.get(JAVA_INT, 8) + "," + after.get(JAVA_INT, 12);
+                                            result.complete(covers + "|" + framed + "|" + says + "|" + window.isFullscreen() + "|" + maximizedAgain + "|"
+                                                    + styleBack + "|" + at.equals(before));
+                                        }
+                                        window.close();
+                                    });
+                                });
+                            }
+                        });
+                    });
+                }
+            }));
+        });
+        assertEquals("true,true,true,true|false|true|false|true|true|true", result.getNow("not answered"));
+    }
+
     @Test
     void aTrayIconAppearsInTheNotificationAreaReportsClicksAndGoesAway() {
         CompletableFuture<String> result = new CompletableFuture<>();

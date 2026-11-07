@@ -783,6 +783,41 @@ public abstract class WebWindowContract {
         }
     }
 
+    @Test
+    public void aWindowCanBeMadeFullScreenAndBackAndTheFramelessPageSeesIt() {
+        org.junit.jupiter.api.Assumptions.assumeTrue(maximizeIsHonoured(), "no window manager here to honour full screen");
+        List<String> steps = new java.util.concurrent.CopyOnWriteArrayList<>();
+        String probe = "document.documentElement.hasAttribute('data-jolt-fullscreen') + ',' + jolt.frame.isFullscreen()";
+        runApp(40, app -> {
+            WebWindow window = app.createWindow(WindowOptions.defaults().withSize(400, 300).withFrameless(true));
+            window.onMessage(message -> {
+                if (!message.equals("hello")) {
+                    return;
+                }
+                CompletableFuture.runAsync(() -> {
+                    steps.add("start " + window.isFullscreen() + " " + evalNow(window, probe));
+                    window.setFullscreen(true);
+                }).thenCompose(ignored -> eventually(() -> window.isFullscreen() && evalNow(window, probe).equals("true,true"), 5000))
+                        .thenCompose(ok -> {
+                            steps.add("full " + ok);
+                            if (!restoreIsHonoured()) {
+                                return CompletableFuture.completedFuture(false);
+                            }
+                            window.setFullscreen(false);
+                            return eventually(() -> !window.isFullscreen() && evalNow(window, probe).equals("false,false"), 5000);
+                        }).thenAccept(back -> {
+                            if (restoreIsHonoured()) {
+                                steps.add("back " + back);
+                            }
+                            window.close();
+                        });
+            });
+            window.loadHtml("<script>addEventListener('load', () => jolt.postMessage('hello'))</script>");
+        });
+        assertEquals(restoreIsHonoured() ? List.of("start false false,false", "full true", "back true")
+                : List.of("start false false,false", "full true"), steps);
+    }
+
     /** A hidden window shown maximized must render its page, and at the maximized size, not the size it was created with. */
     @Test
     public void aWindowShownMaximizedRendersItsPageAtTheFullSize() {

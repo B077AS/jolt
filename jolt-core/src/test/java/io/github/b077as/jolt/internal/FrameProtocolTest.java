@@ -24,6 +24,8 @@ class FrameProtocolTest {
         @Override public void setMaximizeButton(int x, int y, int w, int h) { calls.add("maxbtn " + x + "," + y + "," + w + "," + h); }
         @Override public void clearMaximizeButton() { calls.add("maxbtn none"); }
         @Override public void showWindowMenu() { calls.add("menu"); }
+        @Override public void setFullscreen(boolean on) { calls.add("fullscreen " + on); }
+        @Override public void toggleFullscreen() { calls.add("fullscreen toggle"); }
     }
 
     private static List<String> run(String... commands) {
@@ -36,8 +38,9 @@ class FrameProtocolTest {
 
     @Test
     void everyCommandReachesTheHost() {
-        assertEquals(List.of("minimize", "maximize", "close", "move", "state", "menu", "maxbtn none", "resize 4", "maxbtn 1,2,46,32"),
-                run("minimize", "maximize", "close", "move", "state", "menu", "maxbtn:none", "resize:4", "maxbtn:1,2,46,32"));
+        assertEquals(List.of("minimize", "maximize", "close", "move", "state", "menu", "maxbtn none", "resize 4", "maxbtn 1,2,46,32",
+                "fullscreen true", "fullscreen false", "fullscreen toggle"),
+                run("minimize", "maximize", "close", "move", "state", "menu", "maxbtn:none", "resize:4", "maxbtn:1,2,46,32", "fullscreen:on", "fullscreen:off", "fullscreen:toggle"));
     }
 
     @Test
@@ -51,7 +54,7 @@ class FrameProtocolTest {
     @Test
     void malformedAndOutOfRangeCommandsAreSwallowedButNeverActedOn() {
         assertEquals(List.of(), run("resize:0", "resize:9", "resize:", "resize:12", "maxbtn:", "maxbtn:1,2,3", "maxbtn:1,2,3,4,5",
-                "maxbtn:a,b,c,d", "maxbtn:1,2,0,10", "maxbtn:1,2,10,-5", "maxbtn:1,2,10,999999999", "maxbtn:1,,10,10", "nonsense", ""));
+                "maxbtn:a,b,c,d", "maxbtn:1,2,0,10", "maxbtn:1,2,10,-5", "maxbtn:1,2,10,999999999", "maxbtn:1,,10,10", "fullscreen:", "fullscreen:maybe", "nonsense", ""));
     }
 
     @Test
@@ -66,7 +69,7 @@ class FrameProtocolTest {
 
     @Test
     void theScriptsTheWindowRunsAreSafeBeforeThePageHasAFrameScript() {
-        assertEquals("window.__joltFrameApply && window.__joltFrameApply(true,false);", FrameProtocol.stateScript(true, false));
+        assertEquals("window.__joltFrameApply && window.__joltFrameApply(true,false,true);", FrameProtocol.stateScript(true, false, true));
         assertEquals("window.__joltFrameHover && window.__joltFrameHover('max',true);", FrameProtocol.hoverScript("max", true));
         assertEquals("window.__joltFrameHover && window.__joltFrameHover(null,false);", FrameProtocol.hoverScript(null, false));
     }

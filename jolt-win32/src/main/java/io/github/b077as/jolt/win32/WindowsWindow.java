@@ -91,6 +91,10 @@ final class WindowsWindow implements WebWindow, NativeResourceHost, NativeDialog
     /** Frameless pages are told when this changes. Starts true: a window that never gets an activation message is not dimmed. */
     private boolean active = true;
     private boolean sentMaximized;
+    private volatile boolean fullscreen;
+    private boolean fullscreenWasMaximized;
+    private long fullscreenStyle;
+    private int[] fullscreenRestore;
     /** Windows 11 (the system rounds frameless windows and shows snap layouts); decided when the window is created. */
     private boolean snapLayouts;
     private MemorySegment snapOverlay = MemorySegment.NULL;
@@ -368,7 +372,79 @@ public CompletableFuture<String> eval(String script) {
         }
         boolean maximized = Win32.isZoomed(hwnd);
         sentMaximized = maximized;
-        eval(FrameProtocol.stateScript(maximized, active)).exceptionally(t -> null);
+        eval(FrameProtocol.stateScript(maximized, active, fullscreen)).exceptionally(t -> null);
+    }
+
+    // ---- full screen ----
+
+    @Override
+    public void setFullscreen(boolean on) {
+        app.dispatch(() -> {
+            if (!destroyed) {
+                applyFullscreen(on);
+            }
+        });
+    }
+
+    @Override
+    public void toggleFullscreen() {
+        setFullscreen(!fullscreen);
+    }
+
+    @Override
+    public boolean isFullscreen() {
+        return fullscreen;
+    }
+
+    /**
+     * Full screen is a window with no caption and no sizing frame placed over the whole monitor (the taskbar included), so
+     * Windows hides the taskbar for it. What the window looked like is kept and put back. UI thread.
+     */
+    private void applyFullscreen(boolean on) {
+        if (on == fullscreen) {
+            return;
+        }
+        if (on) {
+            fullscreenWasMaximized = maximizeOnFirstShow || Win32.isZoomed(hwnd);
+            maximizeOnFirstShow = false;
+            if (Win32.isZoomed(hwnd)) {
+                Win32.showWindow(hwnd, Win32.SW_RESTORE); // so the rectangle saved below is the normal one
+            }
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment rect = arena.allocate(Win32.RECT);
+                Win32.getWindowRect(hwnd, rect);
+                fullscreenRestore = new int[] {rect.get(JAVA_INT, 0), rect.get(JAVA_INT, 4),
+                        rect.get(JAVA_INT, 8) - rect.get(JAVA_INT, 0), rect.get(JAVA_INT, 12) - rect.get(JAVA_INT, 4)};
+            }
+            int[] monitor = Win32.monitorRectOf(hwnd);
+            if (monitor == null) {
+                return;
+            }
+            fullscreenStyle = Win32.windowStyle(hwnd);
+            fullscreen = true; // before the size changes: WM_GETMINMAXINFO reads it
+            if (!options.frameless()) {
+                Win32.setWindowStyle(hwnd, fullscreenStyle & ~(long) (Win32.WS_CAPTION | Win32.WS_THICKFRAME));
+            }
+            Win32.dwmSetAttribute(hwnd, Win32.DWMWA_WINDOW_CORNER_PREFERENCE, Win32.DWMWCP_DONOTROUND);
+            Win32.placeOnTop(hwnd, monitor[0], monitor[1], monitor[2] - monitor[0], monitor[3] - monitor[1]);
+        } else {
+            fullscreen = false;
+            if (!options.frameless()) {
+                Win32.setWindowStyle(hwnd, fullscreenStyle);
+            }
+            Win32.dwmSetAttribute(hwnd, Win32.DWMWA_WINDOW_CORNER_PREFERENCE, options.frameless() && snapLayouts ? Win32.DWMWCP_ROUND : 0);
+            int[] at = fullscreenRestore;
+            Win32.placeOnTop(hwnd, at[0], at[1], at[2], at[3]);
+            if (fullscreenWasMaximized) {
+                if (Win32.isWindowVisible(hwnd)) {
+                    Win32.showWindow(hwnd, Win32.SW_SHOWMAXIMIZED);
+                } else {
+                    maximizeOnFirstShow = true;
+                }
+            }
+        }
+        resizeWebView();
+        pushFrameState();
     }
 
     @Override
@@ -650,6 +726,18 @@ public CompletableFuture<String> eval(String script) {
                 return null; // the system still moves the focus
             }
             case Win32.WM_GETMINMAXINFO -> {
+                if (fullscreen) {
+                    // Windows would clamp a window to the primary monitor's size plus its frame; full screen may be on a bigger one.
+                    int[] monitor = Win32.monitorRectOf(hwnd);
+                    if (monitor != null) {
+                        MemorySegment info = MemorySegment.ofAddress(lParam).reinterpret(40); // MINMAXINFO: five POINTs
+                        info.set(JAVA_INT, 8, monitor[2] - monitor[0]);
+                        info.set(JAVA_INT, 12, monitor[3] - monitor[1]);
+                        info.set(JAVA_INT, 32, monitor[2] - monitor[0]);
+                        info.set(JAVA_INT, 36, monitor[3] - monitor[1]);
+                        return 0L;
+                    }
+                }
                 if (options.minWidth() == 0 && options.minHeight() == 0) {
                     return null;
                 }
