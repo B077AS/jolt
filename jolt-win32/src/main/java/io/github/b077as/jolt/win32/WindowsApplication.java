@@ -94,9 +94,10 @@ final class WindowsApplication implements Application {
         Throwable startFailure = null;
         try {
             Win32.setPerMonitorDpiAwareness(); // fails harmlessly if the process already chose a mode
-            int hr = Win32.coInitializeEx(Win32.COINIT_APARTMENTTHREADED);
+            // OleInitialize rather than CoInitializeEx: it also makes the web view's drag and drop (and our own drag out) work
+            int hr = Win32.oleInitialize();
             if (hr < 0) {
-                throw new JoltException("CoInitializeEx failed: " + Com.hex(hr)
+                throw new JoltException("OleInitialize failed: " + Com.hex(hr)
                         + " (the UI thread must be a single-threaded apartment)");
             }
             comInitialized = true;
@@ -428,7 +429,7 @@ final class WindowsApplication implements Application {
             }
         } finally {
             if (comInitialized) {
-                Win32.coUninitialize();
+                Win32.oleUninitialize();
             }
         }
     }

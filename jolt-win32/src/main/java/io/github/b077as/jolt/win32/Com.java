@@ -40,6 +40,8 @@ final class Com {
     static final FunctionDescriptor HR_PTR_PTR_PTR = FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS, ADDRESS);
     /** {@code HRESULT m(this, void* a, int b)}: {@code AddWebResourceRequestedFilter(uri, context)}. */
     static final FunctionDescriptor HR_PTR_INT = FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT);
+    /** {@code HRESULT m(this, UINT32 index, void* out)}: {@code GetValueAtIndex}. */
+    static final FunctionDescriptor HR_INT_PTR = FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT, ADDRESS);
     /** {@code CreateWebResourceResponse(IStream* content, int status, LPCWSTR reason, LPCWSTR headers, response**)}. */
     static final FunctionDescriptor HR_RESPONSE =
             FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT, ADDRESS, ADDRESS, ADDRESS);

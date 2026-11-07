@@ -173,6 +173,59 @@ public interface WebWindow {
         io.github.b077as.jolt.internal.PageWindows.enable(this, app, opener);
     }
 
+    /**
+     * Calls {@code listener} when the user drops files or folders from the file manager onto this window, with their paths. A web
+     * page is never told where its files live, so this is the way to get them: the page marks drop areas with
+     * {@code data-jolt-drop="name"} and the listener learns which one the files landed on ({@link FileDrop#zone()}).
+     *
+     * <pre>{@code
+     * window.onFileDrop(drop -> {
+     *     if ("avatar".equals(drop.zone())) setAvatar(drop.files().get(0));
+     *     else addAttachments(drop.files());
+     * });
+     * }</pre>
+     * <pre>{@code
+     * <div data-jolt-drop="avatar">Drop a picture here</div>
+     * <style>
+     *   [data-jolt-drop-over] { outline: 2px dashed dodgerblue; }
+     *   html[data-jolt-drop-active] body { cursor: copy; }
+     * </style>
+     * }</pre>
+     * {@code data-jolt-drop-over} is set on the area under the pointer while files are dragged over it, and
+     * {@code data-jolt-drop-active} on {@code <html>} while they are over the window at all. Once this is called the web view never navigates to a dropped file, wherever it lands. Register the first listener before the
+     * page loads. Only pages whose origin the {@link SecurityPolicy} trusts take part, and every path is checked: it must be
+     * absolute and local (no {@code \\server\share}), and the files must be the ones the platform reported, not ones the page
+     * named. The listener runs on the UI thread; several listeners may be registered.
+     *
+     * <p>The page's own {@code dragover}/{@code drop} handlers still run, so a page can show a preview with {@code FileReader}
+     * as well. Dragging files <em>out</em> of the window is {@link #setFileDragSource}.
+     */
+    default void onFileDrop(Consumer<FileDrop> listener) {
+        io.github.b077as.jolt.internal.PageFileDrop.enable(this, listener);
+    }
+
+    /**
+     * Lets the user drag files out of this window's page into the file manager, the desktop or another application. The page marks
+     * what can be dragged with {@code data-jolt-drag-file="token"} on a {@code draggable} element; when the user starts dragging it,
+     * {@code source} is asked which files that token stands for. The page never names a file or learns a path.
+     *
+     * <pre>{@code
+     * window.setFileDragSource(token -> token.startsWith("attachment:")
+     *         ? List.of(store.fileOf(token.substring("attachment:".length())))
+     *         : null);                                     // null or empty: no drag
+     * }</pre>
+     * <pre>{@code
+     * <li draggable="true" data-jolt-drag-file="attachment:42">report.pdf</li>
+     * }</pre>
+     * The target can only copy the files, never move them. Only pages whose origin the {@link SecurityPolicy} trusts can start a
+     * drag, and only while the user is dragging. Call it before the page loads; calling it again replaces the source. The web view's
+     * own drag of that element is cancelled, so the element's {@code dragstart} handlers still run but nothing from the page ends
+     * up on the system's drag.
+     */
+    default void setFileDragSource(FileDragSource source) {
+        io.github.b077as.jolt.internal.PageFileDrag.enable(this, source);
+    }
+
     /** Opens a {@link BinaryChannel} with the default {@link ChannelOptions}. */
     default BinaryChannel openChannel(String name) {
         return openChannel(name, ChannelOptions.defaults());

@@ -6,6 +6,35 @@ this file says when they do.
 
 The latest version is the one on [Maven Central](https://central.sonatype.com/artifact/io.github.b077as/jolt-core).
 
+## Unreleased
+
+### Added
+- **Dropping files onto a window: `WebWindow.onFileDrop(listener)`.** The listener gets a `FileDrop`: the absolute local paths of the
+  dropped files and folders, the `zone` (the `data-jolt-drop` value of the element they landed on, so one window can have several drop
+  areas) and the pointer position in page pixels. While files are dragged over the page, `<html>` gets `data-jolt-drop-active` and the
+  area under the pointer `data-jolt-drop-over`, for CSS. Once it is used the web view never navigates to a dropped file. A page is never
+  told a file's location, so the path comes from the platform (WebView2 attaches the dropped `File` objects to the page's message;
+  WebKitGTK reports the drag to the window) and the page only adds the names and the zone; a message whose names do not match the
+  platform's files is ignored, and paths must be absolute and local (no `\\server\share`), so a page cannot make up a file.
+- **Dragging files out of a window: `WebWindow.setFileDragSource(FileDragSource)`.** A `draggable` element with `data-jolt-drag-file="token"`
+  starts an operating-system drag of the files your `FileDragSource.filesFor(token)` returns (null or empty refuses); the page never names a
+  file. Targets can only copy, so the original is never moved. `finished(token, dropped)` tells you how it ended (to delete a temporary file).
+  Windows uses the shell's drag loop and data object; Linux offers a `text/uri-list` through GTK.
+
+### Changed
+- Windows: the UI thread is now initialised with `OleInitialize` instead of `CoInitializeEx` (it does the same and also sets up what
+  drag and drop needs).
+- `WebView2Abi` was regenerated with three more interfaces (`ICoreWebView2WebMessageReceivedEventArgs2`, `ICoreWebView2ObjectCollectionView`,
+  `ICoreWebView2File`); nothing else in it changed.
+
+### Not yet verified
+- **Linux, both directions: compiled, not run** (Docker was not available). `drag-data-received` / `drag-drop` on the web view are expected to
+  deliver the file list of a drop from another program, and `gtk_drag_begin_with_coordinates` with no event is expected to start a drag while
+  the button is held; neither has been tried on X11 or Wayland, and WebKitGTK's own handling of those signals may differ. The shared contract
+  tests (`aWindowWithFileDrop*`, `forgedFileDrop*`) have only run on Windows.
+- How the drag looks (drag image, cursor) on either system, a drop from a real Explorer/Nautilus window (Windows tests drag from the window
+  itself with injected mouse input), dropping folders, dropping thousands of files, a window on a screen with display scaling other than 100%.
+
 ## 0.4.0 - 2026-11-07
 
 ### Added

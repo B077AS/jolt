@@ -58,6 +58,16 @@ final class Callbacks {
     static final MemorySegment CLIPBOARD_CLEAR;
     /** {@code owner-change} on the clipboard: user_data is the clipboard's registry id. */
     static final MemorySegment CLIPBOARD_OWNER_CHANGE;
+    /** {@code drag-data-received} on the web view: something is being dragged over it and GTK delivers its data; user_data is the window id. */
+    static final MemorySegment DRAG_DATA_RECEIVED;
+    /** {@code drag-drop} on the web view: the user let go; returns FALSE so WebKit handles it too; user_data is the window id. */
+    static final MemorySegment DRAG_DROP;
+    /** {@code drag-data-get} on the web view: a drag target wants the data of our drag out; user_data is the window id. */
+    static final MemorySegment DRAG_DATA_GET;
+    /** {@code drag-end} on the web view: our drag out is over; user_data is the window id. */
+    static final MemorySegment DRAG_END;
+    /** {@code drag-failed} on the web view: our drag out was cancelled or dropped nowhere; returns FALSE; user_data is the window id. */
+    static final MemorySegment DRAG_FAILED;
     /** {@code GLogFunc}: drops {@link Gtk#KNOWN_NOISE}, prints everything else as GLib would. */
     static final MemorySegment LOG;
 
@@ -116,6 +126,23 @@ final class Callbacks {
         CLIPBOARD_OWNER_CHANGE = stub(lookup, forever, "onClipboardOwnerChange",
                 MethodType.methodType(void.class, MemorySegment.class, MemorySegment.class, MemorySegment.class),
                 FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, ADDRESS), 0);
+        DRAG_DATA_RECEIVED = stub(lookup, forever, "onDragDataReceived",
+                MethodType.methodType(void.class, MemorySegment.class, MemorySegment.class, int.class, int.class, MemorySegment.class,
+                        int.class, int.class, MemorySegment.class),
+                FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, JAVA_INT, JAVA_INT, ADDRESS, JAVA_INT, JAVA_INT, ADDRESS), 0);
+        DRAG_DROP = stub(lookup, forever, "onDragDrop",
+                MethodType.methodType(int.class, MemorySegment.class, MemorySegment.class, int.class, int.class, int.class, MemorySegment.class),
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT, JAVA_INT, JAVA_INT, ADDRESS), 0);
+        DRAG_DATA_GET = stub(lookup, forever, "onDragDataGet",
+                MethodType.methodType(void.class, MemorySegment.class, MemorySegment.class, MemorySegment.class, int.class, int.class,
+                        MemorySegment.class),
+                FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, ADDRESS, JAVA_INT, JAVA_INT, ADDRESS), 0);
+        DRAG_END = stub(lookup, forever, "onDragEnd",
+                MethodType.methodType(void.class, MemorySegment.class, MemorySegment.class, MemorySegment.class),
+                FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, ADDRESS), 0);
+        DRAG_FAILED = stub(lookup, forever, "onDragFailed",
+                MethodType.methodType(int.class, MemorySegment.class, MemorySegment.class, int.class, MemorySegment.class),
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT, ADDRESS), 0);
         LOG = stub(lookup, forever, "onLog",
                 MethodType.methodType(void.class, MemorySegment.class, int.class, MemorySegment.class, MemorySegment.class),
                 FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT, ADDRESS, ADDRESS), 0);
@@ -259,6 +286,45 @@ final class Callbacks {
         if (board != null) {
             board.onOwnerChange();
         }
+    }
+
+    private static void onDragDataReceived(MemorySegment widget, MemorySegment context, int x, int y, MemorySegment selection,
+                                           int info, int time, MemorySegment data) {
+        LinuxWindow window = Registry.get(data.address(), LinuxWindow.class);
+        if (window != null) {
+            window.onDragDataReceived(context, selection);
+        }
+    }
+
+    private static int onDragDrop(MemorySegment widget, MemorySegment context, int x, int y, int time, MemorySegment data) {
+        LinuxWindow window = Registry.get(data.address(), LinuxWindow.class);
+        if (window != null) {
+            window.onDragDrop(context);
+        }
+        return 0; // FALSE: WebKit handles the drop too
+    }
+
+    private static void onDragDataGet(MemorySegment widget, MemorySegment context, MemorySegment selection, int info, int time,
+                                      MemorySegment data) {
+        LinuxWindow window = Registry.get(data.address(), LinuxWindow.class);
+        if (window != null) {
+            window.onDragDataGet(selection);
+        }
+    }
+
+    private static void onDragEnd(MemorySegment widget, MemorySegment context, MemorySegment data) {
+        LinuxWindow window = Registry.get(data.address(), LinuxWindow.class);
+        if (window != null) {
+            window.onDragEnd();
+        }
+    }
+
+    private static int onDragFailed(MemorySegment widget, MemorySegment context, int result, MemorySegment data) {
+        LinuxWindow window = Registry.get(data.address(), LinuxWindow.class);
+        if (window != null) {
+            window.onDragFailed();
+        }
+        return 0; // FALSE: GTK shows its usual "snap back"
     }
 
     private static void onLog(MemorySegment domain, int level, MemorySegment message, MemorySegment data) {

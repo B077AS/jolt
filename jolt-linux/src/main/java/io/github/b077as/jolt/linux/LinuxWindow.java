@@ -11,16 +11,25 @@ import io.github.b077as.jolt.WindowClosedException;
 import io.github.b077as.jolt.WindowOptions;
 import io.github.b077as.jolt.internal.BlobBodyShim;
 import io.github.b077as.jolt.internal.BridgeScript;
+import io.github.b077as.jolt.internal.ClipboardData;
+import io.github.b077as.jolt.internal.FileDragProtocol;
+import io.github.b077as.jolt.internal.FileDropProtocol;
 import io.github.b077as.jolt.internal.FrameProtocol;
 import io.github.b077as.jolt.internal.FrameScript;
 import io.github.b077as.jolt.internal.NativeDialogHost;
+import io.github.b077as.jolt.internal.NativeFileDragHost;
+import io.github.b077as.jolt.internal.PageFileDrag;
+import io.github.b077as.jolt.internal.PageFileDrop;
 import io.github.b077as.jolt.internal.NativeResourceHost;
 import io.github.b077as.jolt.internal.ResourceService;
 import io.github.b077as.jolt.internal.SecurityGuard;
 
 import java.lang.foreign.MemorySegment;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -32,7 +41,7 @@ import java.util.function.Consumer;
  * <p>Public methods may be called from any thread; they hop to the UI thread. Unlike WebView2, WebKitGTK creates
  * the web view synchronously, so the window is ready as soon as the constructor returns.
  */
-final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHost, FrameProtocol.Host {
+final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHost, NativeFileDragHost, FrameProtocol.Host {
 
     private static final System.Logger LOG = System.getLogger("io.github.b077as.jolt.linux");
     /** Name of the {@code window.webkit.messageHandlers.<name>} channel; must match the bridge script. */
@@ -115,6 +124,11 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
         Gtk.connect(webView, "close", Callbacks.WEB_VIEW_CLOSE, key);
         Gtk.connect(webView, "decide-policy", Callbacks.DECIDE_POLICY, key);
         Gtk.connect(webView, "permission-request", Callbacks.PERMISSION_REQUEST, key);
+        Gtk.connect(webView, "drag-data-received", Callbacks.DRAG_DATA_RECEIVED, key);
+        Gtk.connect(webView, "drag-drop", Callbacks.DRAG_DROP, key);
+        Gtk.connect(webView, "drag-data-get", Callbacks.DRAG_DATA_GET, key);
+        Gtk.connect(webView, "drag-end", Callbacks.DRAG_END, key);
+        Gtk.connect(webView, "drag-failed", Callbacks.DRAG_FAILED, key);
         if (!options.devTools()) {
             Gtk.connect(webView, "context-menu", Callbacks.CONTEXT_MENU, key);
         }
@@ -618,6 +632,103 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
         return true;
     }
 
+    // ---- files dropped on the window and dragged out of it (UI thread) ----
+    //
+    // WebKitGTK never tells a page where a dropped file lives, but GTK tells the web view widget: while a drag from another program is
+    // over it, "drag-data-received" delivers the text/uri-list; at the drop, "drag-drop" fires. The page's own "drop" event then sends
+    // the file names and the drop zone (FileDropScript), and FileDropProtocol checks the two agree.
+
+    /** Longest uri-list read from a drag; a hostile source could offer anything. */
+    private static final int MAX_URI_LIST_BYTES = 4 * 1024 * 1024;
+    /** How long after the drop the page's message may take to arrive. */
+    private static final long DROP_MESSAGE_WINDOW_NANOS = 10_000_000_000L;
+    /** How long after the drop a late delivery of the drag data still counts as part of it. */
+    private static final long LATE_DATA_NANOS = 1_000_000_000L;
+
+    /** What the drag over the window currently offers, from another program. */
+    private List<Path> offeredFiles = List.of();
+    /** What was dropped, until the page's message claims it. */
+    private List<Path> droppedFiles = List.of();
+    private long droppedAtNanos;
+    /** Files of a drag out that is under way (set between {@link #beginFileDrag} and the end of the drag), and who to tell. */
+    private List<Path> dragOutFiles;
+    private Consumer<Boolean> dragOutFinished;
+    private boolean dragOutFailed;
+
+    void onDragDataReceived(MemorySegment context, MemorySegment selection) {
+        if (destroyed || !PageFileDrop.isEnabled(this) || !GtkDragDrop.isExternal(context)
+                || !GtkDragDrop.URI_LIST.equals(GtkDragDrop.targetName(selection))) {
+            return;
+        }
+        byte[] bytes = GtkDragDrop.data(selection, MAX_URI_LIST_BYTES);
+        List<Path> files = bytes == null ? List.of() : ClipboardData.parseUriList(new String(bytes, StandardCharsets.UTF_8));
+        offeredFiles = files;
+        if (System.nanoTime() - droppedAtNanos < LATE_DATA_NANOS) {
+            droppedFiles = files;
+        }
+    }
+
+    void onDragDrop(MemorySegment context) {
+        if (destroyed || !PageFileDrop.isEnabled(this)) {
+            return;
+        }
+        // a drag that started in this program (a link dragged inside the page, our own drag out) is not a drop from the file manager
+        droppedFiles = GtkDragDrop.isExternal(context) ? offeredFiles : List.of();
+        droppedAtNanos = System.nanoTime();
+        offeredFiles = List.of();
+    }
+
+    /** The files of the last drop, once: what the page's message is checked against. */
+    private List<Path> takeDroppedFiles() {
+        List<Path> files = System.nanoTime() - droppedAtNanos <= DROP_MESSAGE_WINDOW_NANOS ? droppedFiles : List.of();
+        droppedFiles = List.of();
+        return files;
+    }
+
+    @Override
+    public boolean beginFileDrag(List<Path> files, Consumer<Boolean> finished) {
+        if (destroyed || dragOutFiles != null) {
+            return false;
+        }
+        dragOutFiles = files;
+        dragOutFinished = finished;
+        dragOutFailed = false;
+        if (!GtkDragDrop.begin(webView)) {
+            dragOutFiles = null;
+            dragOutFinished = null;
+            return false;
+        }
+        return true;
+    }
+
+    void onDragDataGet(MemorySegment selection) {
+        List<Path> files = dragOutFiles;
+        if (files != null) { // otherwise it is one of WebKit's own drags
+            GtkDragDrop.setUriList(selection, ClipboardData.uriList(files).getBytes(StandardCharsets.UTF_8));
+        }
+    }
+
+    void onDragFailed() {
+        if (dragOutFiles != null) {
+            dragOutFailed = true;
+        }
+    }
+
+    void onDragEnd() {
+        finishDragOut(!dragOutFailed);
+    }
+
+    private void finishDragOut(boolean dropped) {
+        Consumer<Boolean> finished = dragOutFinished;
+        boolean ours = dragOutFiles != null;
+        dragOutFiles = null;
+        dragOutFinished = null;
+        dragOutFailed = false;
+        if (ours && finished != null) {
+            finished.accept(dropped);
+        }
+    }
+
     void onScriptMessage(String text) {
         if (text == null || destroyed) {
             return;
@@ -632,6 +743,14 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
                 FrameProtocol.handle(text, this);
             }
             return; // never reaches the application, frameless or not
+        }
+        if (FileDropProtocol.isDropMessage(text)) {
+            PageFileDrop.deliver(this, text, takeDroppedFiles());
+            return; // never reaches the application's message listeners
+        }
+        if (FileDragProtocol.isDragMessage(text)) {
+            PageFileDrag.handle(this, text);
+            return;
         }
         for (Consumer<String> listener : messageListeners) {
             try {
@@ -679,6 +798,7 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
             return;
         }
         destroyed = true;
+        finishDragOut(false); // a drag out that never got to end
         WindowClosedException closed = new WindowClosedException();
         for (CompletableFuture<?> future : new ArrayList<>(inflight)) {
             future.completeExceptionally(closed);

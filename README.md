@@ -206,6 +206,54 @@ const saved = await jolt.saveAs(blobOrBytesOrText, { name: "report.pdf", filters
 The data is written to a temporary file and moved into place when complete. Only trusted origins may use it, and on Linux the page
 must come from `loadResources`.
 
+### Dragging files in and out
+
+A page is never told where a file lives, so a dropped file would be a name and some bytes. Jolt gives the **path** to Java instead
+(available in the release after 0.4.0).
+
+**Drop files onto the window** (from Explorer, Nautilus, the desktop):
+
+```java
+window.onFileDrop(drop -> {                         // UI thread; register before the page loads
+    if ("avatar".equals(drop.zone())) setAvatar(drop.files().get(0));
+    else addAttachments(drop.files());               // absolute local paths, files or folders
+});
+```
+
+```html
+<div data-jolt-drop="avatar">Drop a picture here</div>
+<style>
+  [data-jolt-drop-over] { outline: 2px dashed dodgerblue; }        /* the area under the pointer */
+  html[data-jolt-drop-active] body { cursor: copy; }               /* files are being dragged over the window */
+</style>
+```
+
+`zone` is the `data-jolt-drop` value of the element the files landed on (`null` outside every such element), `x` and `y` are
+where the pointer was in page pixels. Once `onFileDrop` is registered the web view never navigates to a dropped file, and the page's
+own `drop` handlers still run (so it can show a preview with `FileReader`). Every path must be absolute and local (a
+`\\server\share` path is refused, as for the clipboard) and the files must be the ones the system reported: the page only adds the
+names and the drop zone, and a message that does not match is ignored, so a page cannot name a file of its own.
+
+**Drag files out of the window** into the file manager or another application:
+
+```java
+window.setFileDragSource(token -> token.startsWith("attachment:")
+        ? List.of(store.fileOf(token.substring("attachment:".length())))   // absolute paths of files that exist
+        : null);                                                           // null or empty: no drag
+// optional: implement FileDragSource.finished(token, dropped) to delete a temporary file afterwards
+```
+
+```html
+<li draggable="true" data-jolt-drag-file="attachment:42">report.pdf</li>
+```
+
+The page only hands over the token you put in the attribute; **you** decide which files it stands for, so a page cannot drag
+out an arbitrary file. The target can only **copy** (a drop on a folder never moves your original). The source is asked on the UI
+thread the moment the drag starts, so write a file that does not exist yet before the user can start dragging it.
+
+Windows uses the shell's own drag loop and data object (what Explorer offers for the same files); Linux offers a `text/uri-list` through
+GTK. Needs the WebView2 runtime that supports `postMessageWithAdditionalObjects` (any current one) for dropping in.
+
 ### System notifications
 
 Show a toast from Java (since 0.3.0): WinRT on Windows, the desktop's notification service on Linux.
