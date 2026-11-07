@@ -73,7 +73,7 @@ Add the API and both backends; each one only activates on its own OS.
 ```xml
 <properties>
   <maven.compiler.release>25</maven.compiler.release>
-  <jolt.version>0.3.3</jolt.version>
+  <jolt.version>0.4.0</jolt.version>
 </properties>
 
 <dependencies>
@@ -98,9 +98,9 @@ Add the API and both backends; each one only activates on its own OS.
 Gradle:
 
 ```kotlin
-implementation("io.github.b077as:jolt-core:0.3.3")
-implementation("io.github.b077as:jolt-win32:0.3.3")
-implementation("io.github.b077as:jolt-linux:0.3.3")
+implementation("io.github.b077as:jolt-core:0.4.0")
+implementation("io.github.b077as:jolt-win32:0.4.0")
+implementation("io.github.b077as:jolt-linux:0.4.0")
 ```
 
 Run Java with `--enable-native-access=ALL-UNNAMED`, or put `Enable-Native-Access: ALL-UNNAMED` in your jar manifest
@@ -392,6 +392,43 @@ Available since **0.3.0**.
   window manager does; on Wayland, moving and resizing needs a compositor that accepts the request.
 - Frame commands only work on windows created `frameless`, and only for pages the `SecurityPolicy` trusts like any other message.
 
+#### A ready-made title bar
+
+Instead of writing the buttons yourself, mark the bar with `data-jolt-titlebar`:
+
+```html
+<style>
+  header { display: flex; align-items: center; height: 32px; padding-left: 12px;
+           background: #161616; color: #ddd;
+           --jolt-caption-hover-bg: #2a2a2a;      /* hover colour of minimize and maximize */
+           --jolt-close-hover-bg: #e5484d;        /* the close button; red by default */
+           --jolt-maximize-fg: #7aa2f7; }         /* one button on its own */
+</style>
+<header data-jolt-titlebar><span>Parsel</span></header>   <!-- a dialog: data-jolt-titlebar="close" -->
+```
+
+The bar moves the window; minimize, maximize/restore and close are added at its right end, so make the bar `display: flex`.
+Colours are CSS custom properties: `--jolt-caption-{fg,bg,hover-fg,hover-bg,active-fg,active-bg}` for all buttons, or
+`--jolt-{minimize,maximize,close}-{...}` for one (the specific one wins). Also `--jolt-caption-width` (46px), `--jolt-caption-icon`
+(10px) and `--jolt-caption-inactive-opacity` (.55). The buttons are in a shadow root, so page CSS cannot break them.
+
+The window tells the page what state it is in, which you can use with or without the kit:
+
+- `<html data-jolt-maximized>` while maximized, `<html data-jolt-inactive>` while the window is not the one in front,
+  `<html data-jolt-platform="windows|linux">` (for example to hide a rounded corner while maximized:
+  `html[data-jolt-maximized] header { border-radius: 0 }`).
+- Full screen from Java: `window.setFullscreen(true)` / `window.isFullscreen()`. A frameless page can use `jolt.frame.setFullscreen(true)`,
+  `jolt.frame.toggleFullscreen()` and `jolt.frame.isFullscreen()`; `<html data-jolt-fullscreen>` is set while it is on.
+- `jolt.frame.isMaximized()`, `jolt.frame.isFocused()`, and `const stop = jolt.frame.onChange(({maximized, focused}) => ...)`.
+
+On **Windows 11**, resting the pointer on the maximize button shows the snap layouts. For that Jolt reports the button's position to the window
+(the kit's button, or any element you mark `data-jolt-maximize`) and puts a nearly invisible child window over it. While it is there the
+page gets no pointer events for that button, so Jolt sets `data-jolt-hover` and `data-jolt-pressed` on your element instead; style
+`[data-jolt-maximize][data-jolt-hover]` as you would `:hover`. Clicks still maximize through the window itself. On Windows 10 and Linux
+nothing is added and the button works as an ordinary button. Also on Windows, right-clicking a drag region or the title bar opens the system
+window menu (`jolt.frame.menu()` does it from code). Linux has no snap layouts, no window menu on right click, and no shadow or rounded
+corners for frameless windows; whether those exist depends on the window manager. The snap flyout and the look of the kit were not checked by eye.
+
 ## Tray icon, close to tray, start with the computer
 
 Available since **0.3.0**.
@@ -465,7 +502,7 @@ The page can call everything you register with `onMessage`, so each window has a
 | Navigation lock | Links, redirects, frames and `loadUrl` to an untrusted origin are cancelled | `withLockNavigation` |
 | Message check | Messages from an untrusted page never reach `onMessage` | `withRestrictMessages` |
 | New windows | `window.open` and `target=_blank` are refused | `withBlockNewWindows` |
-| Permissions | Camera, microphone, location and similar are denied | `withDenyPermissions` |
+| Permissions | Camera, microphone, location and similar are denied | `withDenyPermissions`; allow microphone/camera for your own pages with `withGrantedPermissions(Permission.MICROPHONE)` |
 | Bridge in frames | `window.jolt` exists only in the top-level page | `withBridgeInSubframes` |
 
 ```java

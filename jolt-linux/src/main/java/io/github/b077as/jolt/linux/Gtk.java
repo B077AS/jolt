@@ -70,6 +70,8 @@ final class Gtk {
     private static final MethodHandle GTK_WINDOW_RESIZE = h(GTK, "gtk_window_resize", FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT, JAVA_INT));
     private static final MethodHandle GTK_WINDOW_MAXIMIZE = h(GTK, "gtk_window_maximize", FunctionDescriptor.ofVoid(ADDRESS));
     private static final MethodHandle GTK_WINDOW_UNMAXIMIZE = h(GTK, "gtk_window_unmaximize", FunctionDescriptor.ofVoid(ADDRESS));
+    private static final MethodHandle GTK_WINDOW_FULLSCREEN = h(GTK, "gtk_window_fullscreen", FunctionDescriptor.ofVoid(ADDRESS));
+    private static final MethodHandle GTK_WINDOW_UNFULLSCREEN = h(GTK, "gtk_window_unfullscreen", FunctionDescriptor.ofVoid(ADDRESS));
     private static final MethodHandle GTK_WINDOW_SET_DECORATED = h(GTK, "gtk_window_set_decorated", FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT));
     private static final MethodHandle GTK_WINDOW_CLOSE = h(GTK, "gtk_window_close", FunctionDescriptor.ofVoid(ADDRESS));
     private static final MethodHandle GTK_WINDOW_GET_DECORATED = h(GTK, "gtk_window_get_decorated", FunctionDescriptor.of(JAVA_INT, ADDRESS));
@@ -392,6 +394,14 @@ final class Gtk {
 
     static void windowUnmaximize(MemorySegment window) {
         call(GTK_WINDOW_UNMAXIMIZE, window);
+    }
+
+    static void windowFullscreen(MemorySegment window) {
+        call(GTK_WINDOW_FULLSCREEN, window);
+    }
+
+    static void windowUnfullscreen(MemorySegment window) {
+        call(GTK_WINDOW_UNFULLSCREEN, window);
     }
 
     /** The window's {x, y, width, height} and the screen's {width, height}, as one array of six. For tests (X11 only: Wayland has no positions). */

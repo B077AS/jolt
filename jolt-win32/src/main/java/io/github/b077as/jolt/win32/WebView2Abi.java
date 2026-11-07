@@ -302,6 +302,25 @@ final class WebView2Abi {
         private ICoreWebView2PermissionRequestedEventArgs() {}
     }
 
+    /** {@code ICoreWebView2PermissionRequestedEventArgs3}, 13 vtable slots. */
+    static final class ICoreWebView2PermissionRequestedEventArgs3 {
+        static final String IID = "e61670bc-3dce-4177-86d2-c629ae3cb6ac";
+        static final int QUERY_INTERFACE = 0;
+        static final int ADD_REF = 1;
+        static final int RELEASE = 2;
+        static final int GET_URI = 3;
+        static final int GET_PERMISSION_KIND = 4;
+        static final int GET_IS_USER_INITIATED = 5;
+        static final int GET_STATE = 6;
+        static final int PUT_STATE = 7;
+        static final int GET_DEFERRAL = 8;
+        static final int GET_HANDLED = 9;
+        static final int PUT_HANDLED = 10;
+        static final int GET_SAVES_IN_PROFILE = 11;
+        static final int PUT_SAVES_IN_PROFILE = 12;
+        private ICoreWebView2PermissionRequestedEventArgs3() {}
+    }
+
     /** {@code ICoreWebView2PermissionRequestedEventHandler}, 4 vtable slots. */
     static final class ICoreWebView2PermissionRequestedEventHandler {
         static final String IID = "15e1c6a3-c72a-4df3-91d7-d097fbec6bfd";

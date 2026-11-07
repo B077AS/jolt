@@ -1,5 +1,6 @@
 package io.github.b077as.jolt.linux;
 
+import io.github.b077as.jolt.Permission;
 import io.github.b077as.jolt.BlockedEvent;
 import io.github.b077as.jolt.CloseBehavior;
 import io.github.b077as.jolt.ColorScheme;
@@ -60,6 +61,10 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
     private volatile boolean maximizeWhenShown;
     /** The window manager's word on it, kept up to date by the window-state signal. Readable from any thread. */
     private volatile boolean maximized;
+    /** Asked to be full screen before it was first shown. Readable from any thread. */
+    private volatile boolean fullscreenWhenShown;
+    /** The window manager's word on it, kept up to date by the window-state signal. Readable from any thread. */
+    private volatile boolean fullscreen;
     /** Mirrors of the window's state for callers on other threads; kept up to date on the UI thread. */
     private volatile boolean visible;
     private volatile boolean iconified;
@@ -95,10 +100,11 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
                 subframes ? Gtk.USER_CONTENT_INJECT_ALL_FRAMES : Gtk.USER_CONTENT_INJECT_TOP_FRAME);
         if (options.frameless()) {
             // after the bridge: the frame script talks through window.jolt
-            Gtk.addUserScript(contentManager, FrameScript.build(), Gtk.USER_CONTENT_INJECT_TOP_FRAME);
+            Gtk.addUserScript(contentManager, FrameScript.build("linux"), Gtk.USER_CONTENT_INJECT_TOP_FRAME);
         }
         webView = Gtk.newWebView(app.webContext(), contentManager);
         Gtk.setDeveloperExtras(webView, options.devTools());
+        GtkMedia.enable(webView);
 
         this.id = app.register(this);
         MemorySegment key = MemorySegment.ofAddress(id);
@@ -142,6 +148,7 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
             shown = true;
             visible = true;
             maximizeWhenShown = false; // from here the window manager's state counts
+            fullscreenWhenShown = false;
         }
         ready.complete(null);
     }
@@ -297,6 +304,7 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
                 shown = true;
                 visible = true;
                 maximizeWhenShown = false;
+                fullscreenWhenShown = false;
             }
         });
     }
@@ -384,6 +392,7 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
                 shown = true;
                 visible = true;
                 maximizeWhenShown = false;
+                fullscreenWhenShown = false;
             }
         });
     }
@@ -415,6 +424,40 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
         return maximizeWhenShown || maximized;
     }
 
+    @Override
+    public void setFullscreen(boolean on) {
+        app.dispatch(() -> {
+            if (destroyed) {
+                return;
+            }
+            if (on) {
+                Gtk.windowFullscreen(window); // before the window is shown this sets the state it opens in
+                if (!shown) {
+                    fullscreenWhenShown = true;
+                }
+            } else {
+                fullscreenWhenShown = false;
+                Gtk.windowUnfullscreen(window);
+            }
+        });
+    }
+
+    @Override
+    public void toggleFullscreen() {
+        setFullscreen(!isFullscreen());
+    }
+
+    @Override
+    public boolean isFullscreen() {
+        return fullscreenWhenShown || fullscreen;
+    }
+
+    /** The window-state signal: the window manager made the window full screen or took it out of it. */
+    void onFullscreenChanged(boolean now) {
+        fullscreen = now;
+        pushFrameState();
+    }
+
     /** The window-state signal: the window manager maximized or restored the window. */
     void onIconifiedChanged(boolean nowIconified) {
         iconified = nowIconified;
@@ -423,6 +466,19 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
     /** The window-state signal: the window gained or lost the keyboard focus. */
     void onFocusedChanged(boolean nowFocused) {
         focused = nowFocused;
+        pushFrameState();
+    }
+
+    @Override
+    public void reportState() {
+        pushFrameState();
+    }
+
+    /** Tells a frameless page whether the window is maximized and in front. UI thread. */
+    private void pushFrameState() {
+        if (options.frameless() && !destroyed) {
+            eval(FrameProtocol.stateScript(maximized, focused || !shown, isFullscreen())).exceptionally(t -> null);
+        }
     }
 
     /** The close button was pressed. Returns true to keep the window (it is only hidden). */
@@ -437,6 +493,7 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
 
     void onMaximizedChanged(boolean nowMaximized) {
         maximized = nowMaximized;
+        pushFrameState();
     }
 
     @Override
@@ -532,10 +589,32 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
     }
 
     boolean onPermissionRequest(MemorySegment request) {
-        if (guard.allowPermission(destroyed ? null : Gtk.webViewUri(webView))) {
+        String uri = destroyed ? null : Gtk.webViewUri(webView);
+        if (grantsMedia(request, uri)) {
+            GtkMedia.allow(request);
+            return true;
+        }
+        if (guard.allowPermission(uri)) {
             return false;
         }
         Gtk.denyPermission(request);
+        return true;
+    }
+
+    /** Whether {@code request} is for the microphone/camera and the SecurityPolicy grants all of what it needs to {@code uri}. */
+    private boolean grantsMedia(MemorySegment request, String uri) {
+        if (GtkMedia.isDeviceInfo(request)) {
+            return guard.grants(uri, Permission.MICROPHONE) || guard.grants(uri, Permission.CAMERA);
+        }
+        java.util.Set<Permission> needed = GtkMedia.kindsOf(request);
+        if (needed == null) {
+            return false;
+        }
+        for (Permission p : needed) {
+            if (!guard.grants(uri, p)) {
+                return false;
+            }
+        }
         return true;
     }
 

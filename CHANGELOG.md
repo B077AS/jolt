@@ -6,6 +6,45 @@ this file says when they do.
 
 The latest version is the one on [Maven Central](https://central.sonatype.com/artifact/io.github.b077as/jolt-core).
 
+## 0.4.0 - 2026-11-07
+
+### Added
+- **Custom URL schemes: `Application.urlSchemes()`** (`register(scheme, displayName, command)`, `unregister`, `isRegistered`, and `UrlSchemes.findUrl(args, scheme)`).
+  Makes the operating system start your application for links such as `myapp://invite/ABC`; you choose the scheme. Windows writes `HKCUSoftwareClasses<scheme>`;
+  Linux writes a `.desktop` entry handling `x-scheme-handler/<scheme>` and runs `xdg-mime default`. The link arrives as the last command-line argument, and with
+  `SingleInstance` a running copy receives it from the new launch. Web, mail and file schemes (`http`, `mailto`, ...) are refused. Windows registry round trip and the
+  Linux entry file are tested on both systems; **not tried: a real browser click.**
+- **Microphone and camera for your own pages: `SecurityPolicy.withGrantedPermissions(Permission.MICROPHONE, Permission.CAMERA)`.** Pages
+  of the window's own content (and trusted origins) can then use `getUserMedia`, `enumerateDevices` and the rest of WebRTC while every other
+  permission and every other page stays refused. Before, `getUserMedia` always failed with `NotAllowedError` unless you turned
+  `denyPermissions` off, and on Linux it failed even then. Windows answers the request itself and tells WebView2 not to remember the answer, so
+  changing the policy takes effect; Linux turns on WebKitGTK's `enable-media-stream` and allows the request (a system without those symbols
+  just keeps refusing). Screen capture (`getDisplayMedia`) is not covered. Tested on Windows and Linux (`microphoneAccess*`, `grantedMicrophone*`).
+- **Full screen: `WebWindow.setFullscreen(boolean)` and `isFullscreen()`.** The window covers the whole screen it is on, without title bar,
+  border or taskbar; leaving it brings back the size, position and maximized state it had. The browser's F11 stays disabled, this is the
+  way to do it. A window that is still hidden is full screen when first shown. A frameless page can do the same with
+  `jolt.frame.setFullscreen(true)`, `toggleFullscreen()` and `isFullscreen()`, and sees `data-jolt-fullscreen` on `<html>` (the resize
+  handles hide); `onChange` reports `fullscreen` too. Windows places a frameless-style window over the monitor (taskbar included); Linux
+  uses `gtk_window_fullscreen`, which needs a window manager or compositor that honours it. `WebWindow` gained two abstract methods.
+- **Ready-made title bar for frameless windows.** Put `data-jolt-titlebar` on an element and it becomes a title bar: it moves the window,
+  and the minimize, maximize/restore and close buttons are added at its right end (`data-jolt-titlebar="close"` for just a close button,
+  for dialogs). Their colours are CSS custom properties, so a theme is a few lines of CSS: `--jolt-caption-fg`, `--jolt-caption-bg`,
+  `--jolt-caption-hover-bg`, `--jolt-caption-hover-fg`, `--jolt-caption-active-bg`, `--jolt-caption-active-fg`, `--jolt-caption-width`,
+  `--jolt-caption-icon`, `--jolt-caption-inactive-opacity`, and for one button `--jolt-minimize-*`, `--jolt-maximize-*`,
+  `--jolt-close-*` (the close button is red on hover by default). The buttons live in a shadow root, so page CSS cannot break them.
+  Your own markup with `jolt.frame.minimize()` and friends keeps working as before.
+- **The page now learns its window's state.** `<html>` gets `data-jolt-maximized` while the window is maximized, `data-jolt-inactive`
+  while it is not the window in front, and `data-jolt-platform="windows"` or `"linux"`; `jolt.frame.isMaximized()`,
+  `jolt.frame.isFocused()` and `jolt.frame.onChange(callback)` (returns a function that stops listening) report the same. The kit swaps its
+  maximize icon for restore and dims its buttons while the window is inactive.
+- **Windows 11 snap layouts over your own maximize button.** The maximize button (the kit's, or any element with `data-jolt-maximize`)
+  is reported to the window, which puts a nearly invisible child window over it that answers `HTMAXBUTTON`; that is what makes
+  Windows 11 show its snap layouts when the pointer rests on the button. Because the page then no longer gets the pointer, the window
+  feeds hover and press back as `data-jolt-hover` / `data-jolt-pressed` on your element (the kit styles itself). Windows 10 and Linux
+  ignore this; the button simply works as a button.
+- **Windows: right-clicking a title bar** (`data-jolt-drag` or `data-jolt-titlebar`) opens the system window menu (Restore, Move, Size,
+  Minimize, Maximize, Close); `jolt.frame.menu()` opens it from code. Frameless windows are also rounded explicitly on Windows 11.
+
 ## 0.3.3 - 2026-11-06
 
 ### Added

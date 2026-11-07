@@ -741,6 +741,158 @@ final class Win32 {
         }
     }
 
+    // ---- full screen ----
+
+    static final int GWL_STYLE = -16;
+    static final int WS_CAPTION = 0x00C00000;
+    static final int DWMWCP_DONOTROUND = 1;
+    private static final MethodHandle GET_WINDOW_LONG_PTR = Native.downcall(USER32, "GetWindowLongPtrW",
+            FunctionDescriptor.of(JAVA_LONG, ADDRESS, JAVA_INT));
+    private static final MethodHandle SET_WINDOW_LONG_PTR = Native.downcall(USER32, "SetWindowLongPtrW",
+            FunctionDescriptor.of(JAVA_LONG, ADDRESS, JAVA_INT, JAVA_LONG));
+
+    static long windowStyle(MemorySegment hwnd) {
+        try {
+            return (long) GET_WINDOW_LONG_PTR.invokeExact(hwnd, GWL_STYLE);
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    static void setWindowStyle(MemorySegment hwnd, long style) {
+        try {
+            long ignored = (long) SET_WINDOW_LONG_PTR.invokeExact(hwnd, GWL_STYLE, style);
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    /** The whole monitor the window is on (taskbar included) as {left, top, right, bottom}, or {@code null}. */
+    static int[] monitorRectOf(MemorySegment hwnd) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment monitor = (MemorySegment) MONITOR_FROM_WINDOW.invokeExact(hwnd, MONITOR_DEFAULTTONEAREST);
+            if (monitor.equals(MemorySegment.NULL)) {
+                return null;
+            }
+            MemorySegment info = arena.allocate(MONITORINFO_SIZE);
+            info.set(JAVA_INT, 0, (int) MONITORINFO_SIZE);
+            if ((int) GET_MONITOR_INFO.invokeExact(monitor, info) == 0) {
+                return null;
+            }
+            return new int[] {info.get(JAVA_INT, 4), info.get(JAVA_INT, 8), info.get(JAVA_INT, 12), info.get(JAVA_INT, 16)};
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    /** Moves and sizes a top-level window to these screen coordinates, to the front, and has Windows redo its frame. */
+    static void placeOnTop(MemorySegment hwnd, int left, int top, int width, int height) {
+        try {
+            int ignored = (int) SET_WINDOW_POS_AFTER.invokeExact(hwnd, MemorySegment.NULL /* HWND_TOP */, left, top, width, height,
+                    SWP_FRAMECHANGED | SWP_NOACTIVATE);
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    // ---- frameless windows: snap-layout overlay and window menu ----
+
+    static final int DWMWA_WINDOW_CORNER_PREFERENCE = 33; // Windows 11
+    static final int DWMWCP_ROUND = 2;
+    static final int WM_ACTIVATE = 0x0006;
+    static final int WM_NCHITTEST = 0x0084;
+    static final int WM_NCMOUSEMOVE = 0x00A0;
+    static final int WM_NCLBUTTONUP = 0x00A2;
+    static final int WM_NCLBUTTONDBLCLK = 0x00A3;
+    static final int WM_NCMOUSELEAVE = 0x02A2;
+    static final int WM_SYSCOMMAND = 0x0112;
+    static final int SIZE_MAXIMIZED = 2;
+    static final int SIZE_RESTORED = 0;
+    static final int HTMAXBUTTON = 9;
+    static final int WS_CHILD = 0x40000000;
+    static final int WS_VISIBLE = 0x10000000;
+    static final int WS_EX_LAYERED = 0x00080000;
+    static final int SWP_SHOWWINDOW = 0x0040;
+    static final int SC_SIZE = 0xF000;
+    static final int SC_MOVE = 0xF010;
+    static final int SC_MINIMIZE = 0xF020;
+    static final int SC_MAXIMIZE = 0xF030;
+    static final int SC_CLOSE = 0xF060;
+    static final int SC_RESTORE = 0xF120;
+
+    private static final MethodHandle SET_LAYERED_WINDOW_ATTRIBUTES = Native.downcall(USER32, "SetLayeredWindowAttributes",
+            FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT, JAVA_INT, JAVA_INT));
+    private static final MethodHandle TRACK_MOUSE_EVENT = Native.downcall(USER32, "TrackMouseEvent",
+            FunctionDescriptor.of(JAVA_INT, ADDRESS));
+    private static final MethodHandle SET_WINDOW_POS_AFTER = Native.downcall(USER32, "SetWindowPos",
+            FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT));
+    private static final MethodHandle GET_SYSTEM_MENU = Native.downcall(USER32, "GetSystemMenu",
+            FunctionDescriptor.of(ADDRESS, ADDRESS, JAVA_INT));
+    private static final MethodHandle ENABLE_MENU_ITEM = Native.downcall(USER32, "EnableMenuItem",
+            FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT, JAVA_INT));
+    private static final MethodHandle TRACK_POPUP_MENU_EX = Native.downcall(USER32, "TrackPopupMenuEx",
+            FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT, JAVA_INT, JAVA_INT, ADDRESS, ADDRESS));
+
+    /** Makes a (child) window almost, but not quite, invisible: it still gets the pointer, which a fully clear one may not. */
+    static void setLayeredAlpha(MemorySegment hwnd, int alpha) {
+        try {
+            int ignored = (int) SET_LAYERED_WINDOW_ATTRIBUTES.invokeExact(hwnd, 0, alpha, 0x2 /* LWA_ALPHA */);
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    /** Asks for one {@code WM_NCMOUSELEAVE} when the pointer leaves {@code hwnd}'s non-client area. */
+    static void trackNonClientLeave(MemorySegment hwnd) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment track = arena.allocate(24, 8); // TRACKMOUSEEVENT: DWORD cbSize, DWORD dwFlags, HWND hwndTrack, DWORD dwHoverTime
+            track.set(JAVA_INT, 0, 24);
+            track.set(JAVA_INT, 4, 0x2 | 0x10); // TME_LEAVE | TME_NONCLIENT
+            track.set(ADDRESS, 8, hwnd);
+            int ignored = (int) TRACK_MOUSE_EVENT.invokeExact(track);
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    /** Moves and sizes a window and puts it on top of its siblings, shown, without activating it. */
+    static void raiseAndShow(MemorySegment hwnd, int x, int y, int cx, int cy) {
+        try {
+            int ignored = (int) SET_WINDOW_POS_AFTER.invokeExact(hwnd, MemorySegment.NULL /* HWND_TOP */, x, y, cx, cy,
+                    SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    /** The window's system menu (restore, move, size, minimize, maximize, close). */
+    static MemorySegment systemMenu(MemorySegment hwnd) {
+        try {
+            return (MemorySegment) GET_SYSTEM_MENU.invokeExact(hwnd, 0);
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    static void enableSystemMenuItem(MemorySegment menu, int command, boolean enabled) {
+        try {
+            int flags = enabled ? 0 : 0x1 | 0x2; // MF_GRAYED | MF_DISABLED
+            int ignored = (int) ENABLE_MENU_ITEM.invokeExact(menu, command, flags);
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    /** Shows {@code menu} at the screen position and returns the command the user chose, or 0. */
+    static int trackMenu(MemorySegment menu, MemorySegment owner, int x, int y) {
+        try {
+            int flags = 0x0100 | 0x0080; // TPM_RETURNCMD | TPM_NONOTIFY
+            return (int) TRACK_POPUP_MENU_EX.invokeExact(menu, flags, x, y, owner, MemorySegment.NULL);
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
     private static RuntimeException rethrow(Throwable t) {
         if (t instanceof RuntimeException r) {
             return r;

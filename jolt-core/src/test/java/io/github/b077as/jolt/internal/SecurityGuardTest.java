@@ -73,6 +73,21 @@ class SecurityGuardTest {
     }
 
     @Test
+    void aGrantedPermissionIsAllowedForTrustedPagesOnlyAndOthersStayRefused() {
+        SecurityGuard guard = new SecurityGuard(SecurityPolicy.standard().withGrantedPermissions(io.github.b077as.jolt.Permission.MICROPHONE));
+        List<BlockedEvent> events = record(guard);
+        assertTrue(guard.allowPermission("https://jolt.localhost/", io.github.b077as.jolt.Permission.MICROPHONE));
+        assertTrue(guard.grants("https://jolt.localhost/", io.github.b077as.jolt.Permission.MICROPHONE));
+        assertFalse(guard.allowPermission("https://jolt.localhost/", io.github.b077as.jolt.Permission.CAMERA));
+        assertFalse(guard.allowPermission("https://jolt.localhost/", null));
+        assertFalse(guard.allowPermission("https://example.com/", io.github.b077as.jolt.Permission.MICROPHONE));
+        assertFalse(guard.grants("https://example.com/", io.github.b077as.jolt.Permission.MICROPHONE));
+        assertEquals(3, events.size());
+        guard.set(guard.policy().withTrustedOrigins("https://example.com"));
+        assertTrue(guard.grants("https://example.com/", io.github.b077as.jolt.Permission.MICROPHONE));
+    }
+
+    @Test
     void aFailingListenerDoesNotStopTheDecision() {
         SecurityGuard guard = new SecurityGuard(SecurityPolicy.standard());
         guard.onBlocked(e -> {

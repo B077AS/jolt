@@ -113,6 +113,11 @@ public interface Application extends AutoCloseable {
         throw new UnsupportedOperationException("this platform cannot start applications at sign-in");
     }
 
+    /** Opening the application for links such as {@code myapp://...}, see {@link UrlSchemes}. */
+    default UrlSchemes urlSchemes() {
+        throw new UnsupportedOperationException("this platform cannot register URL schemes");
+    }
+
     /** Creates a window hosting a web view. Must be called on the UI thread. */
     WebWindow createWindow(WindowOptions options);
 

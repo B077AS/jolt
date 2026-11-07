@@ -42,6 +42,17 @@ public final class BridgeScript {
                         minimize: () => send('\\u0001jolt-frame:minimize'),
                         toggleMaximize: () => send('\\u0001jolt-frame:maximize'),
                         close: () => send('\\u0001jolt-frame:close'),
+                        menu: () => send('\\u0001jolt-frame:menu'),
+                        setFullscreen: (on) => send('\\u0001jolt-frame:fullscreen:' + (on ? 'on' : 'off')),
+                        toggleFullscreen: () => send('\\u0001jolt-frame:fullscreen:toggle'),
+                        isFullscreen: () => !!(window.__joltFrameState && window.__joltFrameState.fullscreen),
+                        isMaximized: () => !!(window.__joltFrameState && window.__joltFrameState.maximized),
+                        isFocused: () => !window.__joltFrameState || window.__joltFrameState.focused !== false,
+                        onChange: (cb) => {
+                          const h = (e) => { try { cb(e.detail); } catch (x) { console.error(x); } };
+                          addEventListener('jolt-frame', h);
+                          return () => removeEventListener('jolt-frame', h);
+                        },
                       }),
                       openWindow: (path, options) => {
                         const w = window.__joltWindows;

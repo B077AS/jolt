@@ -11,6 +11,7 @@ import io.github.b077as.jolt.Notification;
 import io.github.b077as.jolt.OpenWindowRequest;
 import io.github.b077as.jolt.RequestHandler;
 import io.github.b077as.jolt.ResourceOptions;
+import io.github.b077as.jolt.Permission;
 import io.github.b077as.jolt.SecurityPolicy;
 import io.github.b077as.jolt.WebWindow;
 import io.github.b077as.jolt.WindowClosedException;
@@ -668,6 +669,156 @@ public abstract class WebWindowContract {
         assertEquals(maximizeIsHonoured() ? List.of("hidden true", "shown true") : List.of("hidden true", "shown ok"), steps);
     }
 
+    /** Evaluates and waits for the answer. Never call it on the UI thread: the answer has to come from there. */
+    public static String evalNow(WebWindow window, String script) {
+        try {
+            String json = window.eval(script).get(5, java.util.concurrent.TimeUnit.SECONDS);
+            // a string comes back as JSON, in quotes; the strings these tests ask for hold nothing that needs unescaping
+            return json.length() >= 2 && json.startsWith("\"") && json.endsWith("\"") ? json.substring(1, json.length() - 1) : json;
+        } catch (Exception e) {
+            return "error: " + e;
+        }
+    }
+
+    /** The ready-made title bar: buttons for what was asked, colours from CSS custom properties, and the state attributes. */
+    @Test
+    public void aTitleBarKitAddsCaptionButtonsColouredByCssAndTellsThePageThePlatform() {
+        CompletableFuture<String> result = new CompletableFuture<>();
+        runApp(40, app -> {
+            WebWindow window = app.createWindow(WindowOptions.defaults().withSize(500, 300).withFrameless(true));
+            window.onMessage(message -> {
+                if (message.equals("hello")) {
+                    // off the UI thread: evalNow waits for an answer that the UI thread has to give
+                    CompletableFuture.runAsync(() -> result.complete(evalNow(window, """
+                            (() => {
+                              const bars = document.querySelectorAll('[data-jolt-titlebar]');
+                              const buttons = (bar) => [...bar.querySelector('[data-jolt-caption]').shadowRoot.querySelectorAll('button')];
+                              const all = buttons(bars[0]);
+                              const only = buttons(bars[1]);
+                              const close = all.find((b) => b.className === 'close');
+                              const maximize = all.find((b) => b.className === 'maximize');
+                              return [all.length, only.length, only[0].className, document.documentElement.getAttribute('data-jolt-platform'),
+                                      maximize.getAttribute('aria-label'), getComputedStyle(close).backgroundColor,
+                                      getComputedStyle(close).color, jolt.frame.isMaximized(), jolt.frame.isFocused()].join('|');
+                            })()
+                            """))).thenRun(window::close);
+                }
+            });
+            window.loadHtml("""
+                    <style>header{display:flex;height:32px;--jolt-close-bg:rgb(1,2,3);--jolt-caption-fg:rgb(250,250,250)}</style>
+                    <header data-jolt-titlebar><span>Title</span></header>
+                    <header data-jolt-titlebar="close"><span>Dialog</span></header>
+                    <script>addEventListener('load', () => jolt.postMessage('hello'))</script>
+                    """);
+        });
+        String[] seen = result.getNow("not answered").split("\\|");
+        assertEquals(9, seen.length, String.join("|", seen));
+        assertEquals("3", seen[0], "a plain title bar gets minimize, maximize and close");
+        assertEquals("1", seen[1], "data-jolt-titlebar=\"close\" gets only a close button");
+        assertEquals("close", seen[2]);
+        assertTrue(seen[3].equals("windows") || seen[3].equals("linux"), "platform: " + seen[3]);
+        assertEquals("Maximize", seen[4]);
+        assertEquals("rgb(1, 2, 3)", seen[5], "--jolt-close-bg must colour the close button");
+        assertEquals("rgb(250, 250, 250)", seen[6], "--jolt-caption-fg must reach the buttons");
+        assertEquals("false", seen[7]);
+        assertEquals("true", seen[8]);
+    }
+
+    @Test
+    public void clickingTheKitsCloseButtonClosesTheWindowAndNothingLeaksToTheApplication() {
+        CompletableFuture<Boolean> closed = new CompletableFuture<>();
+        List<String> heard = new java.util.concurrent.CopyOnWriteArrayList<>();
+        runApp(40, app -> {
+            WebWindow window = app.createWindow(WindowOptions.defaults().withSize(400, 300).withFrameless(true));
+            window.onClosed(() -> closed.complete(true));
+            window.onMessage(message -> {
+                heard.add(message);
+                if (message.equals("hello")) {
+                    window.eval("document.querySelector('[data-jolt-caption]').shadowRoot.querySelector('button.close').click(); 'clicked'");
+                }
+            });
+            window.loadHtml("<header data-jolt-titlebar style='display:flex'></header>"
+                    + "<script>addEventListener('load', () => jolt.postMessage('hello'))</script>");
+        });
+        assertEquals(true, closed.getNow(false), "the close button must close the window");
+        assertEquals(List.of("hello"), heard, "frame messages must stay between the page and the window");
+    }
+
+    @Test
+    public void aFramelessPageLearnsWhenItsWindowIsMaximizedAndRestored() {
+        org.junit.jupiter.api.Assumptions.assumeTrue(maximizeIsHonoured(), "no window manager here to honour maximize");
+        List<String> steps = new java.util.concurrent.CopyOnWriteArrayList<>();
+        String probe = "document.documentElement.hasAttribute('data-jolt-maximized') + ',' + jolt.frame.isMaximized()"
+                + " + ',' + document.querySelector('[data-jolt-caption]').shadowRoot.querySelector('button.maximize').getAttribute('aria-label')";
+        runApp(40, app -> {
+            WebWindow window = app.createWindow(WindowOptions.defaults().withSize(400, 300).withFrameless(true));
+            window.onMessage(message -> {
+                if (!message.equals("hello")) {
+                    return;
+                }
+                CompletableFuture.runAsync(() -> {
+                    steps.add("start " + evalNow(window, probe));
+                    evalNow(window, "window.__events = []; jolt.frame.onChange((s) => __events.push(s.maximized)); 1");
+                    window.maximize();
+                }).thenCompose(ignored -> eventually(() -> evalNow(window, probe).startsWith("true,true"), 5000)).thenCompose(ok -> {
+                    steps.add("maximized " + ok + " " + evalNow(window, probe));
+                    if (!restoreIsHonoured()) {
+                        return CompletableFuture.completedFuture(false);
+                    }
+                    window.restore();
+                    return eventually(() -> evalNow(window, probe).startsWith("false,false"), 5000);
+                }).thenAccept(restored -> {
+                    if (restoreIsHonoured()) {
+                        steps.add("restored " + restored + " " + evalNow(window, "JSON.stringify(__events)"));
+                    }
+                    window.close();
+                });
+            });
+            window.loadHtml("<header data-jolt-titlebar style='display:flex'></header>"
+                    + "<script>addEventListener('load', () => jolt.postMessage('hello'))</script>");
+        });
+        assertEquals("start false,false,Maximize", steps.get(0));
+        assertEquals("maximized true true,true,Restore", steps.get(1), "the kit's button must turn into Restore");
+        if (restoreIsHonoured()) {
+            assertEquals("restored true [true,false]", steps.get(2));
+        }
+    }
+
+    @Test
+    public void aWindowCanBeMadeFullScreenAndBackAndTheFramelessPageSeesIt() {
+        org.junit.jupiter.api.Assumptions.assumeTrue(maximizeIsHonoured(), "no window manager here to honour full screen");
+        List<String> steps = new java.util.concurrent.CopyOnWriteArrayList<>();
+        String probe = "document.documentElement.hasAttribute('data-jolt-fullscreen') + ',' + jolt.frame.isFullscreen()";
+        runApp(40, app -> {
+            WebWindow window = app.createWindow(WindowOptions.defaults().withSize(400, 300).withFrameless(true));
+            window.onMessage(message -> {
+                if (!message.equals("hello")) {
+                    return;
+                }
+                CompletableFuture.runAsync(() -> {
+                    steps.add("start " + window.isFullscreen() + " " + evalNow(window, probe));
+                    window.setFullscreen(true);
+                }).thenCompose(ignored -> eventually(() -> window.isFullscreen() && evalNow(window, probe).equals("true,true"), 5000))
+                        .thenCompose(ok -> {
+                            steps.add("full " + ok);
+                            if (!restoreIsHonoured()) {
+                                return CompletableFuture.completedFuture(false);
+                            }
+                            window.setFullscreen(false);
+                            return eventually(() -> !window.isFullscreen() && evalNow(window, probe).equals("false,false"), 5000);
+                        }).thenAccept(back -> {
+                            if (restoreIsHonoured()) {
+                                steps.add("back " + back);
+                            }
+                            window.close();
+                        });
+            });
+            window.loadHtml("<script>addEventListener('load', () => jolt.postMessage('hello'))</script>");
+        });
+        assertEquals(restoreIsHonoured() ? List.of("start false false,false", "full true", "back true")
+                : List.of("start false false,false", "full true"), steps);
+    }
+
     /** A hidden window shown maximized must render its page, and at the maximized size, not the size it was created with. */
     @Test
     public void aWindowShownMaximizedRendersItsPageAtTheFullSize() {
@@ -1318,6 +1469,45 @@ public abstract class WebWindowContract {
     public void framesInsideThePageDoNotGetTheBridgeUnlessAsked() {
         assertEquals("undefined", frameBridgeType(SecurityPolicy.standard()));
         assertEquals("object", frameBridgeType(SecurityPolicy.standard().withBridgeInSubframes(true)));
+    }
+
+    @Test
+    public void microphoneAccessIsRefusedUnlessThePolicyGrantsIt() {
+        assertEquals("NotAllowedError", microphoneOutcome(SecurityPolicy.standard()));
+        // CAMERA is not MICROPHONE
+        assertEquals("NotAllowedError", microphoneOutcome(SecurityPolicy.standard().withGrantedPermissions(Permission.CAMERA)));
+    }
+
+    @Test
+    public void grantedMicrophoneAccessReachesTheDeviceLayer() {
+        // A machine without a microphone answers NotFoundError; one with it succeeds. Either way the permission was given.
+        String outcome = microphoneOutcome(SecurityPolicy.standard().withGrantedPermissions(Permission.MICROPHONE));
+        assertTrue(outcome.equals("ok") || outcome.equals("NotFoundError") || outcome.equals("NotReadableError"),
+                "getUserMedia was refused or failed unexpectedly: " + outcome);
+    }
+
+    @Test
+    public void grantedMicrophoneAccessIsOnlyForTrustedPages() {
+        SecurityPolicy policy = SecurityPolicy.standard().withGrantedPermissions(Permission.MICROPHONE);
+        assertFalse(policy.grants("https://example.com/", Permission.MICROPHONE));
+        assertTrue(policy.grants("https://jolt.localhost/index.html", Permission.MICROPHONE));
+    }
+
+    private static String microphoneOutcome(SecurityPolicy policy) {
+        CompletableFuture<String> got = new CompletableFuture<>();
+        runApp(40, app -> {
+            WebWindow window = app.createWindow(WindowOptions.defaults().withSize(300, 200).withSecurity(policy));
+            window.onMessage(message -> {
+                got.complete(message);
+                window.close();
+            });
+            window.loadHtml("<script>(async () => { let r;"
+                    + "if (!navigator.mediaDevices) r = 'no-mediaDevices';"
+                    + "else try { (await navigator.mediaDevices.getUserMedia({audio: true})).getTracks().forEach(t => t.stop()); r = 'ok'; }"
+                    + "catch (e) { r = e.name; }"
+                    + "window.jolt.postMessage(r); })();</script>");
+        });
+        return got.getNow("timeout");
     }
 
     private static String frameBridgeType(SecurityPolicy policy) {

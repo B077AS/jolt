@@ -65,13 +65,29 @@ public final class SecurityGuard {
         return false;
     }
 
-    /** Whether the page at {@code url} may be granted a permission it asked for. */
+    /** Whether the page at {@code url} may be granted a permission it asked for (kind unknown). */
     public boolean allowPermission(String url) {
-        if (!policy.denyPermissions()) {
+        return allowPermission(url, null);
+    }
+
+    /**
+     * Whether the page at {@code url} may be granted {@code permission} ({@code null} when it is a kind Jolt has no name for).
+     * Allowed when the policy does not deny permissions, or when it grants this one to a trusted page.
+     */
+    public boolean allowPermission(String url, io.github.b077as.jolt.Permission permission) {
+        if (!policy.denyPermissions() || policy.grants(url, permission)) {
             return true;
         }
         blocked(BlockedEvent.Kind.PERMISSION, url, "Permission request from " + url + " denied by the SecurityPolicy");
         return false;
+    }
+
+    /**
+     * Whether the policy names {@code permission} for the trusted page at {@code url}, so the backend should answer
+     * "allow" itself rather than leave the decision to the web view's own prompt.
+     */
+    public boolean grants(String url, io.github.b077as.jolt.Permission permission) {
+        return policy.grants(url, permission);
     }
 
     /** Whether a message sent from the page at {@code url} may reach the application's listeners. */

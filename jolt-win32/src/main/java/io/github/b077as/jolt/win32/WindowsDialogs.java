@@ -225,15 +225,23 @@ final class WindowsDialogs implements Dialogs {
         }
     }
 
+    /** How many 10 ms checks the requested size is kept in place after it was first applied. */
+    private static final int SETTLE_CHECKS = 100;
+
     /** Resizes the dialog about to be shown once its window exists, from a thread that polls so the UI thread is never kept busy. */
     private void resizeWhenOpen(int logicalWidth, int logicalHeight) {
         int number = shown + 1; // the dialog that is about to be shown
         Thread.ofVirtual().name("jolt-dialog-width").start(() -> {
             try {
-                for (int i = 0; i < 300; i++) {
+                int settled = 0;
+                for (int i = 0; i < 300 + SETTLE_CHECKS; i++) {
                     Thread.sleep(10);
                     if (app.submit(() -> resize(logicalWidth, logicalHeight, number)).get()) {
-                        return;
+                        // The dialog may put back the size it was last closed with a moment after it opened (Windows keeps
+                        // one per application), so keep checking for a while; resize only touches it when it differs.
+                        if (++settled >= SETTLE_CHECKS) {
+                            return;
+                        }
                     }
                 }
             } catch (InterruptedException e) {

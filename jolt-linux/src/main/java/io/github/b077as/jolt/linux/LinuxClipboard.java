@@ -109,6 +109,11 @@ final class LinuxClipboard implements Clipboard {
     @Override
     public CompletableFuture<Optional<String>> readText() {
         return app.submit(() -> {
+            // the raw bytes first: gtk_clipboard_wait_for_text rewrites line breaks (\r\n becomes \n)
+            byte[] raw = contents("UTF8_STRING");
+            if (raw != null) {
+                return Optional.of(new String(raw, StandardCharsets.UTF_8));
+            }
             MemorySegment text = (MemorySegment) invoke(WAIT_FOR_TEXT, board());
             if (text.equals(MemorySegment.NULL)) {
                 return Optional.<String>empty();
