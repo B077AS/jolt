@@ -11,6 +11,7 @@ import io.github.b077as.jolt.Notification;
 import io.github.b077as.jolt.OpenWindowRequest;
 import io.github.b077as.jolt.RequestHandler;
 import io.github.b077as.jolt.ResourceOptions;
+import io.github.b077as.jolt.Permission;
 import io.github.b077as.jolt.SecurityPolicy;
 import io.github.b077as.jolt.WebWindow;
 import io.github.b077as.jolt.WindowClosedException;
@@ -1468,6 +1469,45 @@ public abstract class WebWindowContract {
     public void framesInsideThePageDoNotGetTheBridgeUnlessAsked() {
         assertEquals("undefined", frameBridgeType(SecurityPolicy.standard()));
         assertEquals("object", frameBridgeType(SecurityPolicy.standard().withBridgeInSubframes(true)));
+    }
+
+    @Test
+    public void microphoneAccessIsRefusedUnlessThePolicyGrantsIt() {
+        assertEquals("NotAllowedError", microphoneOutcome(SecurityPolicy.standard()));
+        // CAMERA is not MICROPHONE
+        assertEquals("NotAllowedError", microphoneOutcome(SecurityPolicy.standard().withGrantedPermissions(Permission.CAMERA)));
+    }
+
+    @Test
+    public void grantedMicrophoneAccessReachesTheDeviceLayer() {
+        // A machine without a microphone answers NotFoundError; one with it succeeds. Either way the permission was given.
+        String outcome = microphoneOutcome(SecurityPolicy.standard().withGrantedPermissions(Permission.MICROPHONE));
+        assertTrue(outcome.equals("ok") || outcome.equals("NotFoundError") || outcome.equals("NotReadableError"),
+                "getUserMedia was refused or failed unexpectedly: " + outcome);
+    }
+
+    @Test
+    public void grantedMicrophoneAccessIsOnlyForTrustedPages() {
+        SecurityPolicy policy = SecurityPolicy.standard().withGrantedPermissions(Permission.MICROPHONE);
+        assertFalse(policy.grants("https://example.com/", Permission.MICROPHONE));
+        assertTrue(policy.grants("https://jolt.localhost/index.html", Permission.MICROPHONE));
+    }
+
+    private static String microphoneOutcome(SecurityPolicy policy) {
+        CompletableFuture<String> got = new CompletableFuture<>();
+        runApp(40, app -> {
+            WebWindow window = app.createWindow(WindowOptions.defaults().withSize(300, 200).withSecurity(policy));
+            window.onMessage(message -> {
+                got.complete(message);
+                window.close();
+            });
+            window.loadHtml("<script>(async () => { let r;"
+                    + "if (!navigator.mediaDevices) r = 'no-mediaDevices';"
+                    + "else try { (await navigator.mediaDevices.getUserMedia({audio: true})).getTracks().forEach(t => t.stop()); r = 'ok'; }"
+                    + "catch (e) { r = e.name; }"
+                    + "window.jolt.postMessage(r); })();</script>");
+        });
+        return got.getNow("timeout");
     }
 
     private static String frameBridgeType(SecurityPolicy policy) {

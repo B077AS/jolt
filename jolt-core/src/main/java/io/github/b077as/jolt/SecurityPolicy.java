@@ -25,11 +25,20 @@ import java.util.Set;
  *                         only, as WebKitGTK never opens one without the application's help
  * @param denyPermissions  refuse page requests for camera, microphone, location, notifications and the like
  * @param restrictMessages ignore messages sent by pages whose origin is not trusted
+ * @param grantedPermissions permissions given to your own content and trusted origins even while {@code denyPermissions}
+ *                          is on (for example {@link Permission#MICROPHONE} for a voice chat). Other pages stay refused
  * @param bridgeInSubframes whether {@code window.jolt} also exists in frames inside the page. Read when the window is
  *                          created; changing it later has no effect on that window
  */
 public record SecurityPolicy(Set<String> trustedOrigins, boolean lockNavigation, boolean blockNewWindows,
-                             boolean denyPermissions, boolean restrictMessages, boolean bridgeInSubframes) {
+                             boolean denyPermissions, Set<Permission> grantedPermissions, boolean restrictMessages,
+                             boolean bridgeInSubframes) {
+
+    /** Same as the full constructor with no granted permissions. */
+    public SecurityPolicy(Set<String> trustedOrigins, boolean lockNavigation, boolean blockNewWindows,
+                          boolean denyPermissions, boolean restrictMessages, boolean bridgeInSubframes) {
+        this(trustedOrigins, lockNavigation, blockNewWindows, denyPermissions, Set.of(), restrictMessages, bridgeInSubframes);
+    }
 
     /** The origin of content passed to {@code loadHtml}. Always trusted. */
     public static final String APP_ORIGIN = "https://jolt.localhost";
@@ -44,6 +53,8 @@ public record SecurityPolicy(Set<String> trustedOrigins, boolean lockNavigation,
             normalized.add(o);
         }
         trustedOrigins = Collections.unmodifiableSet(normalized);
+        grantedPermissions = grantedPermissions == null || grantedPermissions.isEmpty()
+                ? Set.of() : Collections.unmodifiableSet(java.util.EnumSet.copyOf(grantedPermissions));
     }
 
     /** Recommended: trust only your own content, and block everything else listed here. */
@@ -60,33 +71,48 @@ public record SecurityPolicy(Set<String> trustedOrigins, boolean lockNavigation,
     public SecurityPolicy withTrustedOrigins(String... origins) {
         Set<String> all = new LinkedHashSet<>(trustedOrigins);
         all.addAll(java.util.Arrays.asList(origins));
-        return new SecurityPolicy(all, lockNavigation, blockNewWindows, denyPermissions, restrictMessages, bridgeInSubframes);
+        return new SecurityPolicy(all, lockNavigation, blockNewWindows, denyPermissions, grantedPermissions, restrictMessages, bridgeInSubframes);
     }
 
     /** Replaces the list of extra trusted origins. */
     public SecurityPolicy withOnlyTrustedOrigins(String... origins) {
-        return new SecurityPolicy(new LinkedHashSet<>(java.util.Arrays.asList(origins)), lockNavigation, blockNewWindows, denyPermissions, restrictMessages,
+        return new SecurityPolicy(new LinkedHashSet<>(java.util.Arrays.asList(origins)), lockNavigation, blockNewWindows, denyPermissions, grantedPermissions, restrictMessages,
                 bridgeInSubframes);
     }
 
     public SecurityPolicy withLockNavigation(boolean lock) {
-        return new SecurityPolicy(trustedOrigins, lock, blockNewWindows, denyPermissions, restrictMessages, bridgeInSubframes);
+        return new SecurityPolicy(trustedOrigins, lock, blockNewWindows, denyPermissions, grantedPermissions, restrictMessages, bridgeInSubframes);
     }
 
     public SecurityPolicy withBlockNewWindows(boolean block) {
-        return new SecurityPolicy(trustedOrigins, lockNavigation, block, denyPermissions, restrictMessages, bridgeInSubframes);
+        return new SecurityPolicy(trustedOrigins, lockNavigation, block, denyPermissions, grantedPermissions, restrictMessages, bridgeInSubframes);
     }
 
     public SecurityPolicy withDenyPermissions(boolean deny) {
-        return new SecurityPolicy(trustedOrigins, lockNavigation, blockNewWindows, deny, restrictMessages, bridgeInSubframes);
+        return new SecurityPolicy(trustedOrigins, lockNavigation, blockNewWindows, deny, grantedPermissions, restrictMessages, bridgeInSubframes);
+    }
+
+    /**
+     * Permissions to give to the window's own content and trusted origins even though {@code denyPermissions} is on.
+     * Replaces any earlier list; pass none to clear it.
+     */
+    public SecurityPolicy withGrantedPermissions(Permission... permissions) {
+        Set<Permission> set = java.util.EnumSet.noneOf(Permission.class);
+        set.addAll(java.util.Arrays.asList(permissions));
+        return new SecurityPolicy(trustedOrigins, lockNavigation, blockNewWindows, denyPermissions, set, restrictMessages, bridgeInSubframes);
+    }
+
+    /** Whether {@code permission} is granted to the page at {@code url}: listed in the policy and the page is trusted. */
+    public boolean grants(String url, Permission permission) {
+        return permission != null && grantedPermissions.contains(permission) && trusts(url);
     }
 
     public SecurityPolicy withRestrictMessages(boolean restrict) {
-        return new SecurityPolicy(trustedOrigins, lockNavigation, blockNewWindows, denyPermissions, restrict, bridgeInSubframes);
+        return new SecurityPolicy(trustedOrigins, lockNavigation, blockNewWindows, denyPermissions, grantedPermissions, restrict, bridgeInSubframes);
     }
 
     public SecurityPolicy withBridgeInSubframes(boolean subframes) {
-        return new SecurityPolicy(trustedOrigins, lockNavigation, blockNewWindows, denyPermissions, restrictMessages, subframes);
+        return new SecurityPolicy(trustedOrigins, lockNavigation, blockNewWindows, denyPermissions, grantedPermissions, restrictMessages, subframes);
     }
 
     /** Whether the page at {@code url} comes from the window's own content or a listed origin. */

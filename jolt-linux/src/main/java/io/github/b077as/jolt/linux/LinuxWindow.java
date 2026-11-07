@@ -1,5 +1,6 @@
 package io.github.b077as.jolt.linux;
 
+import io.github.b077as.jolt.Permission;
 import io.github.b077as.jolt.BlockedEvent;
 import io.github.b077as.jolt.CloseBehavior;
 import io.github.b077as.jolt.ColorScheme;
@@ -103,6 +104,7 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
         }
         webView = Gtk.newWebView(app.webContext(), contentManager);
         Gtk.setDeveloperExtras(webView, options.devTools());
+        GtkMedia.enable(webView);
 
         this.id = app.register(this);
         MemorySegment key = MemorySegment.ofAddress(id);
@@ -587,10 +589,32 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
     }
 
     boolean onPermissionRequest(MemorySegment request) {
-        if (guard.allowPermission(destroyed ? null : Gtk.webViewUri(webView))) {
+        String uri = destroyed ? null : Gtk.webViewUri(webView);
+        if (grantsMedia(request, uri)) {
+            GtkMedia.allow(request);
+            return true;
+        }
+        if (guard.allowPermission(uri)) {
             return false;
         }
         Gtk.denyPermission(request);
+        return true;
+    }
+
+    /** Whether {@code request} is for the microphone/camera and the SecurityPolicy grants all of what it needs to {@code uri}. */
+    private boolean grantsMedia(MemorySegment request, String uri) {
+        if (GtkMedia.isDeviceInfo(request)) {
+            return guard.grants(uri, Permission.MICROPHONE) || guard.grants(uri, Permission.CAMERA);
+        }
+        java.util.Set<Permission> needed = GtkMedia.kindsOf(request);
+        if (needed == null) {
+            return false;
+        }
+        for (Permission p : needed) {
+            if (!guard.grants(uri, p)) {
+                return false;
+            }
+        }
         return true;
     }
 

@@ -9,6 +9,13 @@ The latest version is the one on [Maven Central](https://central.sonatype.com/ar
 ## Unreleased
 
 ### Added
+- **Microphone and camera for your own pages: `SecurityPolicy.withGrantedPermissions(Permission.MICROPHONE, Permission.CAMERA)`.** Pages
+  of the window's own content (and trusted origins) can then use `getUserMedia`, `enumerateDevices` and the rest of WebRTC while every other
+  permission and every other page stays refused. Before, `getUserMedia` always failed with `NotAllowedError` unless you turned
+  `denyPermissions` off, and on Linux it failed even then. Windows answers the request itself and tells WebView2 not to remember the answer, so
+  changing the policy takes effect; Linux turns on WebKitGTK's `enable-media-stream` and allows the request (a system without those symbols
+  just keeps refusing). Screen capture (`getDisplayMedia`) is not covered. Tested on Windows (`microphoneAccess*`, `grantedMicrophone*`).
+  **Not run on Linux yet.**
 - **Full screen: `WebWindow.setFullscreen(boolean)` and `isFullscreen()`.** The window covers the whole screen it is on, without title bar,
   border or taskbar; leaving it brings back the size, position and maximized state it had. The browser's F11 stays disabled, this is the
   way to do it. A window that is still hidden is full screen when first shown. A frameless page can do the same with

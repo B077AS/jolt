@@ -54,6 +54,7 @@ final class WindowsWindow implements WebWindow, NativeResourceHost, NativeDialog
     private static final int MOVE_FOCUS_PROGRAMMATIC = 0;
     /** Requests to this origin are answered from memory and never reach the network. */
     private static final String VIRTUAL_ORIGIN = SecurityPolicy.APP_ORIGIN;
+    private static final int PERMISSION_STATE_ALLOW = 1; // COREWEBVIEW2_PERMISSION_STATE_ALLOW
     private static final int PERMISSION_STATE_DENY = 2; // COREWEBVIEW2_PERMISSION_STATE_DENY
     private static final int RESOURCE_CONTEXT_ALL = 0; // COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL
 
@@ -1193,8 +1194,44 @@ public CompletableFuture<String> eval(String script) {
 
     private void onPermissionRequested(MemorySegment sender, MemorySegment args) {
         String uri = readUri(args, WebView2Abi.ICoreWebView2PermissionRequestedEventArgs.GET_URI);
-        if (!guard.allowPermission(uri)) {
-            Com.call(args, WebView2Abi.ICoreWebView2PermissionRequestedEventArgs.PUT_STATE, Com.HR_INT, PERMISSION_STATE_DENY);
+        io.github.b077as.jolt.Permission kind = permissionOf(args);
+        if (guard.grants(uri, kind)) {
+            // named in the SecurityPolicy for our own content: answer here, so the web view neither asks nor remembers a "no"
+            answerPermission(args, PERMISSION_STATE_ALLOW);
+        } else if (!guard.allowPermission(uri, kind)) {
+            answerPermission(args, PERMISSION_STATE_DENY);
+        }
+    }
+
+    /**
+     * Sets the answer to a permission request and tells WebView2 not to keep it in the profile. A kept answer is applied
+     * to later requests without raising the event, so a changed {@link SecurityPolicy} (or a different window sharing
+     * the profile) would no longer be asked.
+     */
+    private static void answerPermission(MemorySegment args, int state) {
+        Com.call(args, WebView2Abi.ICoreWebView2PermissionRequestedEventArgs.PUT_STATE, Com.HR_INT, state);
+        MemorySegment args3 = Com.queryInterface(args, WebView2Abi.ICoreWebView2PermissionRequestedEventArgs3.IID);
+        if (args3 != null && !args3.equals(MemorySegment.NULL)) { // older runtimes lack it
+            try {
+                Com.call(args3, WebView2Abi.ICoreWebView2PermissionRequestedEventArgs3.PUT_SAVES_IN_PROFILE, Com.HR_INT, 0);
+            } finally {
+                Com.release(args3);
+            }
+        }
+    }
+
+    /** The permission a request is for, or {@code null} for a kind {@link io.github.b077as.jolt.Permission} has no name for. */
+    private static io.github.b077as.jolt.Permission permissionOf(MemorySegment args) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment out = arena.allocate(java.lang.foreign.ValueLayout.JAVA_INT);
+            if (Com.call(args, WebView2Abi.ICoreWebView2PermissionRequestedEventArgs.GET_PERMISSION_KIND, Com.HR_PTR, out) < 0) {
+                return null;
+            }
+            return switch (out.get(java.lang.foreign.ValueLayout.JAVA_INT, 0)) { // COREWEBVIEW2_PERMISSION_KIND
+                case 1 -> io.github.b077as.jolt.Permission.MICROPHONE;
+                case 2 -> io.github.b077as.jolt.Permission.CAMERA;
+                default -> null;
+            };
         }
     }
 

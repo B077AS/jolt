@@ -502,7 +502,7 @@ The page can call everything you register with `onMessage`, so each window has a
 | Navigation lock | Links, redirects, frames and `loadUrl` to an untrusted origin are cancelled | `withLockNavigation` |
 | Message check | Messages from an untrusted page never reach `onMessage` | `withRestrictMessages` |
 | New windows | `window.open` and `target=_blank` are refused | `withBlockNewWindows` |
-| Permissions | Camera, microphone, location and similar are denied | `withDenyPermissions` |
+| Permissions | Camera, microphone, location and similar are denied | `withDenyPermissions`; allow microphone/camera for your own pages with `withGrantedPermissions(Permission.MICROPHONE)` |
 | Bridge in frames | `window.jolt` exists only in the top-level page | `withBridgeInSubframes` |
 
 ```java
