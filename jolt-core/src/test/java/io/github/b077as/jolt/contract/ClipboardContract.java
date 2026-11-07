@@ -134,6 +134,14 @@ public abstract class ClipboardContract {
     }
 
     @Test
+    public void lineBreaksComeBackExactlyAsWritten() {
+        for (String text : List.of("a\r\nb", "a\nb", "a\rb", "a\r\n\r\nb\n", "\r\n")) {
+            Optional<String> read = run(c -> c.writeText(text).thenCompose(v -> c.readText()));
+            assertEquals(Optional.of(text), read, "line breaks changed in " + text.replace("\r", "\\r").replace("\n", "\\n"));
+        }
+    }
+
+    @Test
     public void clearEmptiesTheClipboard() {
         Optional<String> read = run(c -> c.writeText("gone soon").thenCompose(v -> c.clear()).thenCompose(v -> c.readText()));
         assertEquals(Optional.empty(), read);
