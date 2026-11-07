@@ -6,6 +6,34 @@ this file says when they do.
 
 The latest version is the one on [Maven Central](https://central.sonatype.com/artifact/io.github.b077as/jolt-core).
 
+## Unreleased
+
+### Added
+- **Ready-made title bar for frameless windows.** Put `data-jolt-titlebar` on an element and it becomes a title bar: it moves the window,
+  and the minimize, maximize/restore and close buttons are added at its right end (`data-jolt-titlebar="close"` for just a close button,
+  for dialogs). Their colours are CSS custom properties, so a theme is a few lines of CSS: `--jolt-caption-fg`, `--jolt-caption-bg`,
+  `--jolt-caption-hover-bg`, `--jolt-caption-hover-fg`, `--jolt-caption-active-bg`, `--jolt-caption-active-fg`, `--jolt-caption-width`,
+  `--jolt-caption-icon`, `--jolt-caption-inactive-opacity`, and for one button `--jolt-minimize-*`, `--jolt-maximize-*`,
+  `--jolt-close-*` (the close button is red on hover by default). The buttons live in a shadow root, so page CSS cannot break them.
+  Your own markup with `jolt.frame.minimize()` and friends keeps working as before.
+- **The page now learns its window's state.** `<html>` gets `data-jolt-maximized` while the window is maximized, `data-jolt-inactive`
+  while it is not the window in front, and `data-jolt-platform="windows"` or `"linux"`; `jolt.frame.isMaximized()`,
+  `jolt.frame.isFocused()` and `jolt.frame.onChange(callback)` (returns a function that stops listening) report the same. The kit swaps its
+  maximize icon for restore and dims its buttons while the window is inactive.
+- **Windows 11 snap layouts over your own maximize button.** The maximize button (the kit's, or any element with `data-jolt-maximize`)
+  is reported to the window, which puts a nearly invisible child window over it that answers `HTMAXBUTTON`; that is what makes
+  Windows 11 show its snap layouts when the pointer rests on the button. Because the page then no longer gets the pointer, the window
+  feeds hover and press back as `data-jolt-hover` / `data-jolt-pressed` on your element (the kit styles itself). Windows 10 and Linux
+  ignore this; the button simply works as a button.
+- **Windows: right-clicking a title bar** (`data-jolt-drag` or `data-jolt-titlebar`) opens the system window menu (Restore, Move, Size,
+  Minimize, Maximize, Close); `jolt.frame.menu()` opens it from code. Frameless windows are also rounded explicitly on Windows 11.
+
+### Not yet verified
+- How the new title bar looks, and the snap-layout flyout itself, were not looked at: the tests check what can be read back (the overlay
+  sits exactly over the button, answers `HTMAXBUTTON`, passes press and hover to the page, maximizes on a click, goes away with the
+  button). The Linux changes (state to the page, the kit) compile but the Linux suite was not run for them; Linux has no snap layouts,
+  no window menu on right click and no shadow or rounded corners for frameless windows.
+
 ## 0.3.3 - 2026-11-06
 
 ### Added

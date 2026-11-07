@@ -88,6 +88,17 @@ final class WindowsWindow implements WebWindow, NativeResourceHost, NativeDialog
     private MemorySegment backgroundBrush = MemorySegment.NULL;
     /** The window was asked to be maximized while hidden (or at creation): it is shown maximized. Readable from any thread. */
     private volatile boolean maximizeOnFirstShow;
+    /** Frameless pages are told when this changes. Starts true: a window that never gets an activation message is not dimmed. */
+    private boolean active = true;
+    private boolean sentMaximized;
+    /** Windows 11 (the system rounds frameless windows and shows snap layouts); decided when the window is created. */
+    private boolean snapLayouts;
+    private MemorySegment snapOverlay = MemorySegment.NULL;
+    private volatile int[] overlayRect;
+    private boolean overlayHover;
+    private boolean overlayPressed;
+    /** Off in tests that send the overlay pointer messages by hand: the real pointer is not over it, so Windows would end the hover at once. */
+    boolean trackPointerLeave = true;
 
     /** Must be called on the UI thread. */
     WindowsWindow(WindowsApplication app, WindowOptions options) {
@@ -115,6 +126,8 @@ final class WindowsWindow implements WebWindow, NativeResourceHost, NativeDialog
             Win32.setWindowPos(hwnd, 0, 0, 0, 0, Win32.SWP_FRAMECHANGED | Win32.SWP_NOMOVE | Win32.SWP_NOSIZE
                     | Win32.SWP_NOZORDER | Win32.SWP_NOACTIVATE);
             Win32.extendFrameIntoClientArea(hwnd, 0, 0, 1, 0); // a one-pixel frame is what makes Windows draw the shadow
+            // Only Windows 11 knows this attribute, so whether it is accepted also says whether snap layouts exist.
+            snapLayouts = Win32.dwmSetAttribute(hwnd, Win32.DWMWA_WINDOW_CORNER_PREFERENCE, Win32.DWMWCP_ROUND) >= 0;
         }
         // Appearance is applied before the window is first shown, so it never flashes the wrong title bar colour.
         if (options.titleBarScheme() != null) {
@@ -343,6 +356,154 @@ public CompletableFuture<String> eval(String script) {
         beginNonClientDrag(9 + edge); // edges 1 (left) .. 8 (bottom-right) are HTLEFT (10) .. HTBOTTOMRIGHT (17) minus 9
     }
 
+    @Override
+    public void reportState() {
+        pushFrameState();
+    }
+
+    /** Tells a frameless page whether the window is maximized and in front. UI thread. */
+    private void pushFrameState() {
+        if (destroyed || !options.frameless() || !webViewReady) {
+            return;
+        }
+        boolean maximized = Win32.isZoomed(hwnd);
+        sentMaximized = maximized;
+        eval(FrameProtocol.stateScript(maximized, active)).exceptionally(t -> null);
+    }
+
+    @Override
+    public void setMaximizeButton(int x, int y, int width, int height) {
+        if (destroyed || !snapLayouts) {
+            return;
+        }
+        if (snapOverlay.equals(MemorySegment.NULL)) {
+            int[] error = new int[1];
+            // A nearly invisible child window above the web view. Windows asks the window under the pointer what part of the window
+            // it is; answering "maximize button" is what makes Windows 11 show its snap layouts. The web view's own window cannot
+            // answer, so this one does, and it feeds hover and press back to the page.
+            snapOverlay = Win32.createWindow(Win32.WS_EX_LAYERED, app.className(), MemorySegment.NULL,
+                    Win32.WS_CHILD | Win32.WS_CLIPSIBLINGS, 0, 0, 1, 1, hwnd, app.hInstance(), error);
+            if (snapOverlay.equals(MemorySegment.NULL)) {
+                LOG.log(System.Logger.Level.WARNING, "snap-layout overlay not created: Win32 error " + error[0]);
+                snapLayouts = false;
+                return;
+            }
+            app.registerOverlay(snapOverlay, this);
+            Win32.setLayeredAlpha(snapOverlay, 1);
+        }
+        overlayRect = new int[] {x, y, width, height};
+        Win32.raiseAndShow(snapOverlay, x, y, width, height);
+    }
+
+    @Override
+    public void clearMaximizeButton() {
+        if (destroyed || snapOverlay.equals(MemorySegment.NULL)) {
+            return;
+        }
+        overlayRect = null;
+        overlayHover = false;
+        overlayPressed = false;
+        Win32.showWindow(snapOverlay, Win32.SW_HIDE);
+    }
+
+    /** The snap-layout overlay's rectangle in client pixels, or {@code null} while there is none. For tests. */
+    int[] snapOverlayRect() {
+        return overlayRect == null ? null : overlayRect.clone();
+    }
+
+    MemorySegment snapOverlay() {
+        return snapOverlay;
+    }
+
+    /** Whether this system shows snap layouts (Windows 11) and the window may use them. For tests. */
+    boolean snapLayoutsAvailable() {
+        return snapLayouts;
+    }
+
+    /** Messages for the overlay child window. UI thread. */
+    Long handleOverlayMessage(MemorySegment overlay, int msg, long wParam, long lParam) {
+        switch (msg) {
+            case Win32.WM_NCHITTEST -> {
+                return (long) Win32.HTMAXBUTTON;
+            }
+            case Win32.WM_ERASEBKGND -> {
+                try (Arena arena = Arena.ofConfined()) {
+                    MemorySegment rect = arena.allocate(Win32.RECT);
+                    Win32.getClientRect(overlay, rect);
+                    MemorySegment black = Win32.createSolidBrush(0);
+                    Win32.fillRect(MemorySegment.ofAddress(wParam), rect, black);
+                    Win32.deleteObject(black);
+                }
+                return 1L;
+            }
+            case Win32.WM_NCMOUSEMOVE -> {
+                if (!overlayHover) {
+                    overlayHover = true;
+                    if (trackPointerLeave) {
+                        Win32.trackNonClientLeave(overlay);
+                    }
+                    pushHover();
+                }
+                return 0L;
+            }
+            case Win32.WM_NCMOUSELEAVE -> {
+                overlayHover = false;
+                overlayPressed = false;
+                pushHover();
+                return 0L;
+            }
+            case Win32.WM_NCLBUTTONDOWN, Win32.WM_NCLBUTTONDBLCLK -> {
+                overlayHover = true;
+                overlayPressed = true;
+                pushHover();
+                return 0L;
+            }
+            case Win32.WM_NCLBUTTONUP -> {
+                boolean click = overlayPressed;
+                overlayPressed = false;
+                pushHover();
+                if (click) {
+                    toggleMaximize();
+                }
+                return 0L;
+            }
+            default -> {
+                return null;
+            }
+        }
+    }
+
+    private void pushHover() {
+        if (!destroyed && webViewReady) {
+            eval(FrameProtocol.hoverScript(overlayHover ? "max" : null, overlayPressed)).exceptionally(t -> null);
+        }
+    }
+
+    @Override
+    public void showWindowMenu() {
+        app.dispatch(() -> {
+            if (destroyed) {
+                return;
+            }
+            MemorySegment menu = Win32.systemMenu(hwnd);
+            if (menu.equals(MemorySegment.NULL)) {
+                return;
+            }
+            boolean zoomed = Win32.isZoomed(hwnd);
+            Win32.enableSystemMenuItem(menu, Win32.SC_RESTORE, zoomed);
+            Win32.enableSystemMenuItem(menu, Win32.SC_MOVE, !zoomed);
+            Win32.enableSystemMenuItem(menu, Win32.SC_SIZE, !zoomed);
+            Win32.enableSystemMenuItem(menu, Win32.SC_MAXIMIZE, !zoomed);
+            Win32.enableSystemMenuItem(menu, Win32.SC_MINIMIZE, true);
+            Win32.setForegroundWindow(hwnd); // so the menu closes when the user clicks elsewhere
+            int[] at = Win32.cursorPosition();
+            int command = Win32.trackMenu(menu, hwnd, at[0], at[1]);
+            if (command != 0 && !destroyed) {
+                Win32.postMessage(hwnd, Win32.WM_SYSCOMMAND, command, 0);
+            }
+        });
+    }
+
     /** Hands the pointer, which is down, to Windows as if it had pressed a caption or a sizing border. */
     private void beginNonClientDrag(int hitTest) {
         if (destroyed || Win32.isZoomed(hwnd) && hitTest != Win32.HTCAPTION) {
@@ -474,7 +635,19 @@ public CompletableFuture<String> eval(String script) {
             }
             case Win32.WM_SIZE -> {
                 resizeWebView();
+                if (options.frameless() && (wParam == Win32.SIZE_MAXIMIZED || wParam == Win32.SIZE_RESTORED)
+                        && (wParam == Win32.SIZE_MAXIMIZED) != sentMaximized) {
+                    pushFrameState();
+                }
                 return 0L;
+            }
+            case Win32.WM_ACTIVATE -> {
+                boolean nowActive = (wParam & 0xFFFF) != 0; // WA_INACTIVE is 0
+                if (nowActive != active) {
+                    active = nowActive;
+                    pushFrameState();
+                }
+                return null; // the system still moves the focus
             }
             case Win32.WM_GETMINMAXINFO -> {
                 if (options.minWidth() == 0 && options.minHeight() == 0) {
@@ -851,7 +1024,7 @@ public CompletableFuture<String> eval(String script) {
             // Operations queued by callers run only after the bridge script is registered, so every navigation sees it.
             String bridge = BridgeScript.build("window.chrome.webview.postMessage(m)", options.security().bridgeInSubframes());
             if (options.frameless()) {
-                addScriptOnDocumentCreated(bridge, () -> addScriptOnDocumentCreated(FrameScript.build(), this::finishInit));
+                addScriptOnDocumentCreated(bridge, () -> addScriptOnDocumentCreated(FrameScript.build("windows"), this::finishInit));
             } else {
                 addScriptOnDocumentCreated(bridge, this::finishInit);
             }

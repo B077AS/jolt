@@ -167,6 +167,81 @@ class WindowsShellTest {
         assertEquals(List.of("hello"), heard, "frame messages must not reach the application's listeners");
     }
 
+    /**
+     * Windows 11 shows its snap layouts over whatever answers WM_NCHITTEST with HTMAXBUTTON. This checks what can be read back: the
+     * overlay sits exactly over the page's maximize button, answers HTMAXBUTTON, feeds press and hover back to the page, maximizes on
+     * a click and goes away with the button. That the flyout then appears is for a person to look at.
+     */
+    @Test
+    void theMaximizeButtonGetsAnOverlayThatAnswersMaximizeButtonAndDrivesTheWindow() {
+        CompletableFuture<String> result = new CompletableFuture<>();
+        WebWindowContract.runApp(60, app -> {
+            WindowsWindow window = (WindowsWindow) app.createWindow(WindowOptions.defaults().withSize(600, 300).withFrameless(true));
+            window.onMessage(message -> {
+                if (!message.equals("hello")) {
+                    return;
+                }
+                CompletableFuture.runAsync(() -> {
+                    try {
+                        window.trackPointerLeave = false;
+                        if (!window.snapLayoutsAvailable()) {
+                            result.complete("unavailable");
+                            return;
+                        }
+                        String buttonRect = "(() => { const r = document.querySelector('[data-jolt-caption]').shadowRoot.querySelector('button.maximize')"
+                                + ".getBoundingClientRect(); const d = devicePixelRatio; return [r.left * d, r.top * d, r.width * d, r.height * d]"
+                                + ".map(Math.round).join(','); })()";
+                        boolean placed = WebWindowContract.eventually(() -> window.snapOverlayRect() != null, 5000).join();
+                        String expected = WebWindowContract.evalNow(window, buttonRect);
+                        int[] at = window.snapOverlayRect();
+                        String actual = at == null ? "none" : at[0] + "," + at[1] + "," + at[2] + "," + at[3];
+
+                        CompletableFuture<Long> hit = new CompletableFuture<>();
+                        app.dispatch(() -> hit.complete(Win32.sendMessage(window.snapOverlay(), Win32.WM_NCHITTEST, 0, 0)));
+                        long hitTest = hit.join();
+
+                        String attr = "document.querySelector('[data-jolt-caption]').shadowRoot.querySelector('button.maximize').getAttribute('data-state')";
+                        app.dispatch(() -> Win32.sendMessage(window.snapOverlay(), Win32.WM_NCMOUSEMOVE, Win32.HTMAXBUTTON, 0));
+                        boolean hovered = WebWindowContract.eventually(() -> "hover".equals(WebWindowContract.evalNow(window, attr)), 5000).join();
+                        app.dispatch(() -> Win32.sendMessage(window.snapOverlay(), Win32.WM_NCLBUTTONDOWN, Win32.HTMAXBUTTON, 0));
+                        boolean pressed = WebWindowContract.eventually(() -> "pressed".equals(WebWindowContract.evalNow(window, attr)), 5000).join();
+                        app.dispatch(() -> Win32.sendMessage(window.snapOverlay(), Win32.WM_NCLBUTTONUP, Win32.HTMAXBUTTON, 0));
+                        boolean maximized = WebWindowContract.eventually(window::isMaximized, 5000).join();
+                        boolean told = WebWindowContract.eventually(() -> "true".equals(WebWindowContract.evalNow(window,
+                                "String(document.documentElement.hasAttribute('data-jolt-maximized'))")), 5000).join();
+
+                        WebWindowContract.evalNow(window, "document.querySelector('[data-jolt-titlebar]').remove(); 1");
+                        boolean gone = WebWindowContract.eventually(() -> window.snapOverlayRect() == null, 5000).join();
+                        result.complete(placed + "|" + expected + "|" + actual + "|" + hitTest + "|" + hovered + "|" + pressed + "|"
+                                + maximized + "|" + told + "|" + gone);
+                    } catch (Throwable t) {
+                        result.completeExceptionally(t);
+                    } finally {
+                        window.close();
+                    }
+                });
+            });
+            window.loadHtml("<header data-jolt-titlebar style='display:flex;height:32px'><span>Title</span></header>"
+                    + "<script>addEventListener('load', () => jolt.postMessage('hello'))</script>");
+        });
+        String seen = result.getNow("not answered");
+        org.junit.jupiter.api.Assumptions.assumeTrue(!seen.equals("unavailable"), "snap layouts need Windows 11");
+        String[] parts = seen.split("\\|");
+        assertEquals(9, parts.length, seen);
+        assertEquals("true", parts[0], "the overlay must appear once the page reports its maximize button");
+        String[] expected = parts[1].split(","), actual = parts[2].split(",");
+        for (int i = 0; i < 4; i++) {
+            assertTrue(Math.abs(Integer.parseInt(expected[i]) - Integer.parseInt(actual[i])) <= 1,
+                    "overlay " + parts[2] + " must sit over the button " + parts[1]);
+        }
+        assertEquals(String.valueOf(Win32.HTMAXBUTTON), parts[3], "the overlay must answer WM_NCHITTEST with HTMAXBUTTON");
+        assertEquals("true", parts[4], "hover must reach the page");
+        assertEquals("true", parts[5], "press must reach the page");
+        assertEquals("true", parts[6], "releasing over the overlay must maximize the window");
+        assertEquals("true", parts[7], "the page must be told it is maximized");
+        assertEquals("true", parts[8], "the overlay must go away with the button");
+    }
+
     @Test
     void aTrayIconAppearsInTheNotificationAreaReportsClicksAndGoesAway() {
         CompletableFuture<String> result = new CompletableFuture<>();

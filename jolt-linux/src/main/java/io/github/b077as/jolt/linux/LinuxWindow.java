@@ -95,7 +95,7 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
                 subframes ? Gtk.USER_CONTENT_INJECT_ALL_FRAMES : Gtk.USER_CONTENT_INJECT_TOP_FRAME);
         if (options.frameless()) {
             // after the bridge: the frame script talks through window.jolt
-            Gtk.addUserScript(contentManager, FrameScript.build(), Gtk.USER_CONTENT_INJECT_TOP_FRAME);
+            Gtk.addUserScript(contentManager, FrameScript.build("linux"), Gtk.USER_CONTENT_INJECT_TOP_FRAME);
         }
         webView = Gtk.newWebView(app.webContext(), contentManager);
         Gtk.setDeveloperExtras(webView, options.devTools());
@@ -423,6 +423,19 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
     /** The window-state signal: the window gained or lost the keyboard focus. */
     void onFocusedChanged(boolean nowFocused) {
         focused = nowFocused;
+        pushFrameState();
+    }
+
+    @Override
+    public void reportState() {
+        pushFrameState();
+    }
+
+    /** Tells a frameless page whether the window is maximized and in front. UI thread. */
+    private void pushFrameState() {
+        if (options.frameless() && !destroyed) {
+            eval(FrameProtocol.stateScript(maximized, focused || !shown)).exceptionally(t -> null);
+        }
     }
 
     /** The close button was pressed. Returns true to keep the window (it is only hidden). */
@@ -437,6 +450,7 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
 
     void onMaximizedChanged(boolean nowMaximized) {
         maximized = nowMaximized;
+        pushFrameState();
     }
 
     @Override

@@ -53,6 +53,8 @@ final class WindowsApplication implements Application {
     private final AtomicBoolean wakePending = new AtomicBoolean();
     /** Live windows by HWND; changed on the UI thread only, readable from any thread. */
     private final Map<Long, WindowsWindow> windows = new java.util.concurrent.ConcurrentHashMap<>();
+    /** Overlay child windows by HWND (see {@link WindowsWindow}); UI thread only. */
+    private final Map<Long, WindowsWindow> overlays = new java.util.HashMap<>();
     /** Tray icons; UI thread only. */
     private final List<WindowsTray> trays = new ArrayList<>();
 
@@ -259,6 +261,11 @@ final class WindowsApplication implements Application {
         windows.put(hwnd.address(), window);
     }
 
+    /** A small helper window inside {@code window} (the snap-layout overlay); its messages go to the window. UI thread. */
+    void registerOverlay(MemorySegment hwnd, WindowsWindow window) {
+        overlays.put(hwnd.address(), window);
+    }
+
     void windowDestroyed(MemorySegment hwnd) {
         windows.remove(hwnd.address());
         if (windows.isEmpty() && options.quitWhenLastWindowClosed()) {
@@ -448,6 +455,14 @@ final class WindowsApplication implements Application {
                 Long handled = tray.handle(msg, wParam, lParam);
                 return handled != null ? handled : Win32.defWindowProc(hwnd, msg, wParam, lParam);
             }
+        }
+        WindowsWindow overlayOwner = overlays.get(hwnd.address());
+        if (overlayOwner != null) {
+            if (msg == Win32.WM_DESTROY) {
+                overlays.remove(hwnd.address());
+            }
+            Long handled = overlayOwner.handleOverlayMessage(hwnd, msg, wParam, lParam);
+            return handled != null ? handled : Win32.defWindowProc(hwnd, msg, wParam, lParam);
         }
         WindowsWindow window = windows.get(hwnd.address());
         if (window != null) {
