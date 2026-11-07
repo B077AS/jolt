@@ -6,21 +6,20 @@ this file says when they do.
 
 The latest version is the one on [Maven Central](https://central.sonatype.com/artifact/io.github.b077as/jolt-core).
 
-## Unreleased
+## 0.4.0 - 2026-11-07
 
 ### Added
 - **Custom URL schemes: `Application.urlSchemes()`** (`register(scheme, displayName, command)`, `unregister`, `isRegistered`, and `UrlSchemes.findUrl(args, scheme)`).
   Makes the operating system start your application for links such as `myapp://invite/ABC`; you choose the scheme. Windows writes `HKCUSoftwareClasses<scheme>`;
   Linux writes a `.desktop` entry handling `x-scheme-handler/<scheme>` and runs `xdg-mime default`. The link arrives as the last command-line argument, and with
   `SingleInstance` a running copy receives it from the new launch. Web, mail and file schemes (`http`, `mailto`, ...) are refused. Windows registry round trip and the
-  Linux entry file are tested; **not tried: a real browser click, and `xdg-mime` on a real desktop.**
+  Linux entry file are tested on both systems; **not tried: a real browser click.**
 - **Microphone and camera for your own pages: `SecurityPolicy.withGrantedPermissions(Permission.MICROPHONE, Permission.CAMERA)`.** Pages
   of the window's own content (and trusted origins) can then use `getUserMedia`, `enumerateDevices` and the rest of WebRTC while every other
   permission and every other page stays refused. Before, `getUserMedia` always failed with `NotAllowedError` unless you turned
   `denyPermissions` off, and on Linux it failed even then. Windows answers the request itself and tells WebView2 not to remember the answer, so
   changing the policy takes effect; Linux turns on WebKitGTK's `enable-media-stream` and allows the request (a system without those symbols
-  just keeps refusing). Screen capture (`getDisplayMedia`) is not covered. Tested on Windows (`microphoneAccess*`, `grantedMicrophone*`).
-  **Not run on Linux yet.**
+  just keeps refusing). Screen capture (`getDisplayMedia`) is not covered. Tested on Windows and Linux (`microphoneAccess*`, `grantedMicrophone*`).
 - **Full screen: `WebWindow.setFullscreen(boolean)` and `isFullscreen()`.** The window covers the whole screen it is on, without title bar,
   border or taskbar; leaving it brings back the size, position and maximized state it had. The browser's F11 stays disabled, this is the
   way to do it. A window that is still hidden is full screen when first shown. A frameless page can do the same with
@@ -45,12 +44,6 @@ The latest version is the one on [Maven Central](https://central.sonatype.com/ar
   ignore this; the button simply works as a button.
 - **Windows: right-clicking a title bar** (`data-jolt-drag` or `data-jolt-titlebar`) opens the system window menu (Restore, Move, Size,
   Minimize, Maximize, Close); `jolt.frame.menu()` opens it from code. Frameless windows are also rounded explicitly on Windows 11.
-
-### Not yet verified
-- How the new title bar looks, and the snap-layout flyout itself, were not looked at: the tests check what can be read back (the overlay
-  sits exactly over the button, answers `HTMAXBUTTON`, passes press and hover to the page, maximizes on a click, goes away with the
-  button). The Linux changes (state to the page, the kit) compile but the Linux suite was not run for them; Linux has no snap layouts,
-  no window menu on right click and no shadow or rounded corners for frameless windows.
 
 ## 0.3.3 - 2026-11-06
 
