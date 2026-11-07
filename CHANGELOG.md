@@ -9,6 +9,11 @@ The latest version is the one on [Maven Central](https://central.sonatype.com/ar
 ## Unreleased
 
 ### Added
+- **Custom URL schemes: `Application.urlSchemes()`** (`register(scheme, displayName, command)`, `unregister`, `isRegistered`, and `UrlSchemes.findUrl(args, scheme)`).
+  Makes the operating system start your application for links such as `myapp://invite/ABC`; you choose the scheme. Windows writes `HKCUSoftwareClasses<scheme>`;
+  Linux writes a `.desktop` entry handling `x-scheme-handler/<scheme>` and runs `xdg-mime default`. The link arrives as the last command-line argument, and with
+  `SingleInstance` a running copy receives it from the new launch. Web, mail and file schemes (`http`, `mailto`, ...) are refused. Windows registry round trip and the
+  Linux entry file are tested; **not tried: a real browser click, and `xdg-mime` on a real desktop.**
 - **Microphone and camera for your own pages: `SecurityPolicy.withGrantedPermissions(Permission.MICROPHONE, Permission.CAMERA)`.** Pages
   of the window's own content (and trusted origins) can then use `getUserMedia`, `enumerateDevices` and the rest of WebRTC while every other
   permission and every other page stays refused. Before, `getUserMedia` always failed with `NotAllowedError` unless you turned

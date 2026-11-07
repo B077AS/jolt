@@ -278,6 +278,11 @@ final class LinuxApplication implements Application {
     }
 
     @Override
+    public io.github.b077as.jolt.UrlSchemes urlSchemes() {
+        return new XdgUrlSchemes(options.appId(), XdgUrlSchemes.defaultDirectory(), XdgUrlSchemes::xdgMimeDefault);
+    }
+
+    @Override
     public WebWindow createWindow(WindowOptions windowOptions) {
         if (!isUiThread()) {
             throw new IllegalStateException("createWindow must be called on the UI thread (inside run's onStart)");
