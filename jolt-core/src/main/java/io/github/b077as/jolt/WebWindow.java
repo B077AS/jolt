@@ -226,6 +226,30 @@ public interface WebWindow {
         io.github.b077as.jolt.internal.PageFileDrag.enable(this, source);
     }
 
+    /**
+     * Puts buttons in the strip under this window's preview when the pointer rests on its taskbar icon, for the actions a user
+     * wants without bringing the window up (mute, pause, next, leave a call). <b>Windows only</b>; elsewhere this does nothing and
+     * {@link #supportsTaskbarButtons()} is {@code false}.
+     *
+     * <pre>{@code
+     * window.setTaskbarButtons(List.of(
+     *         TaskbarButton.of("Mute", muteIcon, () -> toggleMute()),
+     *         TaskbarButton.of("Leave call", hangupIcon, () -> leave()).withEnabled(inCall)));
+     * }</pre>
+     * At most {@link TaskbarButton#MAX_BUTTONS}. Windows only lets a program add the buttons once, so the <em>number</em> of buttons
+     * is fixed by the first call that has any: later calls can change icons, tooltips and which are enabled, and may give fewer
+     * (the rest are hidden), but not more. The buttons appear once the window has been shown; an empty list hides them all.
+     * Callbacks run on the UI thread.
+     *
+     * @throws IllegalArgumentException if there are more buttons than allowed, or than the first call had
+     */
+    default void setTaskbarButtons(java.util.List<TaskbarButton> buttons) {}
+
+    /** Whether {@link #setTaskbarButtons} does anything on this window's platform. */
+    default boolean supportsTaskbarButtons() {
+        return false;
+    }
+
     /** Opens a {@link BinaryChannel} with the default {@link ChannelOptions}. */
     default BinaryChannel openChannel(String name) {
         return openChannel(name, ChannelOptions.defaults());

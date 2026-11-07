@@ -69,6 +69,7 @@ final class WindowsWindow implements WebWindow, NativeResourceHost, NativeDialog
     private volatile CloseBehavior closeBehavior = CloseBehavior.CLOSE;
     private final SecurityGuard guard;
     private final MemorySegment hwnd;
+    private final WindowsTaskbarButtons taskbarButtons;
     private final CompletableFuture<Void> ready = new CompletableFuture<>();
     private final CopyOnWriteArrayList<Consumer<String>> messageListeners = new CopyOnWriteArrayList<>();
     private final CopyOnWriteArrayList<Runnable> closedListeners = new CopyOnWriteArrayList<>();
@@ -131,6 +132,7 @@ final class WindowsWindow implements WebWindow, NativeResourceHost, NativeDialog
             throw new JoltException("CreateWindowExW failed: Win32 error " + error[0]);
         }
         app.register(hwnd, this);
+        taskbarButtons = new WindowsTaskbarButtons(hwnd);
         if (options.frameless()) {
             // The first WM_NCCALCSIZE came before this window was known to the application; ask for it again now.
             Win32.setWindowPos(hwnd, 0, 0, 0, 0, Win32.SWP_FRAMECHANGED | Win32.SWP_NOMOVE | Win32.SWP_NOSIZE
@@ -697,6 +699,10 @@ public CompletableFuture<String> eval(String script) {
 
     /** Window messages for this window; returns the LRESULT, or {@code null} for default processing. */
     Long handleMessage(int msg, long wParam, long lParam) {
+        if (taskbarButtons.isButtonCreatedMessage(msg)) {
+            taskbarButtons.onButtonCreated();
+            return 0L;
+        }
         switch (msg) {
             case Win32.WM_NCCALCSIZE -> {
                 if (!options.frameless() || wParam == 0) {
@@ -780,6 +786,9 @@ public CompletableFuture<String> eval(String script) {
                 Win32.setWindowPos(hwnd, left, top, rect.get(JAVA_INT, 8) - left, rect.get(JAVA_INT, 12) - top,
                         Win32.SWP_NOZORDER | Win32.SWP_NOACTIVATE);
                 return 0L;
+            }
+            case Win32.WM_COMMAND -> {
+                return taskbarButtons.onCommand(wParam) ? 0L : null;
             }
             case Win32.WM_CLOSE -> {
                 if (closeBehavior == CloseBehavior.HIDE && !closing) {
@@ -1255,6 +1264,26 @@ public CompletableFuture<String> eval(String script) {
     }
 
     @Override
+    public void setTaskbarButtons(List<io.github.b077as.jolt.TaskbarButton> buttons) {
+        List<io.github.b077as.jolt.TaskbarButton> copy = List.copyOf(buttons);
+        taskbarButtons.reserve(copy.size()); // fails here, on the caller's thread, if it is too many
+        app.dispatch(() -> {
+            if (!destroyed) {
+                taskbarButtons.set(copy);
+            }
+        });
+    }
+
+    @Override
+    public boolean supportsTaskbarButtons() {
+        return true;
+    }
+
+    int taskbarButtonsResult() {
+        return taskbarButtons.lastResult;
+    }
+
+    @Override
     public boolean beginFileDrag(List<java.nio.file.Path> files, Consumer<Boolean> finished) {
         if (destroyed) {
             return false;
@@ -1569,6 +1598,7 @@ public CompletableFuture<String> eval(String script) {
         }
         handlers.clear();
         destroyIcons();
+        taskbarButtons.dispose();
         if (!backgroundBrush.equals(MemorySegment.NULL)) {
             Win32.deleteObject(backgroundBrush);
             backgroundBrush = MemorySegment.NULL;

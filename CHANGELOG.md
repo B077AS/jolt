@@ -21,6 +21,23 @@ The latest version is the one on [Maven Central](https://central.sonatype.com/ar
   file. Targets can only copy, so the original is never moved. `finished(token, dropped)` tells you how it ended (to delete a temporary file).
   Windows uses the shell's drag loop and data object; Linux offers a `text/uri-list` through GTK.
 
+- **Buttons in the taskbar preview (Windows): `WebWindow.setTaskbarButtons(List<TaskbarButton>)`.** Up to 7 buttons under the window's preview
+  when the pointer rests on its taskbar icon (the strip Discord uses for mute and leave-call), each with a PNG/ICO icon, a tooltip, an
+  enabled state and a callback on the UI thread. Windows lets the buttons be added only once, so the first call fixes their number; later
+  calls update them and may use fewer (the rest are hidden). They are added when the window's taskbar button exists and again after Explorer
+  restarts. `supportsTaskbarButtons()` is `false` elsewhere and the call does nothing (the `WebWindow` methods are defaults, so existing
+  implementations still compile). Tested on Windows: adding and updating return S_OK and presses reach the right callback (simulated with the
+  `WM_COMMAND` Explorer sends).
+
+### Fixed
+- **Binary channels could stop delivering a large message part way, on Windows.** The connection's reader and writer were both
+  virtual threads on the same socket, and with JDK 25.0.1 on Windows the writer's "socket can take more" wakeup is sometimes lost
+  in that situation (the JDK's read and write pollers are separate WEPoll instances); the page then waited forever for the rest of
+  the message. About 40% of 2 MB messages were affected in tests. The writer is now a platform thread. Reproduced without Jolt
+  on Windows; not tried on Linux (which uses a different poller), where the change is harmless either way.
+- **Closing a channel (or the window) could hang** when the page had stopped reading: `close` waited for the lock held by a write that
+  could never finish. The close frame is now sent on the side and given 250 ms; the connection is then closed regardless.
+
 ### Changed
 - Windows: the UI thread is now initialised with `OleInitialize` instead of `CoInitializeEx` (it does the same and also sets up what
   drag and drop needs).
@@ -32,6 +49,9 @@ The latest version is the one on [Maven Central](https://central.sonatype.com/ar
   deliver the file list of a drop from another program, and `gtk_drag_begin_with_coordinates` with no event is expected to start a drag while
   the button is held; neither has been tried on X11 or Wayland, and WebKitGTK's own handling of those signals may differ. The shared contract
   tests (`aWindowWithFileDrop*`, `forgedFileDrop*`) have only run on Windows.
+- **How the taskbar buttons look and that they appear above the taskbar icon** (needs a person pointing at the taskbar; tests only check
+  Windows' answer and the press handling), icon sharpness at display scaling above 100%, a window run as administrator (Explorer's
+  `TaskbarButtonCreated` message may need to be allowed through), and the layout when fewer buttons than first added are shown.
 - How the drag looks (drag image, cursor) on either system, a drop from a real Explorer/Nautilus window (Windows tests drag from the window
   itself with injected mouse input), dropping folders, dropping thousands of files, a window on a screen with display scaling other than 100%.
 

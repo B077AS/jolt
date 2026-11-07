@@ -30,6 +30,7 @@ final class Win32 {
     static final int WM_GETMINMAXINFO = 0x0024;
     static final int WM_SETFOCUS = 0x0007;
     static final int WM_CLOSE = 0x0010;
+    static final int WM_COMMAND = 0x0111;
     static final int WM_ERASEBKGND = 0x0014;
     static final int WM_SHOWWINDOW = 0x0018;
     static final int WM_SETICON = 0x0080;

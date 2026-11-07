@@ -540,6 +540,23 @@ public static void main(String[] args) {
 `SingleInstance` takes a lock file in the data directory (released by the system if the app dies) and talks to the running copy over a
 Unix domain socket that only the same user can reach. The callback runs on a thread of its own: use `app.dispatch`.
 
+### Buttons in the taskbar preview (Windows)
+
+When the pointer rests on the taskbar icon, Windows shows the window's preview, and under it a strip of buttons can offer actions that
+need no trip to the window (mute, pause, leave a call). Available in the release after 0.4.0; **Windows only**: elsewhere
+`supportsTaskbarButtons()` is `false` and the call does nothing.
+
+```java
+window.setTaskbarButtons(List.of(
+        TaskbarButton.of("Mute", muteIcon, () -> toggleMute()),                     // icon: PNG or ICO bytes, drawn about 16 px
+        TaskbarButton.of("Leave call", hangupIcon, () -> leave()).withEnabled(inCall)));
+```
+
+Up to 7 buttons; callbacks run on the UI thread. Windows lets a program add the buttons only **once**, so the number is fixed by the first
+call that has any: later calls update icons, tooltips and enabled state, and may give fewer (the rest are hidden), but giving more throws
+`IllegalArgumentException`. Call it again whenever the state changes (swap the mute icon, disable a button). The buttons appear once the
+window has been shown, and are added again if Explorer restarts.
+
 ## Security
 
 The page can call everything you register with `onMessage`, so each window has a `SecurityPolicy`. The default,
