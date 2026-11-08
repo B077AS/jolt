@@ -73,7 +73,7 @@ Add the API and both backends; each one only activates on its own OS.
 ```xml
 <properties>
   <maven.compiler.release>25</maven.compiler.release>
-  <jolt.version>0.4.0</jolt.version>
+  <jolt.version>0.4.1</jolt.version>
 </properties>
 
 <dependencies>
@@ -98,9 +98,9 @@ Add the API and both backends; each one only activates on its own OS.
 Gradle:
 
 ```kotlin
-implementation("io.github.b077as:jolt-core:0.4.0")
-implementation("io.github.b077as:jolt-win32:0.4.0")
-implementation("io.github.b077as:jolt-linux:0.4.0")
+implementation("io.github.b077as:jolt-core:0.4.1")
+implementation("io.github.b077as:jolt-win32:0.4.1")
+implementation("io.github.b077as:jolt-linux:0.4.1")
 ```
 
 Run Java with `--enable-native-access=ALL-UNNAMED`, or put `Enable-Native-Access: ALL-UNNAMED` in your jar manifest
@@ -209,7 +209,7 @@ must come from `loadResources`.
 ### Dragging files in and out
 
 A page is never told where a file lives, so a dropped file would be a name and some bytes. Jolt gives the **path** to Java instead
-(available in the release after 0.4.0).
+(since 0.4.1).
 
 **Drop files onto the window** (from Explorer, Nautilus, the desktop):
 
@@ -543,7 +543,7 @@ Unix domain socket that only the same user can reach. The callback runs on a thr
 ### Buttons in the taskbar preview (Windows)
 
 When the pointer rests on the taskbar icon, Windows shows the window's preview, and under it a strip of buttons can offer actions that
-need no trip to the window (mute, pause, leave a call). Available in the release after 0.4.0; **Windows only**: elsewhere
+need no trip to the window (mute, pause, leave a call). Available since **0.4.1**; **Windows only**: elsewhere
 `supportsTaskbarButtons()` is `false` and the call does nothing.
 
 ```java
@@ -559,7 +559,7 @@ window has been shown, and are added again if Explorer restarts.
 
 ### Progress on the taskbar icon
 
-A bar along the window's taskbar icon shows a download, export or upload without bringing the window up. On Windows this is the taskbar
+A bar along the window's taskbar icon shows a download, export or upload without bringing the window up (since 0.4.1). On Windows this is the taskbar
 icon's progress. On Linux it is **best effort**: Jolt sends the Unity launcher signal (`com.canonical.Unity.LauncherEntry`), which KDE Plasma,
 Ubuntu's dock and Dash to Dock draw; plain GNOME Shell and most others ignore it. The desktop finds your icon through an installed
 `<appId>.desktop` file, so an app run from a bare jar shows nothing; Linux has one bar per application and no red/yellow states.
@@ -577,7 +577,7 @@ if Explorer restarts.
 ### Extra entries on the taskbar / launcher icon
 
 Right-clicking the application's icon in the taskbar (Windows) or launcher (Linux) can offer actions that need no window first:
-**tasks** like "New incognito window", and, on Windows, your own **categories** like "Recent projects".
+**tasks** like "New incognito window", and, on Windows, your own **categories** like "Recent projects". Available since **0.4.1**.
 
 ```java
 app.setJumpList(JumpList.builder()

@@ -6,7 +6,7 @@ this file says when they do.
 
 The latest version is the one on [Maven Central](https://central.sonatype.com/artifact/io.github.b077as/jolt-core).
 
-## Unreleased
+## 0.4.1 - 2026-11-08
 
 ### Added
 - **Dropping files onto a window: `WebWindow.onFileDrop(listener)`.** The listener gets a `FileDrop`: the absolute local paths of the
@@ -48,8 +48,15 @@ The latest version is the one on [Maven Central](https://central.sonatype.com/ar
   given. Linux: the tasks are written as freedesktop **desktop actions** into the generated `$XDG_DATA_HOME/applications/<appId>.desktop`
   (the same file that carries the Wayland icon; one that Jolt did not write is never changed, and actions of a copied system entry are
   replaced); categories are left out. Not included: the "Recent" list of files (that needs a registered file type).
-  Tested: on Windows Windows accepts the list (S_OK) and the windows take the id; the Linux entry text is unit tested.
- could stop delivering a large message part way, on Windows.** The connection's reader and writer were both
+  Tested on Windows: Windows accepts the list (S_OK) and the windows take the id; the Linux entry text is unit tested.
+
+### Fixed
+- **Linux, Wayland: `isMinimized()` stayed `false` after `minimize()`.** xdg-shell never tells a client that its window was minimized, so
+  GDK sends no iconified state. The window now records the minimize itself and takes it back when it gets the keyboard focus again.
+- **Linux, Wayland: `Clipboard.onChange` never fired, not even for the application's own writes.** GTK 3 does not report clipboard
+  owner changes on Wayland (`gdk_display_supports_selection_notification` is false). The application's own writes and clears are now
+  announced; what other programs copy still cannot be seen on such a display.
+- **Binary channels could stop delivering a large message part way, on Windows.** The connection's reader and writer were both
   virtual threads on the same socket, and with JDK 25.0.1 on Windows the writer's "socket can take more" wakeup is sometimes lost
   in that situation (the JDK's read and write pollers are separate WEPoll instances); the page then waited forever for the rest of
   the message. About 40% of 2 MB messages were affected in tests. The writer is now a platform thread. Reproduced without Jolt
@@ -62,25 +69,6 @@ The latest version is the one on [Maven Central](https://central.sonatype.com/ar
   drag and drop needs).
 - `WebView2Abi` was regenerated with three more interfaces (`ICoreWebView2WebMessageReceivedEventArgs2`, `ICoreWebView2ObjectCollectionView`,
   `ICoreWebView2File`); nothing else in it changed.
-
-### Not yet verified
-- **Linux, both directions: compiled, not run** (Docker was not available). `drag-data-received` / `drag-drop` on the web view are expected to
-  deliver the file list of a drop from another program, and `gtk_drag_begin_with_coordinates` with no event is expected to start a drag while
-  the button is held; neither has been tried on X11 or Wayland, and WebKitGTK's own handling of those signals may differ. The shared contract
-  tests (`aWindowWithFileDrop*`, `forgedFileDrop*`) have only run on Windows.
-- **Jump list: how it looks, and that the entries appear on the icon, is not verified on either system.** Windows hides custom
-  categories (`AppendCategory` answers E_ACCESSDENIED, 0x80070005) when the user turned off "Show recently opened items" in Settings,
-  which is how the test machine is set, so the category path was only seen refused, not shown; tasks were accepted. Not run: a launch
-  from a task (the second copy starting and handing its arguments over), a program started by `javaw -jar` grouping under its own icon
-  after being pinned, an icon file in a category entry, Linux desktop actions on a real GNOME/KDE launcher (the generated file is only
-  unit tested, and the desktop must match the running window to `<appId>.desktop`, which on X11 depends on the window class).
-- **Linux taskbar progress: nothing has been run.** The signal is built and sent but no desktop was checked to draw it, and the
-  test (`LinuxShellTest.taskbarProgressIsSent...`, reads the bus with `dbus-monitor`, which the Docker image may lack) was only compiled.
-- **How the taskbar buttons look and that they appear above the taskbar icon** (needs a person pointing at the taskbar; tests only check
-  Windows' answer and the press handling), icon sharpness at display scaling above 100%, a window run as administrator (Explorer's
-  `TaskbarButtonCreated` message may need to be allowed through), and the layout when fewer buttons than first added are shown.
-- How the drag looks (drag image, cursor) on either system, a drop from a real Explorer/Nautilus window (Windows tests drag from the window
-  itself with injected mouse input), dropping folders, dropping thousands of files, a window on a screen with display scaling other than 100%.
 
 ## 0.4.0 - 2026-11-07
 
