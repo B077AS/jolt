@@ -6,6 +6,15 @@ this file says when they do.
 
 The latest version is the one on [Maven Central](https://central.sonatype.com/artifact/io.github.b077as/jolt-core).
 
+## Unreleased
+
+### Added
+- **Strict file drops.** Put `data-jolt-drop-strict` on `<html>` and a file drag over anything outside a `data-jolt-drop` element gets
+  `dropEffect = 'none'` (the system's not-allowed cursor), and a drop there is not delivered to `onFileDrop`. Without the attribute the
+  whole page accepts drops, as before. Windows (WebView2): done in the page script. Linux: only the delivery is refused; the cursor still
+  shows "copy" outside zones because the host window reports the drag natively. Not yet verified: that WebKitGTK/WebView2 render
+  `dropEffect = 'none'` as the not-allowed cursor.
+
 ## 0.4.1 - 2026-11-08
 
 ### Added
