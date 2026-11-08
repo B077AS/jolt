@@ -139,6 +139,44 @@ class LinuxShellTest {
         assertTrue(minimized.getNow(false));
     }
 
+    // ---- launcher progress ----
+
+    @Test
+    @EnabledIfEnvironmentVariable(named = "DBUS_SESSION_BUS_ADDRESS", matches = ".+")
+    void taskbarProgressIsSentAsAUnityLauncherEntryUpdateAndClearedWhenTheWindowCloses() throws Exception {
+        // dbus-monitor sees signals that are not addressed to anyone
+        Process watcher = new ProcessBuilder("dbus-monitor", "--session", "type=signal,interface=com.canonical.Unity.LauncherEntry")
+                .redirectErrorStream(true).start();
+        StringBuffer seen = new StringBuffer();
+        Thread reader = new Thread(() -> {
+            try (java.io.BufferedReader in = new java.io.BufferedReader(new java.io.InputStreamReader(watcher.getInputStream()))) {
+                for (String line; (line = in.readLine()) != null; ) {
+                    seen.append(line).append('\n');
+                }
+            } catch (java.io.IOException ignored) {
+                // the monitor was stopped
+            }
+        });
+        reader.setDaemon(true);
+        reader.start();
+        Thread.sleep(1000); // the monitor needs a moment to be listening
+        try {
+            WebWindowContract.runApp(30, app -> {
+                LinuxWindow window = (LinuxWindow) app.createWindow(WindowOptions.defaults().withSize(300, 200));
+                assertTrue(window.supportsTaskbarProgress());
+                window.setTaskbarProgress(io.github.b077as.jolt.TaskbarProgress.normal(0.25));
+                app.dispatch(window::close); // closing a window that showed progress clears it
+            });
+            Thread.sleep(1000);
+        } finally {
+            watcher.destroy();
+        }
+        String output = seen.toString();
+        assertTrue(output.contains("application://") && output.contains(".desktop"), output);
+        assertTrue(output.contains("0.25") && output.contains("progress-visible"), output);
+        assertTrue(output.lastIndexOf("false") > output.indexOf("0.25"), "the bar is hidden again at the end: " + output);
+    }
+
     // ---- the tray ----
 
     @Test

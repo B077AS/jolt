@@ -61,6 +61,7 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
     private MemorySegment webView;
     private MemorySegment contentManager;
     private boolean destroyed;
+    private boolean progressShown;
     /** {@link #destroyNow} has started; the window goes as soon as an open dialog has returned. */
     private volatile boolean closing;
     private LinuxDialogs dialogs;
@@ -229,6 +230,25 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
             Gtk.evaluateJavascript(webView, script, Callbacks.EVAL_DONE, MemorySegment.ofAddress(requestId));
         });
         return result;
+    }
+
+    @Override
+    public void setTaskbarProgress(io.github.b077as.jolt.TaskbarProgress progress) {
+        java.util.Objects.requireNonNull(progress, "progress");
+        app.dispatch(() -> {
+            if (!destroyed) {
+                progressShown = progress.state() != io.github.b077as.jolt.TaskbarProgress.State.NONE;
+                app.launcherProgress().set(progress);
+            }
+        });
+    }
+
+    /** Best effort: true when there is a session bus; whether the desktop draws it is up to the desktop. */
+    @Override
+    public boolean supportsTaskbarProgress() {
+        String runtime = System.getenv("XDG_RUNTIME_DIR");
+        return System.getenv("DBUS_SESSION_BUS_ADDRESS") != null
+                || runtime != null && java.nio.file.Files.exists(java.nio.file.Path.of(runtime, "bus"));
     }
 
     @Override
@@ -799,6 +819,9 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
         }
         destroyed = true;
         finishDragOut(false); // a drag out that never got to end
+        if (progressShown) {
+            app.launcherProgress().set(io.github.b077as.jolt.TaskbarProgress.none()); // a bar left by a window that is gone
+        }
         WindowClosedException closed = new WindowClosedException();
         for (CompletableFuture<?> future : new ArrayList<>(inflight)) {
             future.completeExceptionally(closed);

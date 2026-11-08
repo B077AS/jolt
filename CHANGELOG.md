@@ -29,8 +29,27 @@ The latest version is the one on [Maven Central](https://central.sonatype.com/ar
   implementations still compile). Tested on Windows: adding and updating return S_OK and presses reach the right callback (simulated with the
   `WM_COMMAND` Explorer sends).
 
-### Fixed
-- **Binary channels could stop delivering a large message part way, on Windows.** The connection's reader and writer were both
+- **Progress on the taskbar icon (Windows): `WebWindow.setTaskbarProgress(TaskbarProgress)`.** A green bar along the window's taskbar icon
+  (`TaskbarProgress.normal(0.4)`), a red one (`error`), a yellow one (`paused`), a moving marquee for work of unknown length
+  (`indeterminate()`), or `none()` to clear it. Any thread; the value is kept and shown once the window has a taskbar button, and again
+  after Explorer restarts. On Linux it is best effort: Jolt sends the Unity launcher `com.canonical.Unity.LauncherEntry` `Update` signal, which KDE
+  Plasma's task manager, Ubuntu's dock and Dash to Dock/Panel draw and other desktops (plain GNOME Shell, XFCE) ignore; the application needs an
+  installed `<appId>.desktop` file, it is one bar per application, and error/paused look like a normal bar. `supportsTaskbarProgress()` is
+  `true` on Linux when there is a session bus. Tested on Windows: every state is accepted (S_OK); how the bar looks is not.
+
+- **Extra entries on the taskbar / launcher icon menu: `Application.setJumpList(JumpList)`.** The menu that opens when the user
+  right-clicks the application's icon can offer **tasks** ("New incognito window") and, on Windows, your own **categories** ("Recent
+  projects"). Each entry has a title and the arguments the program is started with when it is chosen (optional tooltip and icon on
+  Windows), so use `SingleInstance` to hand them to the running copy. `JumpList.builder().task(...).category(...).build()`;
+  `JumpList.empty()` removes them; `supportsJumpList()`. Windows: `ICustomDestinationList` with one shell link per entry; the windows
+  get `AppOptions.appId` as their AppUserModelID (from the first call on) so the list sits on this application's icon and not on
+  `javaw.exe`'s; an id with spaces or over 128 characters gets no list. The command that starts the program is the process's own
+  (rebuilt as `-jar app.jar` or `-cp ... Main` for a Java launch, where Windows tells no arguments) unless `builder().command(...)` is
+  given. Linux: the tasks are written as freedesktop **desktop actions** into the generated `$XDG_DATA_HOME/applications/<appId>.desktop`
+  (the same file that carries the Wayland icon; one that Jolt did not write is never changed, and actions of a copied system entry are
+  replaced); categories are left out. Not included: the "Recent" list of files (that needs a registered file type).
+  Tested: on Windows Windows accepts the list (S_OK) and the windows take the id; the Linux entry text is unit tested.
+ could stop delivering a large message part way, on Windows.** The connection's reader and writer were both
   virtual threads on the same socket, and with JDK 25.0.1 on Windows the writer's "socket can take more" wakeup is sometimes lost
   in that situation (the JDK's read and write pollers are separate WEPoll instances); the page then waited forever for the rest of
   the message. About 40% of 2 MB messages were affected in tests. The writer is now a platform thread. Reproduced without Jolt
@@ -49,6 +68,14 @@ The latest version is the one on [Maven Central](https://central.sonatype.com/ar
   deliver the file list of a drop from another program, and `gtk_drag_begin_with_coordinates` with no event is expected to start a drag while
   the button is held; neither has been tried on X11 or Wayland, and WebKitGTK's own handling of those signals may differ. The shared contract
   tests (`aWindowWithFileDrop*`, `forgedFileDrop*`) have only run on Windows.
+- **Jump list: how it looks, and that the entries appear on the icon, is not verified on either system.** Windows hides custom
+  categories (`AppendCategory` answers E_ACCESSDENIED, 0x80070005) when the user turned off "Show recently opened items" in Settings,
+  which is how the test machine is set, so the category path was only seen refused, not shown; tasks were accepted. Not run: a launch
+  from a task (the second copy starting and handing its arguments over), a program started by `javaw -jar` grouping under its own icon
+  after being pinned, an icon file in a category entry, Linux desktop actions on a real GNOME/KDE launcher (the generated file is only
+  unit tested, and the desktop must match the running window to `<appId>.desktop`, which on X11 depends on the window class).
+- **Linux taskbar progress: nothing has been run.** The signal is built and sent but no desktop was checked to draw it, and the
+  test (`LinuxShellTest.taskbarProgressIsSent...`, reads the bus with `dbus-monitor`, which the Docker image may lack) was only compiled.
 - **How the taskbar buttons look and that they appear above the taskbar icon** (needs a person pointing at the taskbar; tests only check
   Windows' answer and the press handling), icon sharpness at display scaling above 100%, a window run as administrator (Explorer's
   `TaskbarButtonCreated` message may need to be allowed through), and the layout when fewer buttons than first added are shown.

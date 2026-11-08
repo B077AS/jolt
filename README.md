@@ -557,6 +557,51 @@ call that has any: later calls update icons, tooltips and enabled state, and may
 `IllegalArgumentException`. Call it again whenever the state changes (swap the mute icon, disable a button). The buttons appear once the
 window has been shown, and are added again if Explorer restarts.
 
+### Progress on the taskbar icon
+
+A bar along the window's taskbar icon shows a download, export or upload without bringing the window up. On Windows this is the taskbar
+icon's progress. On Linux it is **best effort**: Jolt sends the Unity launcher signal (`com.canonical.Unity.LauncherEntry`), which KDE Plasma,
+Ubuntu's dock and Dash to Dock draw; plain GNOME Shell and most others ignore it. The desktop finds your icon through an installed
+`<appId>.desktop` file, so an app run from a bare jar shows nothing; Linux has one bar per application and no red/yellow states.
+
+```java
+window.setTaskbarProgress(TaskbarProgress.normal(done / (double) total));   // green bar
+window.setTaskbarProgress(TaskbarProgress.indeterminate());                 // length unknown
+window.setTaskbarProgress(TaskbarProgress.error(0.6));                      // red: it failed
+window.setTaskbarProgress(TaskbarProgress.none());                          // done: clear it
+```
+
+Call it from any thread. It is shown as soon as the window has a taskbar button (so you can set it before the window is shown) and again
+if Explorer restarts.
+
+### Extra entries on the taskbar / launcher icon
+
+Right-clicking the application's icon in the taskbar (Windows) or launcher (Linux) can offer actions that need no window first:
+**tasks** like "New incognito window", and, on Windows, your own **categories** like "Recent projects".
+
+```java
+app.setJumpList(JumpList.builder()
+        .task("New incognito window", "--incognito")                     // starts the program with these arguments
+        .task(JumpItem.of("Settings", "--settings").withDescription("Open the settings"))
+        .category("Recent projects", List.of(                            // Windows only
+                JumpItem.of("Parsel", "--open", "42"),
+                JumpItem.of("Notes", "--open", "7")))
+        .build());
+```
+
+Choosing an entry **starts the program again** with those arguments, so receive them in the copy that is already running with
+`SingleInstance.acquire(options, args, onOtherLaunch)` (the new copy hands its arguments over and exits). Call `setJumpList` again whenever
+the entries change; `JumpList.empty()` removes them. `supportsJumpList()` says whether the platform has them.
+
+- **Windows**: from the first call the windows carry `AppOptions.appId` as their AppUserModelID, so the entries sit on this application's
+  icon and not on Java's. The id must be at most 128 characters without spaces. Windows hides categories when the user has turned off
+  "Show recently opened items" in Settings; tasks always show. The command to start is the process's own (for a plain Java launch rebuilt
+  as `-jar app.jar`; JVM options are not carried over, so put `Enable-Native-Access: ALL-UNNAMED` in the jar's manifest), or set
+  `builder().command(List.of(...))` yourself.
+- **Linux**: best effort. Tasks are written as desktop actions into `~/.local/share/applications/<appId>.desktop`, which GNOME and KDE show
+  on the launcher icon when the running window is matched to that file. Categories and icons are not used, and a `.desktop` file of your own
+  at that place is never changed.
+
 ## Security
 
 The page can call everything you register with `onMessage`, so each window has a `SecurityPolicy`. The default,

@@ -4,6 +4,8 @@ import io.github.b077as.jolt.AppOptions;
 import io.github.b077as.jolt.Autostart;
 import io.github.b077as.jolt.Application;
 import io.github.b077as.jolt.JoltException;
+import io.github.b077as.jolt.JumpItem;
+import io.github.b077as.jolt.JumpList;
 import io.github.b077as.jolt.Tray;
 import io.github.b077as.jolt.WebWindow;
 import io.github.b077as.jolt.WindowOptions;
@@ -120,9 +122,44 @@ final class LinuxApplication implements Application {
             desktopEntryChecked = true;
             desktopEntry = DesktopEntry.forThisProcess(options.appId(), name);
         }
+        if (pendingJumpList != null) {
+            applyJumpList(pendingJumpList); // set before the first window: the entry has its name now
+            pendingJumpList = null;
+        }
         if (desktopEntry != null) {
             desktopEntry.install(icon);
         }
+    }
+
+    private JumpList pendingJumpList;
+
+    /** The tasks become desktop actions of the application's entry; categories have no counterpart. See {@link DesktopEntry}. */
+    @Override
+    public void setJumpList(JumpList list) {
+        java.util.Objects.requireNonNull(list, "list");
+        dispatch(() -> {
+            if (desktopEntry == null) {
+                pendingJumpList = list; // the entry is made with the first window, when its title is known
+            } else {
+                applyJumpList(list);
+            }
+        });
+    }
+
+    private void applyJumpList(JumpList list) {
+        if (desktopEntry == null) {
+            return;
+        }
+        List<DesktopEntry.Action> actions = new java.util.ArrayList<>();
+        for (JumpItem item : list.tasks()) {
+            actions.add(new DesktopEntry.Action(item.title(), item.arguments()));
+        }
+        desktopEntry.setActions(actions, list.command());
+    }
+
+    @Override
+    public boolean supportsJumpList() {
+        return true;
     }
 
     private void runLoop(Runnable onStart) {
@@ -305,6 +342,16 @@ final class LinuxApplication implements Application {
 
     AppOptions options() {
         return options;
+    }
+
+    private LauncherProgress launcherProgress;
+
+    /** The launcher progress sender for this application (UI thread). */
+    LauncherProgress launcherProgress() {
+        if (launcherProgress == null) {
+            launcherProgress = new LauncherProgress(options.appId());
+        }
+        return launcherProgress;
     }
 
     MemorySegment webContext() {

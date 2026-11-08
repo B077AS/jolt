@@ -37,8 +37,9 @@ import java.util.stream.Stream;
  *       running program. A user entry that this class did not write is never touched.</li>
  * </ul>
  *
- * Nothing is done outside Wayland, where the window icon property works. Every failure is logged and ignored: a missing icon
- * must not stop the application.
+ * Nothing is done for the icon outside Wayland, where the window icon property works. The same file also carries the launcher
+ * menu: {@link #setActions} writes the application's jump list tasks as {@code [Desktop Action ...]} groups, on any desktop. Every
+ * failure is logged and ignored: a missing icon or menu must not stop the application.
  */
 final class DesktopEntry {
 
@@ -49,8 +50,14 @@ final class DesktopEntry {
     private final String name;
     private final Path dataHome;
     private final List<Path> systemDirectories;
-    private final List<String> command;
+    private List<String> command;
     private String installedHash = "";
+    private String iconName; // the icon installed so far, or null
+    private List<Action> actions = List.of();
+    private boolean icons = true; // false off Wayland: the window icon property works there
+
+    /** One entry of the launcher menu: a title and the arguments the program is started with. */
+    record Action(String name, List<String> arguments) {}
 
     DesktopEntry(String appId, String name, Path dataHome, List<Path> systemDirectories, List<String> command) {
         this.appId = appId;
@@ -60,11 +67,8 @@ final class DesktopEntry {
         this.command = command;
     }
 
-    /** The entry for the running program with the usual locations, or {@code null} off Wayland. */
+    /** The entry for the running program with the usual locations. Off Wayland it does not install icons, only actions. */
     static DesktopEntry forThisProcess(String appId, String name) {
-        if (!onWayland()) {
-            return null;
-        }
         String home = System.getenv("XDG_DATA_HOME");
         Path dataHome = home != null && !home.isBlank() && Path.of(home).isAbsolute()
                 ? Path.of(home) : Path.of(System.getProperty("user.home"), ".local", "share");
@@ -75,7 +79,9 @@ final class DesktopEntry {
                 system.add(Path.of(dir));
             }
         }
-        return new DesktopEntry(appId, name, dataHome, system, runningCommand());
+        DesktopEntry entry = new DesktopEntry(appId, name, dataHome, system, runningCommand());
+        entry.icons = onWayland();
+        return entry;
     }
 
     static boolean onWayland() {
@@ -105,6 +111,9 @@ final class DesktopEntry {
 
     /** Installs {@code iconData} (PNG, or an icon file holding PNG images) as the icon of this application. */
     synchronized void install(byte[] iconData) {
+        if (!icons) {
+            return;
+        }
         try {
             TreeMap<Integer, byte[]> images = images(iconData);
             if (images.isEmpty()) {
@@ -115,8 +124,7 @@ final class DesktopEntry {
                 return;
             }
             String iconName = safeId() + "-" + hash;
-            Path userEntry = dataHome.resolve("applications").resolve(safeId() + ".desktop");
-            if (Files.exists(userEntry) && !Files.readString(userEntry, StandardCharsets.UTF_8).contains(MARKER)) {
+            if (foreignEntry()) {
                 installedHash = hash; // somebody else's entry: theirs decides
                 return;
             }
@@ -125,7 +133,8 @@ final class DesktopEntry {
                         .resolve("apps").resolve(iconName + ".png");
                 write(icon, image.getValue());
             }
-            write(userEntry, entryText(iconName).getBytes(StandardCharsets.UTF_8));
+            this.iconName = iconName;
+            writeEntry();
             removeOldIcons(iconName);
             Files.setLastModifiedTime(dataHome.resolve("icons/hicolor"), FileTime.from(Instant.now()));
             installedHash = hash;
@@ -134,6 +143,43 @@ final class DesktopEntry {
         }
     }
 
+    /**
+     * Sets the launcher menu entries (the tasks of a jump list) as desktop actions, keeping the icon installed so far. An empty list
+     * takes them away again. A user entry that this class did not write is never touched.
+     */
+    synchronized void setActions(List<Action> list, List<String> commandOverride) {
+        this.actions = List.copyOf(list);
+        if (!commandOverride.isEmpty()) {
+            this.command = List.copyOf(commandOverride);
+        }
+        try {
+            if (foreignEntry()) {
+                LOG.log(System.Logger.Level.INFO, "The desktop entry " + safeId() + ".desktop was not made by Jolt, so its menu is left as it is");
+                return;
+            }
+            if (actions.isEmpty() && !Files.exists(userEntryPath())) {
+                return; // nothing to take away
+            }
+            writeEntry();
+        } catch (IOException | RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "The desktop entry with the launcher menu could not be written: " + e);
+        }
+    }
+
+    private Path userEntryPath() {
+        return dataHome.resolve("applications").resolve(safeId() + ".desktop");
+    }
+
+    private boolean foreignEntry() throws IOException {
+        Path userEntry = userEntryPath();
+        return Files.exists(userEntry) && !Files.readString(userEntry, StandardCharsets.UTF_8).contains(MARKER);
+    }
+
+    private void writeEntry() throws IOException {
+        write(userEntryPath(), entryText(iconName).getBytes(StandardCharsets.UTF_8));
+    }
+
+    /** The text of the entry; {@code iconName} may be null (no icon installed yet). */
     private String entryText(String iconName) throws IOException {
         String base = null;
         for (Path dir : systemDirectories) {
@@ -154,7 +200,8 @@ final class DesktopEntry {
         // Replace the icon of the main group only; keep every other line (and every "Desktop Action" group) as it is.
         StringBuilder out = new StringBuilder();
         boolean inMain = false;
-        boolean replaced = false;
+        boolean replaced = iconName == null; // with no icon of ours, the entry keeps the one it has
+        boolean skipping = false; // inside an action group that our own actions replace
         for (String line : base.split("\n", -1)) {
             if (line.startsWith("[")) {
                 if (inMain && !replaced) {
@@ -162,7 +209,12 @@ final class DesktopEntry {
                     replaced = true;
                 }
                 inMain = line.trim().equals("[Desktop Entry]");
-            } else if (inMain && line.startsWith("Icon=")) {
+                skipping = !actions.isEmpty() && line.startsWith("[Desktop Action ");
+            } else if (skipping) {
+                continue;
+            } else if (inMain && !actions.isEmpty() && line.startsWith("Actions=")) {
+                continue;
+            } else if (inMain && iconName != null && line.startsWith("Icon=")) {
                 if (!replaced) {
                     out.append("Icon=").append(iconName).append('\n');
                     replaced = true;
@@ -171,11 +223,28 @@ final class DesktopEntry {
             } else if (line.equals(MARKER)) {
                 continue;
             }
-            out.append(line).append('\n');
+            if (!skipping) {
+                out.append(line).append('\n');
+            }
         }
         String text = out.toString().stripTrailing() + "\n";
         if (!replaced) {
             text = text.replaceFirst("(\\[Desktop Entry]\\n)", "$1Icon=" + iconName + "\n");
+        }
+        if (!actions.isEmpty()) {
+            StringBuilder ids = new StringBuilder();
+            StringBuilder groups = new StringBuilder();
+            for (int i = 0; i < actions.size(); i++) {
+                Action action = actions.get(i);
+                List<String> exec = new ArrayList<>(command);
+                exec.addAll(action.arguments());
+                ids.append("jolt-action-").append(i).append(';');
+                groups.append("\n[Desktop Action jolt-action-").append(i).append("]\nName=")
+                        .append(action.name().replaceAll("[\\r\\n]", " ")).append("\nExec=")
+                        .append(CommandLines.desktopExec(exec)).append('\n');
+            }
+            text = text.replaceFirst("(\\[Desktop Entry]\\n)",
+                    java.util.regex.Matcher.quoteReplacement("[Desktop Entry]\nActions=" + ids + "\n")) + groups;
         }
         return text.replaceFirst("(\\[Desktop Entry]\\n)", "$1" + MARKER + "\n");
     }
@@ -243,7 +312,11 @@ final class DesktopEntry {
         Path temporary = Files.createTempFile(file.getParent(), ".jolt-", ".tmp");
         try {
             Files.write(temporary, bytes);
-            Files.setPosixFilePermissions(temporary, PosixFilePermissions.fromString("rw-r--r--"));
+            try {
+                Files.setPosixFilePermissions(temporary, PosixFilePermissions.fromString("rw-r--r--"));
+            } catch (UnsupportedOperationException notPosix) {
+                // a file system without POSIX permissions (the tests run on Windows too): the default is fine
+            }
             Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
         } finally {
             Files.deleteIfExists(temporary);

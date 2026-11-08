@@ -250,6 +250,27 @@ public interface WebWindow {
         return false;
     }
 
+    /**
+     * Shows progress on this window's taskbar icon: a bar along the icon (green, red or yellow) or a marquee for work of unknown
+     * length. On <b>Windows</b> it is the taskbar icon's progress; on <b>Linux</b> it is best effort: the Unity launcher API
+     * ({@code com.canonical.Unity.LauncherEntry}) drawn by KDE Plasma, Ubuntu's dock and Dash to Dock, and ignored by other desktops,
+     * and the application needs an installed {@code <appId>.desktop} file for the desktop to match it (Linux has only a bar: an error or
+     * paused state looks like a normal one, and it is one bar for the application). Where it does nothing
+     * {@link #supportsTaskbarProgress()} is {@code false}. Call it again
+     * with each step, and with {@link TaskbarProgress#none()} when the work is over. It is kept and shown as soon as the window has a
+     * taskbar button, and again if Explorer restarts. Any thread.
+     *
+     * <pre>{@code
+     * window.setTaskbarProgress(TaskbarProgress.normal(done / (double) total));
+     * }</pre>
+     */
+    default void setTaskbarProgress(TaskbarProgress progress) {}
+
+    /** Whether {@link #setTaskbarProgress} can do anything here: always on Windows, on Linux when there is a session bus (not proof the desktop draws it). */
+    default boolean supportsTaskbarProgress() {
+        return false;
+    }
+
     /** Opens a {@link BinaryChannel} with the default {@link ChannelOptions}. */
     default BinaryChannel openChannel(String name) {
         return openChannel(name, ChannelOptions.defaults());

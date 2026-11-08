@@ -1,6 +1,7 @@
 package io.github.b077as.jolt.win32;
 
 import io.github.b077as.jolt.TaskbarButton;
+import io.github.b077as.jolt.TaskbarProgress;
 import io.github.b077as.jolt.internal.ffi.Native;
 
 import java.lang.foreign.Arena;
@@ -14,6 +15,7 @@ import java.util.List;
 
 import static java.lang.foreign.ValueLayout.ADDRESS;
 import static java.lang.foreign.ValueLayout.JAVA_INT;
+import static java.lang.foreign.ValueLayout.JAVA_LONG;
 
 /**
  * The thumbnail toolbar of one window: the strip of buttons under its taskbar preview ({@code ITaskbarList3}). UI thread only,
@@ -34,8 +36,13 @@ final class WindowsTaskbarButtons {
     private static final String CLSID_TASKBAR_LIST = "56fdf344-fd6d-11d0-958a-006097c9a090";
     private static final String IID_TASKBAR_LIST3 = "ea1afb91-9e28-4b86-90e9-9e9f8a5eefaf";
     // vtable slots of ITaskbarList3 (IUnknown 0-2, ITaskbarList 3-7, ITaskbarList2 8)
-    private static final int HR_INIT = 3, THUMB_BAR_ADD_BUTTONS = 15, THUMB_BAR_UPDATE_BUTTONS = 16;
+    private static final int HR_INIT = 3, SET_PROGRESS_VALUE = 9, SET_PROGRESS_STATE = 10, THUMB_BAR_ADD_BUTTONS = 15, THUMB_BAR_UPDATE_BUTTONS = 16;
     private static final FunctionDescriptor HR_HWND_INT_PTR = FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT, ADDRESS);
+
+    private static final FunctionDescriptor HR_HWND_INT_PTR_STATE = FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT);
+    private static final FunctionDescriptor HR_HWND_LONG_LONG = FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG, JAVA_LONG);
+    private static final int TBPF_NOPROGRESS = 0, TBPF_INDETERMINATE = 1, TBPF_NORMAL = 2, TBPF_ERROR = 4, TBPF_PAUSED = 8;
+    private static final long PROGRESS_SCALE = 1000;
 
     // THUMBBUTTON on 64-bit Windows: DWORD mask (0), UINT id (4), UINT bitmap (8), HICON icon (16), WCHAR tip[260] (24), DWORD flags (544); 552 bytes
     private static final int BUTTON_SIZE = 552, OFFSET_ICON = 16, OFFSET_TIP = 24, OFFSET_FLAGS = 544;
@@ -51,9 +58,12 @@ final class WindowsTaskbarButtons {
     private final List<MemorySegment> icons = new ArrayList<>();
     private boolean buttonExists;
     private boolean added;
+    private TaskbarProgress progress = TaskbarProgress.none();
     private int slots; // guarded by this, read on the UI thread through the same lock
     /** The HRESULT of the last add or update, or {@code Integer.MIN_VALUE} before there was one. For tests. */
     volatile int lastResult = Integer.MIN_VALUE;
+    /** The HRESULT of the last progress update, or {@code Integer.MIN_VALUE} before there was one. For tests. */
+    volatile int lastProgressResult = Integer.MIN_VALUE;
 
     WindowsTaskbarButtons(MemorySegment hwnd) {
         this.hwnd = hwnd;
@@ -86,6 +96,47 @@ final class WindowsTaskbarButtons {
         buttonExists = true;
         added = false; // a new button has no toolbar yet
         apply();
+        applyProgress();
+    }
+
+    void setProgress(TaskbarProgress value) {
+        progress = value;
+        applyProgress();
+    }
+
+    private boolean ensureTaskbar() {
+        if (taskbar.equals(MemorySegment.NULL)) {
+            taskbar = Win32.coCreateInstance(CLSID_TASKBAR_LIST, IID_TASKBAR_LIST3);
+            if (taskbar.equals(MemorySegment.NULL) || Com.call(taskbar, HR_INIT, Com.HR_VOID) < 0) {
+                LOG.log(System.Logger.Level.WARNING, "The taskbar interface is not available; taskbar buttons and progress are not shown");
+                release();
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private void applyProgress() {
+        if (!buttonExists || !ensureTaskbar()) {
+            return; // onButtonCreated comes back here
+        }
+        int flags = switch (progress.state()) {
+            case NONE -> TBPF_NOPROGRESS;
+            case INDETERMINATE -> TBPF_INDETERMINATE;
+            case NORMAL -> TBPF_NORMAL;
+            case ERROR -> TBPF_ERROR;
+            case PAUSED -> TBPF_PAUSED;
+        };
+        int hr = 0;
+        if (flags != TBPF_NOPROGRESS && flags != TBPF_INDETERMINATE) {
+            // the value first: it would switch an indeterminate bar to normal after the state was set
+            hr = Com.call(taskbar, SET_PROGRESS_VALUE, HR_HWND_LONG_LONG, hwnd, Math.round(progress.fraction() * PROGRESS_SCALE), PROGRESS_SCALE);
+        }
+        int state = Com.call(taskbar, SET_PROGRESS_STATE, HR_HWND_INT_PTR_STATE, hwnd, flags);
+        lastProgressResult = hr < 0 ? hr : state;
+        if (lastProgressResult < 0) {
+            LOG.log(System.Logger.Level.WARNING, "Setting the taskbar progress failed: " + Com.hex(lastProgressResult));
+        }
     }
 
     void set(List<TaskbarButton> list) {
@@ -117,13 +168,8 @@ final class WindowsTaskbarButtons {
         if (!buttonExists || total == 0) {
             return; // nothing to show yet, or the button is not there yet: onButtonCreated comes back here
         }
-        if (taskbar.equals(MemorySegment.NULL)) {
-            taskbar = Win32.coCreateInstance(CLSID_TASKBAR_LIST, IID_TASKBAR_LIST3);
-            if (taskbar.equals(MemorySegment.NULL) || Com.call(taskbar, HR_INIT, Com.HR_VOID) < 0) {
-                LOG.log(System.Logger.Level.WARNING, "The taskbar interface is not available; taskbar buttons are not shown");
-                release();
-                return;
-            }
+        if (!ensureTaskbar()) {
+            return;
         }
         List<MemorySegment> previous = new ArrayList<>(icons);
         icons.clear();

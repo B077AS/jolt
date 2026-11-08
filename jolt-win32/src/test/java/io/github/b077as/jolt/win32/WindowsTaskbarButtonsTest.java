@@ -1,6 +1,7 @@
 package io.github.b077as.jolt.win32;
 
 import io.github.b077as.jolt.TaskbarButton;
+import io.github.b077as.jolt.TaskbarProgress;
 import io.github.b077as.jolt.WindowOptions;
 import io.github.b077as.jolt.contract.WebWindowContract;
 import org.junit.jupiter.api.Test;
@@ -87,6 +88,34 @@ class WindowsTaskbarButtonsTest {
             window.setTaskbarButtons(List.of()); // an empty list is always fine
             window.close();
         });
+    }
+
+    @Test
+    void progressSetBeforeAndAfterTheTaskbarButtonExistsIsAcceptedByWindows() {
+        List<String> log = new CopyOnWriteArrayList<>();
+        WebWindowContract.runApp(40, app -> {
+            WindowsWindow window = (WindowsWindow) app.createWindow(WindowOptions.defaults().withSize(300, 200));
+            assertTrue(window.supportsTaskbarProgress());
+            window.setTaskbarProgress(TaskbarProgress.normal(0.25)); // kept until the taskbar button is there
+            WebWindowContract.eventually(() -> window.taskbarProgressResult() != Integer.MIN_VALUE, 10_000).thenAccept(applied -> app.dispatch(() -> {
+                log.add("first applied=" + applied + " hr=" + window.taskbarProgressResult());
+                for (TaskbarProgress p : List.of(TaskbarProgress.indeterminate(), TaskbarProgress.paused(0.5),
+                        TaskbarProgress.error(1), TaskbarProgress.normal(0), TaskbarProgress.none())) {
+                    window.setTaskbarProgress(p);
+                    app.dispatch(() -> log.add(p.state() + " hr=" + window.taskbarProgressResult()));
+                }
+                app.dispatch(window::close);
+            }));
+        });
+        assertEquals(List.of("first applied=true hr=0", "INDETERMINATE hr=0", "PAUSED hr=0", "ERROR hr=0", "NORMAL hr=0", "NONE hr=0"), log);
+    }
+
+    @Test
+    void aProgressFractionOutsideZeroToOneIsRejected() {
+        assertThrows(IllegalArgumentException.class, () -> TaskbarProgress.normal(1.01));
+        assertThrows(IllegalArgumentException.class, () -> TaskbarProgress.error(-0.1));
+        assertThrows(IllegalArgumentException.class, () -> TaskbarProgress.paused(Double.NaN));
+        assertEquals(0, TaskbarProgress.indeterminate().fraction());
     }
 
     @Test

@@ -1284,6 +1284,25 @@ public CompletableFuture<String> eval(String script) {
     }
 
     @Override
+    public void setTaskbarProgress(io.github.b077as.jolt.TaskbarProgress progress) {
+        java.util.Objects.requireNonNull(progress, "progress");
+        app.dispatch(() -> {
+            if (!destroyed) {
+                taskbarButtons.setProgress(progress);
+            }
+        });
+    }
+
+    @Override
+    public boolean supportsTaskbarProgress() {
+        return true;
+    }
+
+    int taskbarProgressResult() {
+        return taskbarButtons.lastProgressResult;
+    }
+
+    @Override
     public boolean beginFileDrag(List<java.nio.file.Path> files, Consumer<Boolean> finished) {
         if (destroyed) {
             return false;
