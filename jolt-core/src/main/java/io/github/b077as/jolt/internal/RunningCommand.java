@@ -37,7 +37,10 @@ public final class RunningCommand {
             return List.of();
         }
         String first = javaCommand.strip().split(" ", 2)[0];
-        boolean jar = first.toLowerCase(Locale.ROOT).endsWith(".jar") && !classPath.contains(File.pathSeparator);
+        // The class path uses the separator of the platform that produced it; judge by the executable's path style so a
+        // Windows path ("C:\...") is not split at the drive letter's colon when this runs elsewhere (tests).
+        String separator = exe.indexOf('\\') >= 0 ? ";" : File.pathSeparator;
+        boolean jar = first.toLowerCase(Locale.ROOT).endsWith(".jar") && !classPath.contains(separator);
         if (jar) {
             command.add("-jar");
             command.add(classPath); // in -jar mode the class path is the jar itself

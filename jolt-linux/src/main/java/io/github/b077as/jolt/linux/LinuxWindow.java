@@ -358,6 +358,11 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
         app.dispatch(() -> {
             if (!destroyed) {
                 Gtk.windowIconify(window);
+                if (DesktopEntry.onWayland()) {
+                    // xdg-shell never tells a client that its window was minimized, so GDK sends no ICONIFIED state;
+                    // the focus event on restore (onFocusedChanged) takes it back
+                    iconified = true;
+                }
             }
         });
     }
@@ -500,6 +505,9 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
     /** The window-state signal: the window gained or lost the keyboard focus. */
     void onFocusedChanged(boolean nowFocused) {
         focused = nowFocused;
+        if (nowFocused) {
+            iconified = false; // a minimized window cannot have the focus (Wayland sends no iconified state)
+        }
         pushFrameState();
     }
 

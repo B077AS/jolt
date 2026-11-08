@@ -75,6 +75,11 @@ final class LinuxClipboard implements Clipboard {
     private static final MethodHandle PIXBUF_SAVE_TO_BUFFER = Native.downcall(PIXBUF, "gdk_pixbuf_save_to_bufferv",
             FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS));
 
+    private static final SymbolLookup GDK = SymbolLookup.libraryLookup("libgdk-3.so.0", Arena.global());
+    private static final MethodHandle DISPLAY_GET_DEFAULT = Native.downcall(GDK, "gdk_display_get_default", FunctionDescriptor.of(ADDRESS));
+    private static final MethodHandle DISPLAY_SUPPORTS_SELECTION_NOTIFICATION = Native.downcall(GDK,
+            "gdk_display_supports_selection_notification", FunctionDescriptor.of(JAVA_INT, ADDRESS));
+
     private static MethodHandle h(String name, FunctionDescriptor descriptor, Linker.Option... options) {
         return Native.downcall(GTK, name, descriptor, options);
     }
@@ -168,6 +173,7 @@ final class LinuxClipboard implements Clipboard {
         java.util.Objects.requireNonNull(content, "content");
         return app.submit(() -> {
             writeNow(content);
+            notifyOwnChange();
             return null;
         });
     }
@@ -176,6 +182,7 @@ final class LinuxClipboard implements Clipboard {
     public CompletableFuture<Void> clear() {
         return app.submit(() -> {
             invoke(CLEAR, board());
+            notifyOwnChange();
             return null;
         });
     }
@@ -194,6 +201,27 @@ final class LinuxClipboard implements Clipboard {
         if (!connected && !listeners.isEmpty()) {
             Gtk.connect(board(), "owner-change", Callbacks.CLIPBOARD_OWNER_CHANGE, MemorySegment.ofAddress(id));
             connected = true;
+        }
+    }
+
+    /**
+     * GTK 3 on Wayland never reports a change of the clipboard owner ({@code gdk_display_supports_selection_notification} is
+     * false there), not even for our own writes. So our own writes and clears are announced here; what other programs copy
+     * cannot be seen on such a display.
+     */
+    private void notifyOwnChange() {
+        if (listeners.isEmpty() || selectionNotificationSupported()) {
+            return; // the owner-change signal does it
+        }
+        onOwnerChange();
+    }
+
+    private static boolean selectionNotificationSupported() {
+        try {
+            MemorySegment display = (MemorySegment) DISPLAY_GET_DEFAULT.invokeExact();
+            return !display.equals(MemorySegment.NULL) && (int) DISPLAY_SUPPORTS_SELECTION_NOTIFICATION.invokeExact(display) != 0;
+        } catch (Throwable e) {
+            return true; // unknown: rely on the signal
         }
     }
 
