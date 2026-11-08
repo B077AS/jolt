@@ -275,4 +275,62 @@ class ChannelServerTest {
         slow1.abort();
         slow2.abort();
     }
+
+    /**
+     * A page that stops reading leaves the writer thread blocked inside a socket write. Closing the channel (or the whole server, as
+     * every test's cleanup does) must still return and free that thread, not wait for the write that can never finish.
+     */
+    @Test
+    void closingAChannelWhoseWriterIsBlockedOnAPeerThatStoppedReadingReturnsAtOnce() throws Exception {
+        BinaryChannel channel = server.open("stuck", ChannelOptions.defaults().withMaxQueuedBytes(64_000_000));
+        try (java.net.Socket peer = new java.net.Socket()) {
+            peer.setReceiveBufferSize(4096);
+            peer.connect(new java.net.InetSocketAddress("127.0.0.1", server.port()));
+            peer.getOutputStream().write(("GET /c/stuck?t=" + server.token() + " HTTP/1.1\r\nHost: 127.0.0.1:" + server.port()
+                    + "\r\nOrigin: " + APP + "\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\n"
+                    + "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n").getBytes(java.nio.charset.StandardCharsets.ISO_8859_1));
+            peer.getOutputStream().flush();
+            // read the 101 answer, then never read again
+            java.io.InputStream in = peer.getInputStream();
+            int ended = 0;
+            while (ended < 4) {
+                int b = in.read();
+                assertTrue(b >= 0, "the handshake was answered");
+                ended = (b == '\r' || b == '\n') ? ended + 1 : 0;
+            }
+            assertTrue(await(channel::isOpen));
+            byte[] chunk = new byte[1_000_000];
+            for (int i = 0; i < 60; i++) {
+                channel.send(chunk); // far more than the socket buffers hold: the writer ends up blocked in a write
+            }
+            Thread.sleep(500); // let it get there
+            org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofSeconds(10), channel::close,
+                    "close() waited for a write that cannot finish");
+            org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofSeconds(10), server::close);
+        }
+    }
+
+    /**
+     * Large messages back to back on one connection. With the writer on a virtual thread next to the virtual reader, about 40% of
+     * 2 MB echoes stopped part way on Windows (the JDK lost the writer's wakeup); twelve in a row make that all but certain to show.
+     */
+    @Test
+    void manyLargeEchoesInARowAllArriveWhole() throws Exception {
+        BinaryChannel channel = server.open("big", ChannelOptions.defaults());
+        channel.onMessage(data -> {
+            byte[] copy = new byte[data.remaining()];
+            data.get(copy);
+            channel.send(copy);
+        });
+        Client client = new Client();
+        WebSocket socket = connect("big", client);
+        client.messages.clear();
+        for (int i = 0; i < 12; i++) {
+            byte[] sent = bytes(2_000_000, 1000 + i);
+            socket.sendBinary(ByteBuffer.wrap(sent), true).join();
+            byte[] received = client.messages.poll(10, TimeUnit.SECONDS);
+            assertNotNull(received, "echo " + i + " of 2 MB never arrived whole");
+            assertArrayEquals(sent, received, "echo " + i);
+        }
+    }
 }

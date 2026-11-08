@@ -6,6 +6,70 @@ this file says when they do.
 
 The latest version is the one on [Maven Central](https://central.sonatype.com/artifact/io.github.b077as/jolt-core).
 
+## 0.4.1 - 2026-11-08
+
+### Added
+- **Dropping files onto a window: `WebWindow.onFileDrop(listener)`.** The listener gets a `FileDrop`: the absolute local paths of the
+  dropped files and folders, the `zone` (the `data-jolt-drop` value of the element they landed on, so one window can have several drop
+  areas) and the pointer position in page pixels. While files are dragged over the page, `<html>` gets `data-jolt-drop-active` and the
+  area under the pointer `data-jolt-drop-over`, for CSS. Once it is used the web view never navigates to a dropped file. A page is never
+  told a file's location, so the path comes from the platform (WebView2 attaches the dropped `File` objects to the page's message;
+  WebKitGTK reports the drag to the window) and the page only adds the names and the zone; a message whose names do not match the
+  platform's files is ignored, and paths must be absolute and local (no `\\server\share`), so a page cannot make up a file.
+- **Dragging files out of a window: `WebWindow.setFileDragSource(FileDragSource)`.** A `draggable` element with `data-jolt-drag-file="token"`
+  starts an operating-system drag of the files your `FileDragSource.filesFor(token)` returns (null or empty refuses); the page never names a
+  file. Targets can only copy, so the original is never moved. `finished(token, dropped)` tells you how it ended (to delete a temporary file).
+  Windows uses the shell's drag loop and data object; Linux offers a `text/uri-list` through GTK.
+
+- **Buttons in the taskbar preview (Windows): `WebWindow.setTaskbarButtons(List<TaskbarButton>)`.** Up to 7 buttons under the window's preview
+  when the pointer rests on its taskbar icon (the strip Discord uses for mute and leave-call), each with a PNG/ICO icon, a tooltip, an
+  enabled state and a callback on the UI thread. Windows lets the buttons be added only once, so the first call fixes their number; later
+  calls update them and may use fewer (the rest are hidden). They are added when the window's taskbar button exists and again after Explorer
+  restarts. `supportsTaskbarButtons()` is `false` elsewhere and the call does nothing (the `WebWindow` methods are defaults, so existing
+  implementations still compile). Tested on Windows: adding and updating return S_OK and presses reach the right callback (simulated with the
+  `WM_COMMAND` Explorer sends).
+
+- **Progress on the taskbar icon (Windows): `WebWindow.setTaskbarProgress(TaskbarProgress)`.** A green bar along the window's taskbar icon
+  (`TaskbarProgress.normal(0.4)`), a red one (`error`), a yellow one (`paused`), a moving marquee for work of unknown length
+  (`indeterminate()`), or `none()` to clear it. Any thread; the value is kept and shown once the window has a taskbar button, and again
+  after Explorer restarts. On Linux it is best effort: Jolt sends the Unity launcher `com.canonical.Unity.LauncherEntry` `Update` signal, which KDE
+  Plasma's task manager, Ubuntu's dock and Dash to Dock/Panel draw and other desktops (plain GNOME Shell, XFCE) ignore; the application needs an
+  installed `<appId>.desktop` file, it is one bar per application, and error/paused look like a normal bar. `supportsTaskbarProgress()` is
+  `true` on Linux when there is a session bus. Tested on Windows: every state is accepted (S_OK); how the bar looks is not.
+
+- **Extra entries on the taskbar / launcher icon menu: `Application.setJumpList(JumpList)`.** The menu that opens when the user
+  right-clicks the application's icon can offer **tasks** ("New incognito window") and, on Windows, your own **categories** ("Recent
+  projects"). Each entry has a title and the arguments the program is started with when it is chosen (optional tooltip and icon on
+  Windows), so use `SingleInstance` to hand them to the running copy. `JumpList.builder().task(...).category(...).build()`;
+  `JumpList.empty()` removes them; `supportsJumpList()`. Windows: `ICustomDestinationList` with one shell link per entry; the windows
+  get `AppOptions.appId` as their AppUserModelID (from the first call on) so the list sits on this application's icon and not on
+  `javaw.exe`'s; an id with spaces or over 128 characters gets no list. The command that starts the program is the process's own
+  (rebuilt as `-jar app.jar` or `-cp ... Main` for a Java launch, where Windows tells no arguments) unless `builder().command(...)` is
+  given. Linux: the tasks are written as freedesktop **desktop actions** into the generated `$XDG_DATA_HOME/applications/<appId>.desktop`
+  (the same file that carries the Wayland icon; one that Jolt did not write is never changed, and actions of a copied system entry are
+  replaced); categories are left out. Not included: the "Recent" list of files (that needs a registered file type).
+  Tested on Windows: Windows accepts the list (S_OK) and the windows take the id; the Linux entry text is unit tested.
+
+### Fixed
+- **Linux, Wayland: `isMinimized()` stayed `false` after `minimize()`.** xdg-shell never tells a client that its window was minimized, so
+  GDK sends no iconified state. The window now records the minimize itself and takes it back when it gets the keyboard focus again.
+- **Linux, Wayland: `Clipboard.onChange` never fired, not even for the application's own writes.** GTK 3 does not report clipboard
+  owner changes on Wayland (`gdk_display_supports_selection_notification` is false). The application's own writes and clears are now
+  announced; what other programs copy still cannot be seen on such a display.
+- **Binary channels could stop delivering a large message part way, on Windows.** The connection's reader and writer were both
+  virtual threads on the same socket, and with JDK 25.0.1 on Windows the writer's "socket can take more" wakeup is sometimes lost
+  in that situation (the JDK's read and write pollers are separate WEPoll instances); the page then waited forever for the rest of
+  the message. About 40% of 2 MB messages were affected in tests. The writer is now a platform thread. Reproduced without Jolt
+  on Windows; not tried on Linux (which uses a different poller), where the change is harmless either way.
+- **Closing a channel (or the window) could hang** when the page had stopped reading: `close` waited for the lock held by a write that
+  could never finish. The close frame is now sent on the side and given 250 ms; the connection is then closed regardless.
+
+### Changed
+- Windows: the UI thread is now initialised with `OleInitialize` instead of `CoInitializeEx` (it does the same and also sets up what
+  drag and drop needs).
+- `WebView2Abi` was regenerated with three more interfaces (`ICoreWebView2WebMessageReceivedEventArgs2`, `ICoreWebView2ObjectCollectionView`,
+  `ICoreWebView2File`); nothing else in it changed.
+
 ## 0.4.0 - 2026-11-07
 
 ### Added

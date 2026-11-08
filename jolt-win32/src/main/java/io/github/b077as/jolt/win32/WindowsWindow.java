@@ -9,11 +9,16 @@ import io.github.b077as.jolt.WebWindow;
 import io.github.b077as.jolt.WindowClosedException;
 import io.github.b077as.jolt.WindowOptions;
 import io.github.b077as.jolt.internal.BridgeScript;
+import io.github.b077as.jolt.internal.FileDragProtocol;
+import io.github.b077as.jolt.internal.FileDropProtocol;
 import io.github.b077as.jolt.internal.FrameProtocol;
 import io.github.b077as.jolt.internal.FrameScript;
 import io.github.b077as.jolt.internal.Icons;
 import io.github.b077as.jolt.internal.NativeDialogHost;
+import io.github.b077as.jolt.internal.NativeFileDragHost;
 import io.github.b077as.jolt.internal.NativeResourceHost;
+import io.github.b077as.jolt.internal.PageFileDrag;
+import io.github.b077as.jolt.internal.PageFileDrop;
 import io.github.b077as.jolt.internal.ResourceService;
 import io.github.b077as.jolt.internal.SecurityGuard;
 import io.github.b077as.jolt.internal.ffi.Native;
@@ -41,7 +46,7 @@ import static java.lang.foreign.ValueLayout.JAVA_LONG;
  * <p>Public methods may be called from any thread; they hop to the UI thread. Everything below the
  * "UI thread" marker must only run there.
  */
-final class WindowsWindow implements WebWindow, NativeResourceHost, NativeDialogHost, FrameProtocol.Host {
+final class WindowsWindow implements WebWindow, NativeResourceHost, NativeDialogHost, NativeFileDragHost, FrameProtocol.Host {
 
     private static final System.Logger LOG = System.getLogger("io.github.b077as.jolt.win32");
     private static final int STYLE = Win32.WS_OVERLAPPEDWINDOW | Win32.WS_CLIPCHILDREN | Win32.WS_CLIPSIBLINGS;
@@ -64,6 +69,7 @@ final class WindowsWindow implements WebWindow, NativeResourceHost, NativeDialog
     private volatile CloseBehavior closeBehavior = CloseBehavior.CLOSE;
     private final SecurityGuard guard;
     private final MemorySegment hwnd;
+    private final WindowsTaskbarButtons taskbarButtons;
     private final CompletableFuture<Void> ready = new CompletableFuture<>();
     private final CopyOnWriteArrayList<Consumer<String>> messageListeners = new CopyOnWriteArrayList<>();
     private final CopyOnWriteArrayList<Runnable> closedListeners = new CopyOnWriteArrayList<>();
@@ -126,6 +132,7 @@ final class WindowsWindow implements WebWindow, NativeResourceHost, NativeDialog
             throw new JoltException("CreateWindowExW failed: Win32 error " + error[0]);
         }
         app.register(hwnd, this);
+        taskbarButtons = new WindowsTaskbarButtons(hwnd);
         if (options.frameless()) {
             // The first WM_NCCALCSIZE came before this window was known to the application; ask for it again now.
             Win32.setWindowPos(hwnd, 0, 0, 0, 0, Win32.SWP_FRAMECHANGED | Win32.SWP_NOMOVE | Win32.SWP_NOSIZE
@@ -692,6 +699,10 @@ public CompletableFuture<String> eval(String script) {
 
     /** Window messages for this window; returns the LRESULT, or {@code null} for default processing. */
     Long handleMessage(int msg, long wParam, long lParam) {
+        if (taskbarButtons.isButtonCreatedMessage(msg)) {
+            taskbarButtons.onButtonCreated();
+            return 0L;
+        }
         switch (msg) {
             case Win32.WM_NCCALCSIZE -> {
                 if (!options.frameless() || wParam == 0) {
@@ -775,6 +786,9 @@ public CompletableFuture<String> eval(String script) {
                 Win32.setWindowPos(hwnd, left, top, rect.get(JAVA_INT, 8) - left, rect.get(JAVA_INT, 12) - top,
                         Win32.SWP_NOZORDER | Win32.SWP_NOACTIVATE);
                 return 0L;
+            }
+            case Win32.WM_COMMAND -> {
+                return taskbarButtons.onCommand(wParam) ? 0L : null;
             }
             case Win32.WM_CLOSE -> {
                 if (closeBehavior == CloseBehavior.HIDE && !closing) {
@@ -1249,6 +1263,139 @@ public CompletableFuture<String> eval(String script) {
         }
     }
 
+    @Override
+    public void setTaskbarButtons(List<io.github.b077as.jolt.TaskbarButton> buttons) {
+        List<io.github.b077as.jolt.TaskbarButton> copy = List.copyOf(buttons);
+        taskbarButtons.reserve(copy.size()); // fails here, on the caller's thread, if it is too many
+        app.dispatch(() -> {
+            if (!destroyed) {
+                taskbarButtons.set(copy);
+            }
+        });
+    }
+
+    @Override
+    public boolean supportsTaskbarButtons() {
+        return true;
+    }
+
+    int taskbarButtonsResult() {
+        return taskbarButtons.lastResult;
+    }
+
+    @Override
+    public void setTaskbarProgress(io.github.b077as.jolt.TaskbarProgress progress) {
+        java.util.Objects.requireNonNull(progress, "progress");
+        app.dispatch(() -> {
+            if (!destroyed) {
+                taskbarButtons.setProgress(progress);
+            }
+        });
+    }
+
+    @Override
+    public boolean supportsTaskbarProgress() {
+        return true;
+    }
+
+    int taskbarProgressResult() {
+        return taskbarButtons.lastProgressResult;
+    }
+
+    @Override
+    public boolean beginFileDrag(List<java.nio.file.Path> files, Consumer<Boolean> finished) {
+        if (destroyed) {
+            return false;
+        }
+        // Not inside the web view's own message handler: the drag runs a modal loop that must not nest in it.
+        app.dispatch(() -> {
+            boolean dropped = false;
+            if (!destroyed) {
+                try {
+                    dropped = WindowsFileDrag.run(hwnd, files);
+                } catch (RuntimeException e) {
+                    LOG.log(System.Logger.Level.ERROR, "dragging files out failed", e);
+                }
+            }
+            finished.accept(dropped);
+        });
+        return true;
+    }
+
+    /**
+     * The paths of the {@code File} objects the page attached to a message with {@code postMessageWithAdditionalObjects}: the
+     * only way a web page can hand WebView2's host a file's location. Empty if there are none or the runtime is too old.
+     */
+    private static java.util.List<java.nio.file.Path> droppedFiles(MemorySegment args) {
+        MemorySegment args2 = Com.queryInterface(args, WebView2Abi.ICoreWebView2WebMessageReceivedEventArgs2.IID);
+        if (args2.equals(MemorySegment.NULL)) {
+            return java.util.List.of();
+        }
+        java.util.List<String> raw = new java.util.ArrayList<>();
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment out = arena.allocate(ADDRESS);
+            if (Com.call(args2, WebView2Abi.ICoreWebView2WebMessageReceivedEventArgs2.GET_ADDITIONAL_OBJECTS, Com.HR_PTR, out) < 0) {
+                return java.util.List.of();
+            }
+            MemorySegment view = Native.readPointer(out);
+            if (view.equals(MemorySegment.NULL)) {
+                return java.util.List.of();
+            }
+            try {
+                MemorySegment count = arena.allocate(java.lang.foreign.ValueLayout.JAVA_INT);
+                if (Com.call(view, WebView2Abi.ICoreWebView2ObjectCollectionView.GET_COUNT, Com.HR_PTR, count) < 0) {
+                    return java.util.List.of();
+                }
+                int n = count.get(java.lang.foreign.ValueLayout.JAVA_INT, 0);
+                if (n < 0 || n > io.github.b077as.jolt.internal.ClipboardData.MAX_FILES) {
+                    return java.util.List.of(); // more than we hand out: refuse the lot rather than cut it
+                }
+                for (int i = 0; i < n; i++) {
+                    String path = filePath(arena, view, i);
+                    if (path != null) {
+                        raw.add(path);
+                    }
+                }
+            } finally {
+                Com.release(view);
+            }
+        } finally {
+            Com.release(args2);
+        }
+        return PageFileDrop.paths(raw);
+    }
+
+    private static String filePath(Arena arena, MemorySegment view, int index) {
+        MemorySegment out = arena.allocate(ADDRESS);
+        if (Com.call(view, WebView2Abi.ICoreWebView2ObjectCollectionView.GET_VALUE_AT_INDEX, Com.HR_INT_PTR, index, out) < 0) {
+            return null;
+        }
+        MemorySegment object = Native.readPointer(out);
+        if (object.equals(MemorySegment.NULL)) {
+            return null;
+        }
+        try {
+            MemorySegment file = Com.queryInterface(object, WebView2Abi.ICoreWebView2File.IID);
+            if (file.equals(MemorySegment.NULL)) {
+                return null; // some other kind of object
+            }
+            try {
+                MemorySegment path = arena.allocate(ADDRESS);
+                if (Com.call(file, WebView2Abi.ICoreWebView2File.GET_PATH, Com.HR_PTR, path) < 0) {
+                    return null;
+                }
+                MemorySegment raw = Native.readPointer(path);
+                String text = Native.readWide(raw);
+                Win32.coTaskMemFree(raw);
+                return text;
+            } finally {
+                Com.release(file);
+            }
+        } finally {
+            Com.release(object);
+        }
+    }
+
     private void onWebMessage(MemorySegment sender, MemorySegment args) {
         if (!guard.allowMessageFrom(readUri(args, WebView2Abi.ICoreWebView2WebMessageReceivedEventArgs.GET_SOURCE))) {
             return;
@@ -1270,6 +1417,14 @@ public CompletableFuture<String> eval(String script) {
                 FrameProtocol.handle(text, this);
             }
             return; // never reaches the application, frameless or not
+        }
+        if (FileDropProtocol.isDropMessage(text)) {
+            PageFileDrop.deliver(this, text, droppedFiles(args));
+            return; // never reaches the application's message listeners
+        }
+        if (FileDragProtocol.isDragMessage(text)) {
+            PageFileDrag.handle(this, text);
+            return;
         }
         for (Consumer<String> listener : messageListeners) {
             try {
@@ -1462,6 +1617,7 @@ public CompletableFuture<String> eval(String script) {
         }
         handlers.clear();
         destroyIcons();
+        taskbarButtons.dispose();
         if (!backgroundBrush.equals(MemorySegment.NULL)) {
             Win32.deleteObject(backgroundBrush);
             backgroundBrush = MemorySegment.NULL;

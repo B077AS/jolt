@@ -113,6 +113,26 @@ public interface Application extends AutoCloseable {
         throw new UnsupportedOperationException("this platform cannot start applications at sign-in");
     }
 
+    /**
+     * Sets the extra entries of the menu that opens when the user right-clicks the application's taskbar or launcher icon: tasks
+     * such as "New incognito window" and, on Windows, your own categories such as "Recent projects" (see {@link JumpList}).
+     * Choosing an entry starts the program with the entry's arguments, so use {@link SingleInstance} to hand them to the running
+     * copy. An empty list removes the entries. Safe from any thread; call it again whenever the entries change.
+     *
+     * <p><b>Windows</b>: the windows are given the application's id ({@code AppOptions.appId}) as their AppUserModelID, so the
+     * entries sit on this application's icon whatever program started it. The id must be at most 128 characters without spaces.
+     * <b>Linux</b>: best effort. The tasks are written as <em>desktop actions</em> into
+     * {@code $XDG_DATA_HOME/applications/<appId>.desktop}, which GNOME, KDE and others show on the launcher icon when the program
+     * is matched to that file (a user file that Jolt did not write is never changed). Categories are left out there.
+     * {@link #supportsJumpList()} says whether anything can be shown.
+     */
+    default void setJumpList(JumpList list) {}
+
+    /** Whether {@link #setJumpList} can do anything on this platform. */
+    default boolean supportsJumpList() {
+        return false;
+    }
+
     /** Opening the application for links such as {@code myapp://...}, see {@link UrlSchemes}. */
     default UrlSchemes urlSchemes() {
         throw new UnsupportedOperationException("this platform cannot register URL schemes");

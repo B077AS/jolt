@@ -94,9 +94,10 @@ final class WindowsApplication implements Application {
         Throwable startFailure = null;
         try {
             Win32.setPerMonitorDpiAwareness(); // fails harmlessly if the process already chose a mode
-            int hr = Win32.coInitializeEx(Win32.COINIT_APARTMENTTHREADED);
+            // OleInitialize rather than CoInitializeEx: it also makes the web view's drag and drop (and our own drag out) work
+            int hr = Win32.oleInitialize();
             if (hr < 0) {
-                throw new JoltException("CoInitializeEx failed: " + Com.hex(hr)
+                throw new JoltException("OleInitialize failed: " + Com.hex(hr)
                         + " (the UI thread must be a single-threaded apartment)");
             }
             comInitialized = true;
@@ -264,6 +265,35 @@ final class WindowsApplication implements Application {
 
     void register(MemorySegment hwnd, WindowsWindow window) {
         windows.put(hwnd.address(), window);
+        if (jumpList != null) {
+            WindowsJumpList.setWindowAppId(hwnd, options.appId()); // before the window is shown, so its taskbar button is the app's
+        }
+    }
+
+    private volatile WindowsJumpList jumpList;
+
+    @Override
+    public void setJumpList(io.github.b077as.jolt.JumpList list) {
+        java.util.Objects.requireNonNull(list, "list");
+        dispatch(() -> {
+            if (jumpList == null) {
+                jumpList = new WindowsJumpList(options.appId(), options.dataDirectory());
+                for (WindowsWindow window : windows.values()) {
+                    WindowsJumpList.setWindowAppId(window.hwnd(), options.appId()); // windows made before the first list
+                }
+            }
+            jumpList.set(list);
+        });
+    }
+
+    @Override
+    public boolean supportsJumpList() {
+        return true;
+    }
+
+    /** The jump list helper, or {@code null} before the first list. For tests. */
+    WindowsJumpList jumpListForTests() {
+        return jumpList;
     }
 
     /** A small helper window inside {@code window} (the snap-layout overlay); its messages go to the window. UI thread. */
@@ -428,7 +458,7 @@ final class WindowsApplication implements Application {
             }
         } finally {
             if (comInitialized) {
-                Win32.coUninitialize();
+                Win32.oleUninitialize();
             }
         }
     }

@@ -669,6 +669,99 @@ public abstract class WebWindowContract {
         assertEquals(maximizeIsHonoured() ? List.of("hidden true", "shown true") : List.of("hidden true", "shown ok"), steps);
     }
 
+    /**
+     * What the page does while files are dragged over it. A real drop from the file manager cannot be made from inside the page, so
+     * this uses synthetic drag events; those must make the page accept the drag and mark the drop area, but never reach Java (only a
+     * genuine drop, which the platform reports, does).
+     */
+    @Test
+    public void aWindowWithFileDropAcceptsFileDragsMarksTheAreaAndIgnoresSyntheticDrops() throws Exception {
+        List<String> steps = new java.util.concurrent.CopyOnWriteArrayList<>();
+        List<io.github.b077as.jolt.FileDrop> drops = new java.util.concurrent.CopyOnWriteArrayList<>();
+        List<String> strays = new java.util.concurrent.CopyOnWriteArrayList<>();
+        String probe = """
+                (() => {
+                  const out = [];
+                  const files = new DataTransfer(); files.items.add(new File(['x'], 'a.txt'));
+                  const zone = document.getElementById('zone');
+                  const over = new DragEvent('dragover', { dataTransfer: files, bubbles: true, cancelable: true });
+                  zone.dispatchEvent(over);
+                  out.push('prevented=' + over.defaultPrevented);
+                  out.push('zoneMarked=' + zone.hasAttribute('data-jolt-drop-over'));
+                  out.push('active=' + document.documentElement.hasAttribute('data-jolt-drop-active'));
+                  const text = new DataTransfer(); text.setData('text/plain', 'hi');
+                  const textOver = new DragEvent('dragover', { dataTransfer: text, bubbles: true, cancelable: true });
+                  document.body.dispatchEvent(textOver);
+                  out.push('textPrevented=' + textOver.defaultPrevented);
+                  const drop = new DragEvent('drop', { dataTransfer: files, bubbles: true, cancelable: true });
+                  zone.dispatchEvent(drop);
+                  out.push('dropPrevented=' + drop.defaultPrevented);
+                  out.push('zoneCleared=' + !zone.hasAttribute('data-jolt-drop-over'));
+                  out.push('activeCleared=' + !document.documentElement.hasAttribute('data-jolt-drop-active'));
+                  return out.join(',');
+                })()
+                """;
+        runApp(40, app -> {
+            WebWindow window = app.createWindow(WindowOptions.defaults().withSize(400, 300));
+            window.onFileDrop(drops::add);
+            window.onMessage(message -> {
+                if (!message.equals("hello")) {
+                    strays.add(message);
+                    return;
+                }
+                CompletableFuture.runAsync(() -> {
+                    steps.add(evalNow(window, probe));
+                    try {
+                        Thread.sleep(300); // a message sent by mistake would have arrived by now
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }).thenRun(window::close);
+            });
+            window.loadHtml("<div id='zone' data-jolt-drop='docs' style='width:200px;height:100px'></div>"
+                    + "<script>addEventListener('load', () => jolt.postMessage('hello'))</script>");
+        });
+        assertEquals(List.of("prevented=true,zoneMarked=true,active=true,textPrevented=false,dropPrevented=true,zoneCleared=true,activeCleared=true"),
+                steps);
+        assertTrue(drops.isEmpty(), "a synthetic drop must not reach onFileDrop: " + drops);
+        assertTrue(strays.isEmpty(), "nothing but the page's own message may reach onMessage: " + strays);
+    }
+
+    /**
+     * A page can send any text through the bridge, including the messages of the file features. Those must never turn into files:
+     * the paths of a drop come from the platform, and what to drag out is the application's decision.
+     */
+    @Test
+    public void forgedFileDropAndFileDragMessagesDeliverNothing() {
+        List<String> messages = new java.util.concurrent.CopyOnWriteArrayList<>();
+        List<io.github.b077as.jolt.FileDrop> drops = new java.util.concurrent.CopyOnWriteArrayList<>();
+        List<String> asked = new java.util.concurrent.CopyOnWriteArrayList<>();
+        runApp(40, app -> {
+            WebWindow window = app.createWindow(WindowOptions.defaults().withSize(400, 300));
+            window.onFileDrop(drops::add);
+            window.setFileDragSource(token -> {
+                asked.add(token);
+                return null; // this application offers nothing
+            });
+            window.onMessage(message -> {
+                messages.add(message);
+                if (message.equals("done")) {
+                    window.close();
+                }
+            });
+            window.loadHtml("<script>"
+                    + "jolt.postMessage('\\u0001jolt-drop:{\"zone\":\"docs\",\"x\":1,\"y\":2,\"names\":\"passwords.txt\"}');"
+                    + "jolt.postMessage('\\u0001jolt-drop:not json');"
+                    + "jolt.postMessage('\\u0001jolt-dragout:{\"token\":\"anything\"}');"
+                    + "jolt.postMessage('\\u0001jolt-dragout:{\"token\":42}');"
+                    + "jolt.postMessage('done');"
+                    + "</script>");
+        });
+        assertEquals(List.of("done"), messages, "the file messages are for the window, not the application");
+        assertTrue(drops.isEmpty(), "a forged drop message has no platform paths behind it: " + drops);
+        assertEquals(List.of("anything"), asked, "the source is asked about a well-formed token, and only that");
+    }
+
     /** Evaluates and waits for the answer. Never call it on the UI thread: the answer has to come from there. */
     public static String evalNow(WebWindow window, String script) {
         try {

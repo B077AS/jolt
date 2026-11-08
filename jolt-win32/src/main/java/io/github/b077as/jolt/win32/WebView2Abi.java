@@ -343,6 +343,40 @@ final class WebView2Abi {
         private ICoreWebView2WebMessageReceivedEventArgs() {}
     }
 
+    /** {@code ICoreWebView2WebMessageReceivedEventArgs2}, 7 vtable slots. */
+    static final class ICoreWebView2WebMessageReceivedEventArgs2 {
+        static final String IID = "06fc7ab7-c90c-4297-9389-33ca01cf6d5e";
+        static final int QUERY_INTERFACE = 0;
+        static final int ADD_REF = 1;
+        static final int RELEASE = 2;
+        static final int GET_SOURCE = 3;
+        static final int GET_WEB_MESSAGE_AS_JSON = 4;
+        static final int TRY_GET_WEB_MESSAGE_AS_STRING = 5;
+        static final int GET_ADDITIONAL_OBJECTS = 6;
+        private ICoreWebView2WebMessageReceivedEventArgs2() {}
+    }
+
+    /** {@code ICoreWebView2ObjectCollectionView}, 5 vtable slots. */
+    static final class ICoreWebView2ObjectCollectionView {
+        static final String IID = "0f36fd87-4f69-4415-98da-888f89fb9a33";
+        static final int QUERY_INTERFACE = 0;
+        static final int ADD_REF = 1;
+        static final int RELEASE = 2;
+        static final int GET_COUNT = 3;
+        static final int GET_VALUE_AT_INDEX = 4;
+        private ICoreWebView2ObjectCollectionView() {}
+    }
+
+    /** {@code ICoreWebView2File}, 4 vtable slots. */
+    static final class ICoreWebView2File {
+        static final String IID = "f2c19559-6bc1-4583-a757-90021be9afec";
+        static final int QUERY_INTERFACE = 0;
+        static final int ADD_REF = 1;
+        static final int RELEASE = 2;
+        static final int GET_PATH = 3;
+        private ICoreWebView2File() {}
+    }
+
     /** {@code ICoreWebView2WebResourceRequestedEventArgs}, 8 vtable slots. */
     static final class ICoreWebView2WebResourceRequestedEventArgs {
         static final String IID = "453e667f-12c7-49d4-be6d-ddbe7956f57a";

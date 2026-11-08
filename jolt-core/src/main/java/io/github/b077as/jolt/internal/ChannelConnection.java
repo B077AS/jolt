@@ -21,6 +21,9 @@ final class ChannelConnection {
     private static final int CLOSE_NORMAL = 1000, CLOSE_GOING_AWAY = 1001, CLOSE_PROTOCOL = 1002, CLOSE_UNSUPPORTED = 1003,
             CLOSE_TOO_BIG = 1009;
 
+    /** How long {@link #close(int)} gives the close frame to get out before it ends the connection anyway. */
+    private static final long CLOSE_FRAME_WAIT_MILLIS = 250;
+
     /** What the connection reports to the channel that owns it. */
     interface Listener {
         void onMessage(byte[] message);
@@ -56,7 +59,13 @@ final class ChannelConnection {
 
     /** Runs the connection until it ends: a writer thread is started and this thread reads. */
     void run() {
-        Thread.ofVirtual().name("jolt-channel-writer").start(this::writeLoop);
+        // A platform thread, not a virtual one. On Windows (seen with JDK 25.0.1), when one virtual thread is blocked reading a
+        // socket and another is blocked writing to the same socket, the writer sometimes never learns that the socket can take
+        // more: the JDK parks the two in separate pollers (Read-Poller, Write-Poller, each a WEPoll instance) and the write wakeup
+        // is lost. The page then stops receiving in the middle of a large message, with both ends idle. The reader (this thread)
+        // is virtual, so the writer must not be. Reproduced without Jolt: ~40% of 2 MB writes stall with a virtual reader and a
+        // virtual writer, none with a platform writer, none with a platform reader.
+        Thread.ofPlatform().daemon().name("jolt-channel-writer").start(this::writeLoop);
         try {
             readLoop();
         } catch (IOException e) {
@@ -94,10 +103,22 @@ final class ChannelConnection {
             closing = true;
             queueLock.notifyAll();
         }
+        // The close frame is a courtesy and must never hold this call up: if the page has stopped reading, the writer thread is
+        // stuck inside a socket write that owns writeLock, and waiting for that lock here would wait forever, because only
+        // finish() (which closes the socket and so makes that write fail) can free it. So the frame is written on its own thread,
+        // given a moment, and abandoned.
+        // (a platform thread for the same reason as the writer: the reader may be a virtual thread blocked on this socket)
+        Thread frame = Thread.ofPlatform().daemon().name("jolt-channel-close").start(() -> {
+            try {
+                writeFrame(OP_CLOSE, new byte[] {(byte) (code >> 8), (byte) code});
+            } catch (IOException e) {
+                // already gone
+            }
+        });
         try {
-            writeFrame(OP_CLOSE, new byte[] {(byte) (code >> 8), (byte) code});
-        } catch (IOException e) {
-            // already gone
+            frame.join(CLOSE_FRAME_WAIT_MILLIS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
         finish();
     }

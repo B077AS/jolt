@@ -173,6 +173,104 @@ public interface WebWindow {
         io.github.b077as.jolt.internal.PageWindows.enable(this, app, opener);
     }
 
+    /**
+     * Calls {@code listener} when the user drops files or folders from the file manager onto this window, with their paths. A web
+     * page is never told where its files live, so this is the way to get them: the page marks drop areas with
+     * {@code data-jolt-drop="name"} and the listener learns which one the files landed on ({@link FileDrop#zone()}).
+     *
+     * <pre>{@code
+     * window.onFileDrop(drop -> {
+     *     if ("avatar".equals(drop.zone())) setAvatar(drop.files().get(0));
+     *     else addAttachments(drop.files());
+     * });
+     * }</pre>
+     * <pre>{@code
+     * <div data-jolt-drop="avatar">Drop a picture here</div>
+     * <style>
+     *   [data-jolt-drop-over] { outline: 2px dashed dodgerblue; }
+     *   html[data-jolt-drop-active] body { cursor: copy; }
+     * </style>
+     * }</pre>
+     * {@code data-jolt-drop-over} is set on the area under the pointer while files are dragged over it, and
+     * {@code data-jolt-drop-active} on {@code <html>} while they are over the window at all. Once this is called the web view never navigates to a dropped file, wherever it lands. Register the first listener before the
+     * page loads. Only pages whose origin the {@link SecurityPolicy} trusts take part, and every path is checked: it must be
+     * absolute and local (no {@code \\server\share}), and the files must be the ones the platform reported, not ones the page
+     * named. The listener runs on the UI thread; several listeners may be registered.
+     *
+     * <p>The page's own {@code dragover}/{@code drop} handlers still run, so a page can show a preview with {@code FileReader}
+     * as well. Dragging files <em>out</em> of the window is {@link #setFileDragSource}.
+     */
+    default void onFileDrop(Consumer<FileDrop> listener) {
+        io.github.b077as.jolt.internal.PageFileDrop.enable(this, listener);
+    }
+
+    /**
+     * Lets the user drag files out of this window's page into the file manager, the desktop or another application. The page marks
+     * what can be dragged with {@code data-jolt-drag-file="token"} on a {@code draggable} element; when the user starts dragging it,
+     * {@code source} is asked which files that token stands for. The page never names a file or learns a path.
+     *
+     * <pre>{@code
+     * window.setFileDragSource(token -> token.startsWith("attachment:")
+     *         ? List.of(store.fileOf(token.substring("attachment:".length())))
+     *         : null);                                     // null or empty: no drag
+     * }</pre>
+     * <pre>{@code
+     * <li draggable="true" data-jolt-drag-file="attachment:42">report.pdf</li>
+     * }</pre>
+     * The target can only copy the files, never move them. Only pages whose origin the {@link SecurityPolicy} trusts can start a
+     * drag, and only while the user is dragging. Call it before the page loads; calling it again replaces the source. The web view's
+     * own drag of that element is cancelled, so the element's {@code dragstart} handlers still run but nothing from the page ends
+     * up on the system's drag.
+     */
+    default void setFileDragSource(FileDragSource source) {
+        io.github.b077as.jolt.internal.PageFileDrag.enable(this, source);
+    }
+
+    /**
+     * Puts buttons in the strip under this window's preview when the pointer rests on its taskbar icon, for the actions a user
+     * wants without bringing the window up (mute, pause, next, leave a call). <b>Windows only</b>; elsewhere this does nothing and
+     * {@link #supportsTaskbarButtons()} is {@code false}.
+     *
+     * <pre>{@code
+     * window.setTaskbarButtons(List.of(
+     *         TaskbarButton.of("Mute", muteIcon, () -> toggleMute()),
+     *         TaskbarButton.of("Leave call", hangupIcon, () -> leave()).withEnabled(inCall)));
+     * }</pre>
+     * At most {@link TaskbarButton#MAX_BUTTONS}. Windows only lets a program add the buttons once, so the <em>number</em> of buttons
+     * is fixed by the first call that has any: later calls can change icons, tooltips and which are enabled, and may give fewer
+     * (the rest are hidden), but not more. The buttons appear once the window has been shown; an empty list hides them all.
+     * Callbacks run on the UI thread.
+     *
+     * @throws IllegalArgumentException if there are more buttons than allowed, or than the first call had
+     */
+    default void setTaskbarButtons(java.util.List<TaskbarButton> buttons) {}
+
+    /** Whether {@link #setTaskbarButtons} does anything on this window's platform. */
+    default boolean supportsTaskbarButtons() {
+        return false;
+    }
+
+    /**
+     * Shows progress on this window's taskbar icon: a bar along the icon (green, red or yellow) or a marquee for work of unknown
+     * length. On <b>Windows</b> it is the taskbar icon's progress; on <b>Linux</b> it is best effort: the Unity launcher API
+     * ({@code com.canonical.Unity.LauncherEntry}) drawn by KDE Plasma, Ubuntu's dock and Dash to Dock, and ignored by other desktops,
+     * and the application needs an installed {@code <appId>.desktop} file for the desktop to match it (Linux has only a bar: an error or
+     * paused state looks like a normal one, and it is one bar for the application). Where it does nothing
+     * {@link #supportsTaskbarProgress()} is {@code false}. Call it again
+     * with each step, and with {@link TaskbarProgress#none()} when the work is over. It is kept and shown as soon as the window has a
+     * taskbar button, and again if Explorer restarts. Any thread.
+     *
+     * <pre>{@code
+     * window.setTaskbarProgress(TaskbarProgress.normal(done / (double) total));
+     * }</pre>
+     */
+    default void setTaskbarProgress(TaskbarProgress progress) {}
+
+    /** Whether {@link #setTaskbarProgress} can do anything here: always on Windows, on Linux when there is a session bus (not proof the desktop draws it). */
+    default boolean supportsTaskbarProgress() {
+        return false;
+    }
+
     /** Opens a {@link BinaryChannel} with the default {@link ChannelOptions}. */
     default BinaryChannel openChannel(String name) {
         return openChannel(name, ChannelOptions.defaults());

@@ -30,6 +30,7 @@ final class Win32 {
     static final int WM_GETMINMAXINFO = 0x0024;
     static final int WM_SETFOCUS = 0x0007;
     static final int WM_CLOSE = 0x0010;
+    static final int WM_COMMAND = 0x0111;
     static final int WM_ERASEBKGND = 0x0014;
     static final int WM_SHOWWINDOW = 0x0018;
     static final int WM_SETICON = 0x0080;
@@ -84,7 +85,7 @@ final class Win32 {
     static final int SWP_NOZORDER = 0x0004;
     static final int SWP_NOACTIVATE = 0x0010;
 
-    static final int COINIT_APARTMENTTHREADED = 0x2;
+    // COINIT_APARTMENTTHREADED is implied by OleInitialize
     static final int IDC_ARROW = 32512;
     /** {@code DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2} is the pseudo-handle -4. */
     static final long DPI_PER_MONITOR_AWARE_V2 = -4;
@@ -218,9 +219,10 @@ final class Win32 {
             FunctionDescriptor.of(JAVA_INT, ADDRESS));
     private static final MethodHandle ADJUST_WINDOW_RECT_EX_FOR_DPI = Native.downcall(USER32, "AdjustWindowRectExForDpi",
             FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT));
-    private static final MethodHandle CO_INITIALIZE_EX = Native.downcall(OLE32, "CoInitializeEx",
-            FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT));
-    private static final MethodHandle CO_UNINITIALIZE = Native.downcall(OLE32, "CoUninitialize",
+    /** {@code HRESULT OleInitialize(NULL)}: COM in a single-threaded apartment plus what drag and drop needs. */
+    private static final MethodHandle OLE_INITIALIZE = Native.downcall(OLE32, "OleInitialize",
+            FunctionDescriptor.of(JAVA_INT, ADDRESS));
+    private static final MethodHandle OLE_UNINITIALIZE = Native.downcall(OLE32, "OleUninitialize",
             FunctionDescriptor.ofVoid());
     private static final SymbolLookup SHELL32 = SymbolLookup.libraryLookup("shell32.dll", Arena.global());
     /** {@code HRESULT CoCreateInstance(REFCLSID, IUnknown* outer, DWORD context, REFIID, void** object)}. */
@@ -679,17 +681,18 @@ final class Win32 {
         }
     }
 
-    static int coInitializeEx(int flags) {
+    /** Makes the calling thread a single-threaded apartment with OLE (needed by drag and drop); undo with {@link #oleUninitialize()}. */
+    static int oleInitialize() {
         try {
-            return (int) CO_INITIALIZE_EX.invokeExact(MemorySegment.NULL, flags);
+            return (int) OLE_INITIALIZE.invokeExact(MemorySegment.NULL);
         } catch (Throwable t) {
             throw rethrow(t);
         }
     }
 
-    static void coUninitialize() {
+    static void oleUninitialize() {
         try {
-            CO_UNINITIALIZE.invokeExact();
+            OLE_UNINITIALIZE.invokeExact();
         } catch (Throwable t) {
             throw rethrow(t);
         }

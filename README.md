@@ -73,7 +73,7 @@ Add the API and both backends; each one only activates on its own OS.
 ```xml
 <properties>
   <maven.compiler.release>25</maven.compiler.release>
-  <jolt.version>0.4.0</jolt.version>
+  <jolt.version>0.4.1</jolt.version>
 </properties>
 
 <dependencies>
@@ -98,9 +98,9 @@ Add the API and both backends; each one only activates on its own OS.
 Gradle:
 
 ```kotlin
-implementation("io.github.b077as:jolt-core:0.4.0")
-implementation("io.github.b077as:jolt-win32:0.4.0")
-implementation("io.github.b077as:jolt-linux:0.4.0")
+implementation("io.github.b077as:jolt-core:0.4.1")
+implementation("io.github.b077as:jolt-win32:0.4.1")
+implementation("io.github.b077as:jolt-linux:0.4.1")
 ```
 
 Run Java with `--enable-native-access=ALL-UNNAMED`, or put `Enable-Native-Access: ALL-UNNAMED` in your jar manifest
@@ -205,6 +205,54 @@ const saved = await jolt.saveAs(blobOrBytesOrText, { name: "report.pdf", filters
 
 The data is written to a temporary file and moved into place when complete. Only trusted origins may use it, and on Linux the page
 must come from `loadResources`.
+
+### Dragging files in and out
+
+A page is never told where a file lives, so a dropped file would be a name and some bytes. Jolt gives the **path** to Java instead
+(since 0.4.1).
+
+**Drop files onto the window** (from Explorer, Nautilus, the desktop):
+
+```java
+window.onFileDrop(drop -> {                         // UI thread; register before the page loads
+    if ("avatar".equals(drop.zone())) setAvatar(drop.files().get(0));
+    else addAttachments(drop.files());               // absolute local paths, files or folders
+});
+```
+
+```html
+<div data-jolt-drop="avatar">Drop a picture here</div>
+<style>
+  [data-jolt-drop-over] { outline: 2px dashed dodgerblue; }        /* the area under the pointer */
+  html[data-jolt-drop-active] body { cursor: copy; }               /* files are being dragged over the window */
+</style>
+```
+
+`zone` is the `data-jolt-drop` value of the element the files landed on (`null` outside every such element), `x` and `y` are
+where the pointer was in page pixels. Once `onFileDrop` is registered the web view never navigates to a dropped file, and the page's
+own `drop` handlers still run (so it can show a preview with `FileReader`). Every path must be absolute and local (a
+`\\server\share` path is refused, as for the clipboard) and the files must be the ones the system reported: the page only adds the
+names and the drop zone, and a message that does not match is ignored, so a page cannot name a file of its own.
+
+**Drag files out of the window** into the file manager or another application:
+
+```java
+window.setFileDragSource(token -> token.startsWith("attachment:")
+        ? List.of(store.fileOf(token.substring("attachment:".length())))   // absolute paths of files that exist
+        : null);                                                           // null or empty: no drag
+// optional: implement FileDragSource.finished(token, dropped) to delete a temporary file afterwards
+```
+
+```html
+<li draggable="true" data-jolt-drag-file="attachment:42">report.pdf</li>
+```
+
+The page only hands over the token you put in the attribute; **you** decide which files it stands for, so a page cannot drag
+out an arbitrary file. The target can only **copy** (a drop on a folder never moves your original). The source is asked on the UI
+thread the moment the drag starts, so write a file that does not exist yet before the user can start dragging it.
+
+Windows uses the shell's own drag loop and data object (what Explorer offers for the same files); Linux offers a `text/uri-list` through
+GTK. Needs the WebView2 runtime that supports `postMessageWithAdditionalObjects` (any current one) for dropping in.
 
 ### System notifications
 
@@ -491,6 +539,68 @@ public static void main(String[] args) {
 
 `SingleInstance` takes a lock file in the data directory (released by the system if the app dies) and talks to the running copy over a
 Unix domain socket that only the same user can reach. The callback runs on a thread of its own: use `app.dispatch`.
+
+### Buttons in the taskbar preview (Windows)
+
+When the pointer rests on the taskbar icon, Windows shows the window's preview, and under it a strip of buttons can offer actions that
+need no trip to the window (mute, pause, leave a call). Available since **0.4.1**; **Windows only**: elsewhere
+`supportsTaskbarButtons()` is `false` and the call does nothing.
+
+```java
+window.setTaskbarButtons(List.of(
+        TaskbarButton.of("Mute", muteIcon, () -> toggleMute()),                     // icon: PNG or ICO bytes, drawn about 16 px
+        TaskbarButton.of("Leave call", hangupIcon, () -> leave()).withEnabled(inCall)));
+```
+
+Up to 7 buttons; callbacks run on the UI thread. Windows lets a program add the buttons only **once**, so the number is fixed by the first
+call that has any: later calls update icons, tooltips and enabled state, and may give fewer (the rest are hidden), but giving more throws
+`IllegalArgumentException`. Call it again whenever the state changes (swap the mute icon, disable a button). The buttons appear once the
+window has been shown, and are added again if Explorer restarts.
+
+### Progress on the taskbar icon
+
+A bar along the window's taskbar icon shows a download, export or upload without bringing the window up (since 0.4.1). On Windows this is the taskbar
+icon's progress. On Linux it is **best effort**: Jolt sends the Unity launcher signal (`com.canonical.Unity.LauncherEntry`), which KDE Plasma,
+Ubuntu's dock and Dash to Dock draw; plain GNOME Shell and most others ignore it. The desktop finds your icon through an installed
+`<appId>.desktop` file, so an app run from a bare jar shows nothing; Linux has one bar per application and no red/yellow states.
+
+```java
+window.setTaskbarProgress(TaskbarProgress.normal(done / (double) total));   // green bar
+window.setTaskbarProgress(TaskbarProgress.indeterminate());                 // length unknown
+window.setTaskbarProgress(TaskbarProgress.error(0.6));                      // red: it failed
+window.setTaskbarProgress(TaskbarProgress.none());                          // done: clear it
+```
+
+Call it from any thread. It is shown as soon as the window has a taskbar button (so you can set it before the window is shown) and again
+if Explorer restarts.
+
+### Extra entries on the taskbar / launcher icon
+
+Right-clicking the application's icon in the taskbar (Windows) or launcher (Linux) can offer actions that need no window first:
+**tasks** like "New incognito window", and, on Windows, your own **categories** like "Recent projects". Available since **0.4.1**.
+
+```java
+app.setJumpList(JumpList.builder()
+        .task("New incognito window", "--incognito")                     // starts the program with these arguments
+        .task(JumpItem.of("Settings", "--settings").withDescription("Open the settings"))
+        .category("Recent projects", List.of(                            // Windows only
+                JumpItem.of("Parsel", "--open", "42"),
+                JumpItem.of("Notes", "--open", "7")))
+        .build());
+```
+
+Choosing an entry **starts the program again** with those arguments, so receive them in the copy that is already running with
+`SingleInstance.acquire(options, args, onOtherLaunch)` (the new copy hands its arguments over and exits). Call `setJumpList` again whenever
+the entries change; `JumpList.empty()` removes them. `supportsJumpList()` says whether the platform has them.
+
+- **Windows**: from the first call the windows carry `AppOptions.appId` as their AppUserModelID, so the entries sit on this application's
+  icon and not on Java's. The id must be at most 128 characters without spaces. Windows hides categories when the user has turned off
+  "Show recently opened items" in Settings; tasks always show. The command to start is the process's own (for a plain Java launch rebuilt
+  as `-jar app.jar`; JVM options are not carried over, so put `Enable-Native-Access: ALL-UNNAMED` in the jar's manifest), or set
+  `builder().command(List.of(...))` yourself.
+- **Linux**: best effort. Tasks are written as desktop actions into `~/.local/share/applications/<appId>.desktop`, which GNOME and KDE show
+  on the launcher icon when the running window is matched to that file. Categories and icons are not used, and a `.desktop` file of your own
+  at that place is never changed.
 
 ## Security
 
