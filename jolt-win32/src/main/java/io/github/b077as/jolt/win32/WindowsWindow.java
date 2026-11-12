@@ -115,7 +115,11 @@ final class WindowsWindow implements WebWindow, NativeResourceHost, NativeDialog
     WindowsWindow(WindowsApplication app, WindowOptions options) {
         this.app = app;
         this.options = options;
-        this.style = options.frameless() ? FRAMELESS_STYLE : STYLE;
+        int baseStyle = options.frameless() ? FRAMELESS_STYLE : STYLE;
+        // A window the user cannot resize has no maximize box, and (unless it is frameless, which needs the frame for its shadow and
+        // draws no visible border anyway) no sizing border.
+        this.style = options.resizable() ? baseStyle
+                : baseStyle & ~(options.frameless() ? Win32.WS_MAXIMIZEBOX : Win32.WS_MAXIMIZEBOX | Win32.WS_THICKFRAME);
         this.guard = new SecurityGuard(options.security(), app::dispatch);
 
         // An owner (not a parent: the style is not WS_CHILD) keeps this window in front of it, minimizes with it and takes it
@@ -152,10 +156,11 @@ final class WindowsWindow implements WebWindow, NativeResourceHost, NativeDialog
             setBackgroundBrush(options.backgroundRgb()); // painted behind the web view, so it never starts out white
         }
         applyClientSize(options.width(), options.height());
-        if (options.centered() && !options.maximized()) {
+        boolean startMaximized = options.maximized() && options.resizable();
+        if (options.centered() && !startMaximized) {
             center();
         }
-        maximizeOnFirstShow = options.maximized();
+        maximizeOnFirstShow = startMaximized;
         if (options.visible()) {
             display();
         }
@@ -352,7 +357,7 @@ public CompletableFuture<String> eval(String script) {
 
     @Override
     public void toggleMaximize() {
-        if (destroyed) {
+        if (destroyed || !options.resizable()) {
             return;
         }
         Win32.showWindow(hwnd, Win32.isZoomed(hwnd) ? Win32.SW_RESTORE : Win32.SW_SHOWMAXIMIZED);
@@ -365,6 +370,9 @@ public CompletableFuture<String> eval(String script) {
 
     @Override
     public void beginResize(int edge) {
+        if (!options.resizable()) {
+            return;
+        }
         beginNonClientDrag(9 + edge); // edges 1 (left) .. 8 (bottom-right) are HTLEFT (10) .. HTBOTTOMRIGHT (17) minus 9
     }
 
@@ -457,7 +465,7 @@ public CompletableFuture<String> eval(String script) {
 
     @Override
     public void setMaximizeButton(int x, int y, int width, int height) {
-        if (destroyed || !snapLayouts) {
+        if (destroyed || !snapLayouts || !options.resizable()) {
             return;
         }
         if (snapOverlay.equals(MemorySegment.NULL)) {
@@ -576,8 +584,8 @@ public CompletableFuture<String> eval(String script) {
             boolean zoomed = Win32.isZoomed(hwnd);
             Win32.enableSystemMenuItem(menu, Win32.SC_RESTORE, zoomed);
             Win32.enableSystemMenuItem(menu, Win32.SC_MOVE, !zoomed);
-            Win32.enableSystemMenuItem(menu, Win32.SC_SIZE, !zoomed);
-            Win32.enableSystemMenuItem(menu, Win32.SC_MAXIMIZE, !zoomed);
+            Win32.enableSystemMenuItem(menu, Win32.SC_SIZE, !zoomed && options.resizable());
+            Win32.enableSystemMenuItem(menu, Win32.SC_MAXIMIZE, !zoomed && options.resizable());
             Win32.enableSystemMenuItem(menu, Win32.SC_MINIMIZE, true);
             Win32.setForegroundWindow(hwnd); // so the menu closes when the user clicks elsewhere
             int[] at = Win32.cursorPosition();
@@ -616,7 +624,7 @@ public CompletableFuture<String> eval(String script) {
     @Override
     public void maximize() {
         app.dispatch(() -> {
-            if (destroyed) {
+            if (destroyed || !options.resizable()) {
                 return;
             }
             if (Win32.isWindowVisible(hwnd)) {
@@ -750,7 +758,7 @@ public CompletableFuture<String> eval(String script) {
                         return 0L;
                     }
                 }
-                if (options.minWidth() == 0 && options.minHeight() == 0) {
+                if (!options.resizable() || options.minWidth() == 0 && options.minHeight() == 0) {
                     return null;
                 }
                 applyMinTrackSize(lParam);
@@ -786,6 +794,14 @@ public CompletableFuture<String> eval(String script) {
                 Win32.setWindowPos(hwnd, left, top, rect.get(JAVA_INT, 8) - left, rect.get(JAVA_INT, 12) - top,
                         Win32.SWP_NOZORDER | Win32.SWP_NOACTIVATE);
                 return 0L;
+            }
+            case Win32.WM_SYSCOMMAND -> {
+                // Alt+Space and the window menu of a frameless window still offer Size and Maximize; the low four bits are the system's own
+                int command = (int) (wParam & 0xFFF0);
+                if (!options.resizable() && (command == Win32.SC_SIZE || command == Win32.SC_MAXIMIZE)) {
+                    return 0L;
+                }
+                return null;
             }
             case Win32.WM_COMMAND -> {
                 return taskbarButtons.onCommand(wParam) ? 0L : null;
@@ -1127,7 +1143,7 @@ public CompletableFuture<String> eval(String script) {
             // Operations queued by callers run only after the bridge script is registered, so every navigation sees it.
             String bridge = BridgeScript.build("window.chrome.webview.postMessage(m)", options.security().bridgeInSubframes());
             if (options.frameless()) {
-                addScriptOnDocumentCreated(bridge, () -> addScriptOnDocumentCreated(FrameScript.build("windows"), this::finishInit));
+                addScriptOnDocumentCreated(bridge, () -> addScriptOnDocumentCreated(FrameScript.build("windows", options.resizable()), this::finishInit));
             } else {
                 addScriptOnDocumentCreated(bridge, this::finishInit);
             }

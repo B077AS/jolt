@@ -104,6 +104,38 @@ class WindowsShellTest {
         assertEquals("true,true", result.getNow(null));
     }
 
+    /** The real window style: no sizing border and no maximize box, and Maximize/Size from the system menu are refused. */
+    @Test
+    void aWindowThatIsNotResizableHasNoSizingFrameAndRefusesSystemMaximizeAndSize() {
+        CompletableFuture<String> result = new CompletableFuture<>();
+        WebWindowContract.runApp(30, app -> {
+            WindowsWindow plain = (WindowsWindow) app.createWindow(WindowOptions.defaults().withSize(300, 200).withResizable(false));
+            WindowsWindow frameless = (WindowsWindow) app.createWindow(
+                    WindowOptions.defaults().withSize(300, 200).withResizable(false).withFrameless(true));
+            WindowsWindow normal = (WindowsWindow) app.createWindow(WindowOptions.defaults().withSize(300, 200));
+            normal.ready().thenRun(() -> app.dispatch(() -> {
+                long plainStyle = Win32.windowStyle(plain.hwnd());
+                long framelessStyle = Win32.windowStyle(frameless.hwnd());
+                long normalStyle = Win32.windowStyle(normal.hwnd());
+                Win32.sendMessage(plain.hwnd(), Win32.WM_SYSCOMMAND, Win32.SC_MAXIMIZE, 0);
+                Win32.sendMessage(frameless.hwnd(), Win32.WM_SYSCOMMAND, Win32.SC_MAXIMIZE, 0);
+                Win32.sendMessage(frameless.hwnd(), Win32.WM_SYSCOMMAND, Win32.SC_SIZE, 0);
+                Win32.sendMessage(normal.hwnd(), Win32.WM_SYSCOMMAND, Win32.SC_MAXIMIZE, 0); // control: this one must work
+                result.complete(String.join(",",
+                        String.valueOf((plainStyle & (Win32.WS_THICKFRAME | Win32.WS_MAXIMIZEBOX)) == 0),
+                        String.valueOf((framelessStyle & Win32.WS_MAXIMIZEBOX) == 0),
+                        String.valueOf((normalStyle & (Win32.WS_THICKFRAME | Win32.WS_MAXIMIZEBOX)) == (Win32.WS_THICKFRAME | Win32.WS_MAXIMIZEBOX)),
+                        String.valueOf(Win32.isZoomed(plain.hwnd())),
+                        String.valueOf(Win32.isZoomed(frameless.hwnd())),
+                        String.valueOf(Win32.isZoomed(normal.hwnd()))));
+                plain.close();
+                frameless.close();
+                normal.close();
+            }));
+        });
+        assertEquals("true,true,true,false,false,true", result.getNow(null));
+    }
+
     @Test
     void aWindowIsFocusedOnlyWhileItIsTheOneInFrontAndShown() {
         CompletableFuture<String> result = new CompletableFuture<>();

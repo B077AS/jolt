@@ -669,6 +669,51 @@ public abstract class WebWindowContract {
         assertEquals(maximizeIsHonoured() ? List.of("hidden true", "shown true") : List.of("hidden true", "shown ok"), steps);
     }
 
+    /** A window the user cannot resize is not maximized at creation either, and asking for it later does nothing. */
+    @Test
+    public void aWindowThatIsNotResizableCannotBeMaximized() {
+        List<String> steps = new ArrayList<>();
+        runApp(30, app -> {
+            WebWindow window = app.createWindow(WindowOptions.defaults().withSize(400, 300).withResizable(false).withMaximized(true));
+            steps.add("created " + window.isMaximized());
+            window.maximize();
+            // the eval is queued behind the maximize request, so by the time it answers the request has been handled
+            window.eval("1 + 1").whenComplete((r, e) -> {
+                steps.add("after maximize " + window.isMaximized());
+                window.close();
+            });
+        });
+        assertEquals(List.of("created false", "after maximize false"), steps);
+    }
+
+    /** A frameless non-resizable window: no resize handles, no maximize button in the kit, and the page can tell. */
+    @Test
+    public void aFramelessWindowThatIsNotResizableHasNoResizeHandlesAndNoMaximizeButton() {
+        CompletableFuture<String> result = new CompletableFuture<>();
+        runApp(40, app -> {
+            WebWindow window = app.createWindow(WindowOptions.defaults().withSize(500, 300).withFrameless(true).withResizable(false));
+            window.onMessage(message -> {
+                if (message.equals("hello")) {
+                    // off the UI thread: evalNow waits for an answer that the UI thread has to give
+                    CompletableFuture.runAsync(() -> result.complete(evalNow(window, """
+                            (() => {
+                              const bar = document.querySelector('[data-jolt-titlebar]');
+                              const names = [...bar.querySelector('[data-jolt-caption]').shadowRoot.querySelectorAll('button')]
+                                .map((b) => b.className).join(',');
+                              return [names, document.querySelectorAll('[data-jolt-handle]').length,
+                                      document.documentElement.hasAttribute('data-jolt-not-resizable')].join('|');
+                            })()
+                            """))).thenRun(window::close);
+                }
+            });
+            window.loadHtml("""
+                    <header data-jolt-titlebar style="display:flex;height:32px"><span>Title</span></header>
+                    <script>addEventListener('load', () => jolt.postMessage('hello'))</script>
+                    """);
+        });
+        assertEquals("minimize,close|0|true", result.getNow("not answered"));
+    }
+
     /**
      * What the page does while files are dragged over it. A real drop from the file manager cannot be made from inside the page, so
      * this uses synthetic drag events; those must make the page accept the drag and mark the drop area, but never reach Java (only a

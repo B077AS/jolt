@@ -395,6 +395,7 @@ The OS draws the icon and title bar, so you set them from Java, at creation or l
 WindowOptions options = WindowOptions.defaults()
         .withSize(1200, 780)
         .withMinSize(600, 400)                   // smallest size the user can drag to
+        .withResizable(false)                    // fixed size: no sizing border, no maximize (ignores min size and maximized)
         .withIcon(iconBytes)                     // multi-size .ico (best) or PNG
         .withTitleBarScheme(ColorScheme.DARK)
         .withBackgroundColor(0x0F1117)           // behind the page until it paints: no white flash

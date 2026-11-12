@@ -7,7 +7,8 @@ package io.github.b077as.jolt.internal;
  *   <li>Elements marked {@code data-jolt-drag} move the window (a double click maximizes or restores it); buttons, links and form
  *       fields inside keep working and {@code data-jolt-no-drag} excludes anything else. On Windows a right click there opens the
  *       window menu.</li>
- *   <li>Thin invisible handles along the four edges and corners resize it (hidden while maximized).</li>
+ *   <li>Thin invisible handles along the four edges and corners resize it (hidden while maximized; absent if the window is not
+ *       resizable, which also leaves the title bar kit without a maximize button).</li>
  *   <li>The window tells the page its state: {@code <html>} gets {@code data-jolt-maximized}, {@code data-jolt-inactive} (the
  *       window is not the one in front) and {@code data-jolt-platform}; {@code jolt.frame.isMaximized()}, {@code isFocused()} and
  *       {@code onChange()} report it.</li>
@@ -25,7 +26,16 @@ public final class FrameScript {
 
     /** @param platform {@code "windows"} or {@code "linux"}, put on {@code <html>} as {@code data-jolt-platform} */
     public static String build(String platform) {
-        return SCRIPT.replace("__PLATFORM__", platform);
+        return build(platform, true);
+    }
+
+    /**
+     * @param platform  {@code "windows"} or {@code "linux"}, put on {@code <html>} as {@code data-jolt-platform}
+     * @param resizable whether the window can be resized and maximized. If not, there are no resize handles, the title bar kit has
+     *                  no maximize button, and {@code <html>} gets {@code data-jolt-not-resizable} so the page can hide its own
+     */
+    public static String build(String platform, boolean resizable) {
+        return SCRIPT.replace("__PLATFORM__", platform).replace("__RESIZABLE__", String.valueOf(resizable));
     }
 
     private static final String SCRIPT = """
@@ -34,6 +44,7 @@ public final class FrameScript {
               Object.defineProperty(window, '__joltFrame', { value: true });
               const PREFIX = '\\u0001jolt-frame:';
               const PLATFORM = '__PLATFORM__';
+              const RESIZABLE = __RESIZABLE__;
               const send = (m) => window.jolt.postMessage(PREFIX + m);
               const SKIP = '[data-jolt-no-drag], button, a[href], input, select, textarea, label, summary, [role="button"], [contenteditable]';
               const DRAG = '[data-jolt-drag], [data-jolt-titlebar]';
@@ -70,7 +81,7 @@ public final class FrameScript {
                 const t = e.target instanceof Element ? e.target : null;
                 if (!t || !t.closest(DRAG) || t.closest(SKIP)) return;
                 e.preventDefault();
-                send(e.detail >= 2 ? 'maximize' : 'move');
+                send(e.detail >= 2 && RESIZABLE ? 'maximize' : 'move');
               }, true);
 
               if (PLATFORM === 'windows') {
@@ -94,6 +105,7 @@ public final class FrameScript {
                 [8, 'right:0;bottom:0;width:10px;height:10px;', 'nwse-resize'],
               ];
               const installHandles = () => {
+                if (!RESIZABLE) return;
                 for (const [edge, geometry, cursor] of HANDLES) {
                   const handle = document.createElement('div');
                   handle.setAttribute('data-jolt-handle', '');
@@ -145,7 +157,7 @@ public final class FrameScript {
 
               const buildKit = (bar) => {
                 const wanted = (bar.getAttribute('data-jolt-titlebar') || '').split(/\\s+/).filter((n) => NAMES.includes(n));
-                const names = wanted.length ? NAMES.filter((n) => wanted.includes(n)) : NAMES;
+                const names = (wanted.length ? NAMES.filter((n) => wanted.includes(n)) : NAMES).filter((n) => RESIZABLE || n !== 'maximize');
                 const host = document.createElement('div');
                 host.setAttribute('data-jolt-caption', '');
                 host.setAttribute('data-jolt-no-drag', '');
@@ -257,6 +269,7 @@ public final class FrameScript {
                 if (!document.documentElement) return;
                 installHandles();
                 R().setAttribute('data-jolt-platform', PLATFORM);
+                if (!RESIZABLE) R().setAttribute('data-jolt-not-resizable', '');
                 scanBars();
                 new MutationObserver(later).observe(R(), { childList: true, subtree: true, attributes: true, attributeFilter: ['data-jolt-titlebar', 'data-jolt-maximize'] });
                 addEventListener('resize', later);

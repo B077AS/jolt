@@ -17,6 +17,15 @@ class FrameScriptTest {
     }
 
     @Test
+    void theResizableFlagIsFilledInAndDefaultsToTrue() {
+        assertTrue(FrameScript.build("windows").contains("const RESIZABLE = true;"));
+        assertTrue(FrameScript.build("windows", true).contains("const RESIZABLE = true;"));
+        String fixed = FrameScript.build("linux", false);
+        assertTrue(fixed.contains("const RESIZABLE = false;"));
+        assertFalse(fixed.contains("__RESIZABLE__"));
+    }
+
+    @Test
     void theScriptSpeaksTheProtocolTheWindowUnderstands() {
         String script = FrameScript.build("windows");
         for (String needed : new String[] {"\\u0001jolt-frame:", "'state'", "'menu'", "'maxbtn:none'", "'maxbtn:'", "'move'",

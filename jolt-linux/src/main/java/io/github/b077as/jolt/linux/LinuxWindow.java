@@ -95,6 +95,9 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
         if (options.frameless()) {
             Gtk.windowSetDecorated(window, false); // the page draws the title bar
         }
+        if (!options.resizable()) {
+            Gtk.windowSetResizable(window, false);
+        }
         // A closed owner, or one from another application, is ignored.
         if (options.owner() instanceof LinuxWindow owner && owner.app == app && !owner.destroyed) {
             Gtk.windowSetOwner(window, owner.window);
@@ -110,7 +113,7 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
                 subframes ? Gtk.USER_CONTENT_INJECT_ALL_FRAMES : Gtk.USER_CONTENT_INJECT_TOP_FRAME);
         if (options.frameless()) {
             // after the bridge: the frame script talks through window.jolt
-            Gtk.addUserScript(contentManager, FrameScript.build("linux"), Gtk.USER_CONTENT_INJECT_TOP_FRAME);
+            Gtk.addUserScript(contentManager, FrameScript.build("linux", options.resizable()), Gtk.USER_CONTENT_INJECT_TOP_FRAME);
         }
         webView = Gtk.newWebView(app.webContext(), contentManager);
         Gtk.setDeveloperExtras(webView, options.devTools());
@@ -146,13 +149,13 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
             Gtk.setBackgroundColor(webView, options.backgroundRgb());
         }
 
-        if (options.minWidth() > 0 || options.minHeight() > 0) {
+        if (options.resizable() && (options.minWidth() > 0 || options.minHeight() > 0)) {
             Gtk.windowSetMinSize(window, options.minWidth(), options.minHeight());
         }
 
         Gtk.containerAdd(window, webView);
         Gtk.widgetShow(webView);
-        if (options.maximized()) {
+        if (options.maximized() && options.resizable()) {
             Gtk.windowMaximize(window); // before the window is shown this sets the state it opens in
             maximizeWhenShown = true;
         } else if (options.centered()) {
@@ -396,7 +399,7 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
 
     @Override
     public void toggleMaximize() {
-        if (destroyed) {
+        if (destroyed || !options.resizable()) {
             return;
         }
         if (maximized) {
@@ -415,7 +418,7 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
 
     @Override
     public void beginResize(int edge) {
-        if (!destroyed && !maximized) {
+        if (!destroyed && !maximized && options.resizable()) {
             // protocol edges 1 left, 2 right, 3 top, 4 top-left, 5 top-right, 6 bottom, 7 bottom-left, 8 bottom-right
             final int[] gdkEdges = {3, 4, 1, 0, 2, 6, 5, 7};
             Gtk.windowBeginResizeDrag(window, gdkEdges[edge - 1]);
@@ -439,7 +442,7 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
     @Override
     public void maximize() {
         app.dispatch(() -> {
-            if (!destroyed) {
+            if (!destroyed && options.resizable()) {
                 Gtk.windowMaximize(window);
                 if (!shown) {
                     maximizeWhenShown = true;

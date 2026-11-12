@@ -9,6 +9,13 @@ The latest version is the one on [Maven Central](https://central.sonatype.com/ar
 ## Unreleased
 
 ### Added
+- **Fixed-size windows: `WindowOptions.withResizable(false)`.** The window keeps the size it was created with: no sizing border, no
+  maximize box, `maximized` and `minWidth`/`minHeight` are ignored, `WebWindow.maximize()` does nothing, and Size/Maximize from the system
+  menu (Alt+Space) are refused. Minimize and full screen still work. A frameless window gets no resize handles, the title bar kit leaves out
+  the maximize button, and `<html>` gets `data-jolt-not-resizable` so a page can hide a maximize button of its own. `WindowOptions` gained
+  the component `resizable` (last, default `true`), so code that calls its canonical constructor directly must pass it; the `with...`
+  methods are unaffected. Windows: tested on real windows (style bits, system commands). Not yet verified: Linux (`gtk_window_set_resizable`;
+  the compiled code has not been run, and a window manager may still treat the window its own way), how a fixed-size window looks on Windows 10.
 - **Strict file drops.** Put `data-jolt-drop-strict` on `<html>` and a file drag over anything outside a `data-jolt-drop` element gets
   `dropEffect = 'none'` (the system's not-allowed cursor), and a drop there is not delivered to `onFileDrop`. Without the attribute the
   whole page accepts drops, as before. Windows (WebView2): done in the page script. Linux: only the delivery is refused; the cursor still
