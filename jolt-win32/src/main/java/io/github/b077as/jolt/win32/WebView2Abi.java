@@ -612,4 +612,339 @@ final class WebView2Abi {
         static final int INVOKE = 3;
         private ICoreWebView2CallDevToolsProtocolMethodCompletedHandler() {}
     }
+
+    /** {@code ICoreWebView2_7}, 81 vtable slots. */
+    static final class ICoreWebView2_7 {
+        static final String IID = "79c24d83-09a3-45ae-9418-487f32a58740";
+        static final int QUERY_INTERFACE = 0;
+        static final int ADD_REF = 1;
+        static final int RELEASE = 2;
+        static final int GET_SETTINGS = 3;
+        static final int GET_SOURCE = 4;
+        static final int NAVIGATE = 5;
+        static final int NAVIGATE_TO_STRING = 6;
+        static final int ADD_NAVIGATION_STARTING = 7;
+        static final int REMOVE_NAVIGATION_STARTING = 8;
+        static final int ADD_CONTENT_LOADING = 9;
+        static final int REMOVE_CONTENT_LOADING = 10;
+        static final int ADD_SOURCE_CHANGED = 11;
+        static final int REMOVE_SOURCE_CHANGED = 12;
+        static final int ADD_HISTORY_CHANGED = 13;
+        static final int REMOVE_HISTORY_CHANGED = 14;
+        static final int ADD_NAVIGATION_COMPLETED = 15;
+        static final int REMOVE_NAVIGATION_COMPLETED = 16;
+        static final int ADD_FRAME_NAVIGATION_STARTING = 17;
+        static final int REMOVE_FRAME_NAVIGATION_STARTING = 18;
+        static final int ADD_FRAME_NAVIGATION_COMPLETED = 19;
+        static final int REMOVE_FRAME_NAVIGATION_COMPLETED = 20;
+        static final int ADD_SCRIPT_DIALOG_OPENING = 21;
+        static final int REMOVE_SCRIPT_DIALOG_OPENING = 22;
+        static final int ADD_PERMISSION_REQUESTED = 23;
+        static final int REMOVE_PERMISSION_REQUESTED = 24;
+        static final int ADD_PROCESS_FAILED = 25;
+        static final int REMOVE_PROCESS_FAILED = 26;
+        static final int ADD_SCRIPT_TO_EXECUTE_ON_DOCUMENT_CREATED = 27;
+        static final int REMOVE_SCRIPT_TO_EXECUTE_ON_DOCUMENT_CREATED = 28;
+        static final int EXECUTE_SCRIPT = 29;
+        static final int CAPTURE_PREVIEW = 30;
+        static final int RELOAD = 31;
+        static final int POST_WEB_MESSAGE_AS_JSON = 32;
+        static final int POST_WEB_MESSAGE_AS_STRING = 33;
+        static final int ADD_WEB_MESSAGE_RECEIVED = 34;
+        static final int REMOVE_WEB_MESSAGE_RECEIVED = 35;
+        static final int CALL_DEV_TOOLS_PROTOCOL_METHOD = 36;
+        static final int GET_BROWSER_PROCESS_ID = 37;
+        static final int GET_CAN_GO_BACK = 38;
+        static final int GET_CAN_GO_FORWARD = 39;
+        static final int GO_BACK = 40;
+        static final int GO_FORWARD = 41;
+        static final int GET_DEV_TOOLS_PROTOCOL_EVENT_RECEIVER = 42;
+        static final int STOP = 43;
+        static final int ADD_NEW_WINDOW_REQUESTED = 44;
+        static final int REMOVE_NEW_WINDOW_REQUESTED = 45;
+        static final int ADD_DOCUMENT_TITLE_CHANGED = 46;
+        static final int REMOVE_DOCUMENT_TITLE_CHANGED = 47;
+        static final int GET_DOCUMENT_TITLE = 48;
+        static final int ADD_HOST_OBJECT_TO_SCRIPT = 49;
+        static final int REMOVE_HOST_OBJECT_FROM_SCRIPT = 50;
+        static final int OPEN_DEV_TOOLS_WINDOW = 51;
+        static final int ADD_CONTAINS_FULL_SCREEN_ELEMENT_CHANGED = 52;
+        static final int REMOVE_CONTAINS_FULL_SCREEN_ELEMENT_CHANGED = 53;
+        static final int GET_CONTAINS_FULL_SCREEN_ELEMENT = 54;
+        static final int ADD_WEB_RESOURCE_REQUESTED = 55;
+        static final int REMOVE_WEB_RESOURCE_REQUESTED = 56;
+        static final int ADD_WEB_RESOURCE_REQUESTED_FILTER = 57;
+        static final int REMOVE_WEB_RESOURCE_REQUESTED_FILTER = 58;
+        static final int ADD_WINDOW_CLOSE_REQUESTED = 59;
+        static final int REMOVE_WINDOW_CLOSE_REQUESTED = 60;
+        static final int ADD_WEB_RESOURCE_RESPONSE_RECEIVED = 61;
+        static final int REMOVE_WEB_RESOURCE_RESPONSE_RECEIVED = 62;
+        static final int NAVIGATE_WITH_WEB_RESOURCE_REQUEST = 63;
+        static final int ADD_DOMCONTENT_LOADED = 64;
+        static final int REMOVE_DOMCONTENT_LOADED = 65;
+        static final int GET_COOKIE_MANAGER = 66;
+        static final int GET_ENVIRONMENT = 67;
+        static final int TRY_SUSPEND = 68;
+        static final int RESUME = 69;
+        static final int GET_IS_SUSPENDED = 70;
+        static final int SET_VIRTUAL_HOST_NAME_TO_FOLDER_MAPPING = 71;
+        static final int CLEAR_VIRTUAL_HOST_NAME_TO_FOLDER_MAPPING = 72;
+        static final int ADD_FRAME_CREATED = 73;
+        static final int REMOVE_FRAME_CREATED = 74;
+        static final int ADD_DOWNLOAD_STARTING = 75;
+        static final int REMOVE_DOWNLOAD_STARTING = 76;
+        static final int ADD_CLIENT_CERTIFICATE_REQUESTED = 77;
+        static final int REMOVE_CLIENT_CERTIFICATE_REQUESTED = 78;
+        static final int OPEN_TASK_MANAGER_WINDOW = 79;
+        static final int PRINT_TO_PDF = 80;
+        private ICoreWebView2_7() {}
+    }
+
+    /** {@code ICoreWebView2_11}, 102 vtable slots. */
+    static final class ICoreWebView2_11 {
+        static final String IID = "0be78e56-c193-4051-b943-23b460c08bdb";
+        static final int QUERY_INTERFACE = 0;
+        static final int ADD_REF = 1;
+        static final int RELEASE = 2;
+        static final int GET_SETTINGS = 3;
+        static final int GET_SOURCE = 4;
+        static final int NAVIGATE = 5;
+        static final int NAVIGATE_TO_STRING = 6;
+        static final int ADD_NAVIGATION_STARTING = 7;
+        static final int REMOVE_NAVIGATION_STARTING = 8;
+        static final int ADD_CONTENT_LOADING = 9;
+        static final int REMOVE_CONTENT_LOADING = 10;
+        static final int ADD_SOURCE_CHANGED = 11;
+        static final int REMOVE_SOURCE_CHANGED = 12;
+        static final int ADD_HISTORY_CHANGED = 13;
+        static final int REMOVE_HISTORY_CHANGED = 14;
+        static final int ADD_NAVIGATION_COMPLETED = 15;
+        static final int REMOVE_NAVIGATION_COMPLETED = 16;
+        static final int ADD_FRAME_NAVIGATION_STARTING = 17;
+        static final int REMOVE_FRAME_NAVIGATION_STARTING = 18;
+        static final int ADD_FRAME_NAVIGATION_COMPLETED = 19;
+        static final int REMOVE_FRAME_NAVIGATION_COMPLETED = 20;
+        static final int ADD_SCRIPT_DIALOG_OPENING = 21;
+        static final int REMOVE_SCRIPT_DIALOG_OPENING = 22;
+        static final int ADD_PERMISSION_REQUESTED = 23;
+        static final int REMOVE_PERMISSION_REQUESTED = 24;
+        static final int ADD_PROCESS_FAILED = 25;
+        static final int REMOVE_PROCESS_FAILED = 26;
+        static final int ADD_SCRIPT_TO_EXECUTE_ON_DOCUMENT_CREATED = 27;
+        static final int REMOVE_SCRIPT_TO_EXECUTE_ON_DOCUMENT_CREATED = 28;
+        static final int EXECUTE_SCRIPT = 29;
+        static final int CAPTURE_PREVIEW = 30;
+        static final int RELOAD = 31;
+        static final int POST_WEB_MESSAGE_AS_JSON = 32;
+        static final int POST_WEB_MESSAGE_AS_STRING = 33;
+        static final int ADD_WEB_MESSAGE_RECEIVED = 34;
+        static final int REMOVE_WEB_MESSAGE_RECEIVED = 35;
+        static final int CALL_DEV_TOOLS_PROTOCOL_METHOD = 36;
+        static final int GET_BROWSER_PROCESS_ID = 37;
+        static final int GET_CAN_GO_BACK = 38;
+        static final int GET_CAN_GO_FORWARD = 39;
+        static final int GO_BACK = 40;
+        static final int GO_FORWARD = 41;
+        static final int GET_DEV_TOOLS_PROTOCOL_EVENT_RECEIVER = 42;
+        static final int STOP = 43;
+        static final int ADD_NEW_WINDOW_REQUESTED = 44;
+        static final int REMOVE_NEW_WINDOW_REQUESTED = 45;
+        static final int ADD_DOCUMENT_TITLE_CHANGED = 46;
+        static final int REMOVE_DOCUMENT_TITLE_CHANGED = 47;
+        static final int GET_DOCUMENT_TITLE = 48;
+        static final int ADD_HOST_OBJECT_TO_SCRIPT = 49;
+        static final int REMOVE_HOST_OBJECT_FROM_SCRIPT = 50;
+        static final int OPEN_DEV_TOOLS_WINDOW = 51;
+        static final int ADD_CONTAINS_FULL_SCREEN_ELEMENT_CHANGED = 52;
+        static final int REMOVE_CONTAINS_FULL_SCREEN_ELEMENT_CHANGED = 53;
+        static final int GET_CONTAINS_FULL_SCREEN_ELEMENT = 54;
+        static final int ADD_WEB_RESOURCE_REQUESTED = 55;
+        static final int REMOVE_WEB_RESOURCE_REQUESTED = 56;
+        static final int ADD_WEB_RESOURCE_REQUESTED_FILTER = 57;
+        static final int REMOVE_WEB_RESOURCE_REQUESTED_FILTER = 58;
+        static final int ADD_WINDOW_CLOSE_REQUESTED = 59;
+        static final int REMOVE_WINDOW_CLOSE_REQUESTED = 60;
+        static final int ADD_WEB_RESOURCE_RESPONSE_RECEIVED = 61;
+        static final int REMOVE_WEB_RESOURCE_RESPONSE_RECEIVED = 62;
+        static final int NAVIGATE_WITH_WEB_RESOURCE_REQUEST = 63;
+        static final int ADD_DOMCONTENT_LOADED = 64;
+        static final int REMOVE_DOMCONTENT_LOADED = 65;
+        static final int GET_COOKIE_MANAGER = 66;
+        static final int GET_ENVIRONMENT = 67;
+        static final int TRY_SUSPEND = 68;
+        static final int RESUME = 69;
+        static final int GET_IS_SUSPENDED = 70;
+        static final int SET_VIRTUAL_HOST_NAME_TO_FOLDER_MAPPING = 71;
+        static final int CLEAR_VIRTUAL_HOST_NAME_TO_FOLDER_MAPPING = 72;
+        static final int ADD_FRAME_CREATED = 73;
+        static final int REMOVE_FRAME_CREATED = 74;
+        static final int ADD_DOWNLOAD_STARTING = 75;
+        static final int REMOVE_DOWNLOAD_STARTING = 76;
+        static final int ADD_CLIENT_CERTIFICATE_REQUESTED = 77;
+        static final int REMOVE_CLIENT_CERTIFICATE_REQUESTED = 78;
+        static final int OPEN_TASK_MANAGER_WINDOW = 79;
+        static final int PRINT_TO_PDF = 80;
+        static final int ADD_IS_MUTED_CHANGED = 81;
+        static final int REMOVE_IS_MUTED_CHANGED = 82;
+        static final int GET_IS_MUTED = 83;
+        static final int PUT_IS_MUTED = 84;
+        static final int ADD_IS_DOCUMENT_PLAYING_AUDIO_CHANGED = 85;
+        static final int REMOVE_IS_DOCUMENT_PLAYING_AUDIO_CHANGED = 86;
+        static final int GET_IS_DOCUMENT_PLAYING_AUDIO = 87;
+        static final int ADD_IS_DEFAULT_DOWNLOAD_DIALOG_OPEN_CHANGED = 88;
+        static final int REMOVE_IS_DEFAULT_DOWNLOAD_DIALOG_OPEN_CHANGED = 89;
+        static final int GET_IS_DEFAULT_DOWNLOAD_DIALOG_OPEN = 90;
+        static final int OPEN_DEFAULT_DOWNLOAD_DIALOG = 91;
+        static final int CLOSE_DEFAULT_DOWNLOAD_DIALOG = 92;
+        static final int GET_DEFAULT_DOWNLOAD_DIALOG_CORNER_ALIGNMENT = 93;
+        static final int PUT_DEFAULT_DOWNLOAD_DIALOG_CORNER_ALIGNMENT = 94;
+        static final int GET_DEFAULT_DOWNLOAD_DIALOG_MARGIN = 95;
+        static final int PUT_DEFAULT_DOWNLOAD_DIALOG_MARGIN = 96;
+        static final int ADD_BASIC_AUTHENTICATION_REQUESTED = 97;
+        static final int REMOVE_BASIC_AUTHENTICATION_REQUESTED = 98;
+        static final int CALL_DEV_TOOLS_PROTOCOL_METHOD_FOR_SESSION = 99;
+        static final int ADD_CONTEXT_MENU_REQUESTED = 100;
+        static final int REMOVE_CONTEXT_MENU_REQUESTED = 101;
+        private ICoreWebView2_11() {}
+    }
+
+    /** {@code ICoreWebView2Environment6}, 15 vtable slots. */
+    static final class ICoreWebView2Environment6 {
+        static final String IID = "e59ee362-acbd-4857-9a8e-d3644d9459a9";
+        static final int QUERY_INTERFACE = 0;
+        static final int ADD_REF = 1;
+        static final int RELEASE = 2;
+        static final int CREATE_CORE_WEB_VIEW2_CONTROLLER = 3;
+        static final int CREATE_WEB_RESOURCE_RESPONSE = 4;
+        static final int GET_BROWSER_VERSION_STRING = 5;
+        static final int ADD_NEW_BROWSER_VERSION_AVAILABLE = 6;
+        static final int REMOVE_NEW_BROWSER_VERSION_AVAILABLE = 7;
+        static final int CREATE_WEB_RESOURCE_REQUEST = 8;
+        static final int CREATE_CORE_WEB_VIEW2_COMPOSITION_CONTROLLER = 9;
+        static final int CREATE_CORE_WEB_VIEW2_POINTER_INFO = 10;
+        static final int GET_AUTOMATION_PROVIDER_FOR_WINDOW = 11;
+        static final int ADD_BROWSER_PROCESS_EXITED = 12;
+        static final int REMOVE_BROWSER_PROCESS_EXITED = 13;
+        static final int CREATE_PRINT_SETTINGS = 14;
+        private ICoreWebView2Environment6() {}
+    }
+
+    /** {@code ICoreWebView2PrintSettings}, 29 vtable slots. */
+    static final class ICoreWebView2PrintSettings {
+        static final String IID = "377f3721-c74e-48ca-8db1-df68e51d60e2";
+        static final int QUERY_INTERFACE = 0;
+        static final int ADD_REF = 1;
+        static final int RELEASE = 2;
+        static final int GET_ORIENTATION = 3;
+        static final int PUT_ORIENTATION = 4;
+        static final int GET_SCALE_FACTOR = 5;
+        static final int PUT_SCALE_FACTOR = 6;
+        static final int GET_PAGE_WIDTH = 7;
+        static final int PUT_PAGE_WIDTH = 8;
+        static final int GET_PAGE_HEIGHT = 9;
+        static final int PUT_PAGE_HEIGHT = 10;
+        static final int GET_MARGIN_TOP = 11;
+        static final int PUT_MARGIN_TOP = 12;
+        static final int GET_MARGIN_BOTTOM = 13;
+        static final int PUT_MARGIN_BOTTOM = 14;
+        static final int GET_MARGIN_LEFT = 15;
+        static final int PUT_MARGIN_LEFT = 16;
+        static final int GET_MARGIN_RIGHT = 17;
+        static final int PUT_MARGIN_RIGHT = 18;
+        static final int GET_SHOULD_PRINT_BACKGROUNDS = 19;
+        static final int PUT_SHOULD_PRINT_BACKGROUNDS = 20;
+        static final int GET_SHOULD_PRINT_SELECTION_ONLY = 21;
+        static final int PUT_SHOULD_PRINT_SELECTION_ONLY = 22;
+        static final int GET_SHOULD_PRINT_HEADER_AND_FOOTER = 23;
+        static final int PUT_SHOULD_PRINT_HEADER_AND_FOOTER = 24;
+        static final int GET_HEADER_TITLE = 25;
+        static final int PUT_HEADER_TITLE = 26;
+        static final int GET_FOOTER_URI = 27;
+        static final int PUT_FOOTER_URI = 28;
+        private ICoreWebView2PrintSettings() {}
+    }
+
+    /** {@code ICoreWebView2PrintToPdfCompletedHandler}, 4 vtable slots. */
+    static final class ICoreWebView2PrintToPdfCompletedHandler {
+        static final String IID = "ccf1ef04-fd8e-4d5f-b2de-0983e41b8c36";
+        static final int QUERY_INTERFACE = 0;
+        static final int ADD_REF = 1;
+        static final int RELEASE = 2;
+        static final int INVOKE = 3;
+        private ICoreWebView2PrintToPdfCompletedHandler() {}
+    }
+
+    /** {@code ICoreWebView2AcceleratorKeyPressedEventArgs}, 9 vtable slots. */
+    static final class ICoreWebView2AcceleratorKeyPressedEventArgs {
+        static final String IID = "9f760f8a-fb79-42be-9990-7b56900fa9c7";
+        static final int QUERY_INTERFACE = 0;
+        static final int ADD_REF = 1;
+        static final int RELEASE = 2;
+        static final int GET_KEY_EVENT_KIND = 3;
+        static final int GET_VIRTUAL_KEY = 4;
+        static final int GET_KEY_EVENT_LPARAM = 5;
+        static final int GET_PHYSICAL_KEY_STATUS = 6;
+        static final int GET_HANDLED = 7;
+        static final int PUT_HANDLED = 8;
+        private ICoreWebView2AcceleratorKeyPressedEventArgs() {}
+    }
+
+    /** {@code ICoreWebView2AcceleratorKeyPressedEventHandler}, 4 vtable slots. */
+    static final class ICoreWebView2AcceleratorKeyPressedEventHandler {
+        static final String IID = "b29c7e28-fa79-41a8-8e44-65811c76dcb2";
+        static final int QUERY_INTERFACE = 0;
+        static final int ADD_REF = 1;
+        static final int RELEASE = 2;
+        static final int INVOKE = 3;
+        private ICoreWebView2AcceleratorKeyPressedEventHandler() {}
+    }
+
+    /** {@code ICoreWebView2ContextMenuRequestedEventArgs}, 11 vtable slots. */
+    static final class ICoreWebView2ContextMenuRequestedEventArgs {
+        static final String IID = "a1d309ee-c03f-11eb-8529-0242ac130003";
+        static final int QUERY_INTERFACE = 0;
+        static final int ADD_REF = 1;
+        static final int RELEASE = 2;
+        static final int GET_MENU_ITEMS = 3;
+        static final int GET_CONTEXT_MENU_TARGET = 4;
+        static final int GET_LOCATION = 5;
+        static final int PUT_SELECTED_COMMAND_ID = 6;
+        static final int GET_SELECTED_COMMAND_ID = 7;
+        static final int PUT_HANDLED = 8;
+        static final int GET_HANDLED = 9;
+        static final int GET_DEFERRAL = 10;
+        private ICoreWebView2ContextMenuRequestedEventArgs() {}
+    }
+
+    /** {@code ICoreWebView2ContextMenuRequestedEventHandler}, 4 vtable slots. */
+    static final class ICoreWebView2ContextMenuRequestedEventHandler {
+        static final String IID = "04d3fe1d-ab87-42fb-a898-da241d35b63c";
+        static final int QUERY_INTERFACE = 0;
+        static final int ADD_REF = 1;
+        static final int RELEASE = 2;
+        static final int INVOKE = 3;
+        private ICoreWebView2ContextMenuRequestedEventHandler() {}
+    }
+
+    /** {@code ICoreWebView2ContextMenuTarget}, 16 vtable slots. */
+    static final class ICoreWebView2ContextMenuTarget {
+        static final String IID = "b8611d99-eed6-4f3f-902c-a198502ad472";
+        static final int QUERY_INTERFACE = 0;
+        static final int ADD_REF = 1;
+        static final int RELEASE = 2;
+        static final int GET_KIND = 3;
+        static final int GET_IS_EDITABLE = 4;
+        static final int GET_IS_REQUESTED_FOR_MAIN_FRAME = 5;
+        static final int GET_PAGE_URI = 6;
+        static final int GET_FRAME_URI = 7;
+        static final int GET_HAS_LINK_URI = 8;
+        static final int GET_LINK_URI = 9;
+        static final int GET_HAS_LINK_TEXT = 10;
+        static final int GET_LINK_TEXT = 11;
+        static final int GET_HAS_SOURCE_URI = 12;
+        static final int GET_SOURCE_URI = 13;
+        static final int GET_HAS_SELECTION = 14;
+        static final int GET_SELECTION_TEXT = 15;
+        private ICoreWebView2ContextMenuTarget() {}
+    }
 }

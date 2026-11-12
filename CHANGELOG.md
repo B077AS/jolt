@@ -9,6 +9,31 @@ The latest version is the one on [Maven Central](https://central.sonatype.com/ar
 ## Unreleased
 
 ### Added
+- **Menu bar: `WebWindow.setMenuBar(Menu)`.** A native `File / Edit / View` bar built in Java. `Menu` is immutable like `TrayMenu` and has
+  actions, checkboxes, separators and submenus, each with an optional **accelerator** (`Shortcut`, such as `Ctrl+Shift+N`) and `&` mnemonics.
+  The window grows by the height of the bar so the page area keeps its size; a frameless window has no bar (`supportsMenuBar()` says so). While
+  the web view has the focus the accelerators are handled before the page sees the key (Windows: `AcceleratorKeyPressed`; Linux: a GTK
+  accelerator group). Windows: tested on real windows (the menu is read back with the Win32 menu functions, commands and check marks, the page
+  area before, with and after the bar, and the accelerators with real key presses). The bar is drawn by Windows, so it stays light in a dark app,
+  and Jolt does not hide it in full screen (not tested).
+- **Context menu: `WebWindow.setContextMenu(ContextMenuProvider)`** shows a menu of your own instead of the web view's, told by the web view what
+  was clicked (`ContextMenuInfo`: position, link, image or media address, editable, selection). Windows: WebView2 `ContextMenuRequested`, tested
+  with a synthesized right click on a link, a selection and a text field. WebView2 raises that event only while its default menus are enabled, so
+  Jolt enables them while a provider is set and the provider always replaces the web view's menu. **`WebWindow.edit(EditCommand)`** runs cut, copy,
+  paste, undo, redo and select all on what has the focus (Windows: the DevTools `Input.dispatchKeyEvent` editing commands, tested against the real
+  clipboard).
+- **Global hotkeys: `Application.registerHotkey(Shortcut, Runnable)`** returns a `Hotkey` to close; it fails if another program holds the keys
+  and refuses a combination without Ctrl, Alt or Meta (function keys excepted). **Windows only**: `RegisterHotKey`, tested including a real key
+  press. On Linux `supportsGlobalHotkeys()` is `false` and `registerHotkey` throws `UnsupportedOperationException`.
+- **PDF: `WebWindow.printToPdf(PrintOptions)`** returns the bytes of a PDF of the shown page (`PrintOptions`: landscape, scale, `Paper` or a size in
+  millimetres, margins, backgrounds, header and footer), and **`WebWindow.print()`** opens the web view's print dialog (it runs `window.print()`).
+  Windows: `PrintToPdf`, tested for A4, Letter, landscape, scale and several pages. `print()` opens a dialog and is not covered by a test.
+- Internals: `WebView2Abi` was regenerated from the same SDK (1.0.4314.35) with the print, accelerator and context-menu interfaces added.
+- **Not yet verified: Linux for the four features above.** The code compiles but has not been run (no Linux session was available): GTK menus and
+  accelerator groups, the `context-menu` signal and `webkit_web_view_execute_editing_command`, and `WebKitPrintOperation` writing through GTK's
+  "Print to File". The contract tests `printToPdf*` and `editCommands*` in `WebWindowContract` will hold the Linux backend to the same behaviour
+  the first time it is run on X11 and Wayland. Also not verified: how the Windows menu looks, `print()`, and a context menu chosen with the mouse
+  (the tests open the menu and close it from code).
 - **Fixed-size windows: `WindowOptions.withResizable(false)`.** The window keeps the size it was created with: no sizing border, no
   maximize box, `maximized` and `minWidth`/`minHeight` are ignored, `WebWindow.maximize()` does nothing, and Size/Maximize from the system
   menu (Alt+Space) are refused. Minimize and full screen still work. A frameless window gets no resize handles, the title bar kit leaves out

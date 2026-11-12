@@ -253,7 +253,8 @@ final class Callbacks {
 
     private static int onContextMenu(MemorySegment webView, MemorySegment menu, MemorySegment event, MemorySegment hit,
                                      MemorySegment data) {
-        return 1;
+        LinuxWindow window = Registry.get(data.address(), LinuxWindow.class);
+        return window == null || window.onContextMenu(event, hit) ? 1 : 0;
     }
 
     private static int onDecidePolicy(MemorySegment webView, MemorySegment decision, int type, MemorySegment data) {

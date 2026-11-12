@@ -33,6 +33,12 @@ final class ComHandler {
         void invoke(int hresult, MemorySegment value);
     }
 
+    /** {@code Invoke(HRESULT, BOOL)}: completion handlers that report success as a flag, such as the one of {@code PrintToPdf}. */
+    @FunctionalInterface
+    interface HrInt {
+        void invoke(int hresult, int value);
+    }
+
     /** {@code Invoke(sender*, args*)}: event handlers. */
     @FunctionalInterface
     interface PtrPtr {
@@ -49,17 +55,22 @@ final class ComHandler {
     private final AtomicInteger refs = new AtomicInteger(1);
     private final HrPtr hrPtr;
     private final PtrPtr ptrPtr;
+    private final HrInt hrInt;
     private final boolean agile;
 
     /** Pointer to hand to WebView2 (an {@code IFoo*}). */
     final MemorySegment object;
 
     static ComHandler hrPtr(String iid, HrPtr callback, Consumer<Runnable> deferFree) {
-        return new ComHandler(iid, callback, null, deferFree, false);
+        return new ComHandler(iid, callback, null, null, deferFree, false);
+    }
+
+    static ComHandler hrInt(String iid, HrInt callback, Consumer<Runnable> deferFree) {
+        return new ComHandler(iid, null, null, callback, deferFree, false);
     }
 
     static ComHandler ptrPtr(String iid, PtrPtr callback, Consumer<Runnable> deferFree) {
-        return new ComHandler(iid, null, callback, deferFree, false);
+        return new ComHandler(iid, null, callback, null, deferFree, false);
     }
 
     /**
@@ -68,14 +79,15 @@ final class ComHandler {
      * therefore runs on a thread of the system's choosing and must hand work to the UI thread itself.
      */
     static ComHandler agilePtrPtr(String iid, PtrPtr callback, Consumer<Runnable> deferFree) {
-        return new ComHandler(iid, null, callback, deferFree, true);
+        return new ComHandler(iid, null, callback, null, deferFree, true);
     }
 
-    private ComHandler(String iid, HrPtr hrPtr, PtrPtr ptrPtr, Consumer<Runnable> deferFree, boolean agile) {
+    private ComHandler(String iid, HrPtr hrPtr, PtrPtr ptrPtr, HrInt hrInt, Consumer<Runnable> deferFree, boolean agile) {
         this.agile = agile;
         this.iid = Guid.bytes(iid);
         this.hrPtr = hrPtr;
         this.ptrPtr = ptrPtr;
+        this.hrInt = hrInt;
         this.deferFree = deferFree;
 
         MemorySegment queryInterface = stub("queryInterface",
@@ -91,6 +103,10 @@ final class ComHandler {
                 ? stub("invokeHrPtr",
                         MethodType.methodType(int.class, MemorySegment.class, int.class, MemorySegment.class),
                         FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT, ADDRESS), Com.E_FAIL)
+                : hrInt != null
+                ? stub("invokeHrInt",
+                        MethodType.methodType(int.class, MemorySegment.class, int.class, int.class),
+                        FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT, JAVA_INT), Com.E_FAIL)
                 : stub("invokePtrPtr",
                         MethodType.methodType(int.class, MemorySegment.class, MemorySegment.class, MemorySegment.class),
                         FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS), Com.E_FAIL);
@@ -149,6 +165,11 @@ final class ComHandler {
 
     private int invokeHrPtr(MemorySegment self, int hresult, MemorySegment value) {
         hrPtr.invoke(hresult, value);
+        return Com.S_OK;
+    }
+
+    private int invokeHrInt(MemorySegment self, int hresult, int value) {
+        hrInt.invoke(hresult, value);
         return Com.S_OK;
     }
 

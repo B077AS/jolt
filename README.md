@@ -603,6 +603,86 @@ the entries change; `JumpList.empty()` removes them. `supportsJumpList()` says w
   on the launcher icon when the running window is matched to that file. Categories and icons are not used, and a `.desktop` file of your own
   at that place is never changed.
 
+## Menu bar, context menu, global hotkeys and PDF
+
+Added after 0.4.1. A `Menu` is built in Java, like a tray menu, and a `Shortcut` is a key combination written the usual way
+(`Shortcut.parse("Ctrl+Shift+N")`: modifiers `Ctrl`, `Shift`, `Alt`, `Meta`; keys `A`-`Z`, `0`-`9`, `F1`-`F24`, `Enter`, `Space`, `Tab`, `Escape`,
+the arrows, `Home`/`End`/`PageUp`/`PageDown`, `Insert`/`Delete`, and punctuation such as `,` or `Comma`).
+
+### A menu bar
+
+```java
+window.setMenuBar(Menu.of(
+        Menu.submenu("&File",                                          // & marks the letter that opens it with Alt; && is a real &
+                Menu.action("&New window", "Ctrl+N", () -> newWindow()),
+                Menu.action("&Open...", "Ctrl+O", () -> open()),
+                Menu.separator(),
+                Menu.action("E&xit", "Alt+F4", app::quit)),
+        Menu.submenu("&View",
+                Menu.check("&Dense list", dense, "Ctrl+D", on -> setDense(on)),   // the mark flips at once; on is the new state
+                Menu.action("&Reload", "F5", () -> window.eval("location.reload()")))));
+```
+
+A menu is immutable: to change a checkbox or grey out an entry, build the menu again and call `setMenuBar` again (`null` removes the bar). The
+window grows by the height of the bar, so the page area keeps its size. While the page has the keyboard focus the bar's accelerators are handled
+**before** the page sees the key, so `Ctrl+N` does not also reach the page. A **frameless** window has no place for a native bar
+(`supportsMenuBar()` is `false` for it): draw the menu in the page, or use a context menu. On Windows the bar is drawn by the system and stays light
+in a dark app, and Jolt does not hide it in full screen (not tested).
+
+### A context menu
+
+`setContextMenu` replaces the web view's right-click menu. The provider is told what is under the pointer (the web view works that out itself, so a
+page cannot lie about it) and returns a `Menu`, or `null` for none:
+
+```java
+window.setContextMenu(info -> {
+    if (info.isLink()) {
+        return Menu.of(Menu.action("Open link", () -> app.openExternal(URI.create(info.linkUrl()))),
+                       Menu.action("Copy link", () -> app.clipboard().writeText(info.linkUrl())));
+    }
+    if (info.editable()) {
+        return Menu.of(Menu.action("Cut", "Ctrl+X", () -> window.edit(EditCommand.CUT)),
+                       Menu.action("Copy", "Ctrl+C", () -> window.edit(EditCommand.COPY)),
+                       Menu.action("Paste", "Ctrl+V", () -> window.edit(EditCommand.PASTE)));
+    }
+    return null;
+});
+```
+
+`info` has the position (`x`, `y`, in logical pixels), `pageUrl`, `linkUrl`, `sourceUrl` (image, audio or video), `editable`, `hasSelection` and
+`selectedText` (empty on Linux, which only says whether something is selected). `window.edit(...)` runs the editing commands a text field's menu
+offers (cut, copy, paste, undo, redo, select all) on whatever has the focus. Pass `null` to `setContextMenu` to go back to the old behaviour: no
+menu, or the web view's own in a window created with developer tools. A page that draws its own menu in the DOM keeps working.
+
+### A global hotkey
+
+```java
+if (app.supportsGlobalHotkeys()) {
+    app.registerHotkey(Shortcut.parse("Ctrl+Alt+M"), main::focus)       // runs on the UI thread, whichever program has the focus
+       .whenComplete((hotkey, error) -> {
+           if (error != null) log.warn("Ctrl+Alt+M is taken: {}", error.getMessage());
+           // else keep `hotkey` and call hotkey.close() to give the keys back
+       });
+}
+```
+
+It fails (the future completes with a `JoltException`) when another program already holds the combination, and a combination with no Ctrl, Alt or
+Meta (apart from function keys) is refused with `IllegalArgumentException`, because it would take a letter away from every program. **Windows
+only for now**: on Linux `supportsGlobalHotkeys()` is `false` and `registerHotkey` throws `UnsupportedOperationException` (X11 would need key
+grabs; Wayland offers nothing outside the desktop portals).
+
+### Print and PDF
+
+```java
+window.printToPdf(PrintOptions.defaults().withLandscape(true).withMargins(15))      // A4 or Letter by the user's country
+      .thenAccept(pdf -> Files.write(Path.of("report.pdf"), pdf));                  // the bytes of a PDF, no dialog
+window.print();                                                                      // the web view's print dialog, as window.print()
+```
+
+The page is laid out for the paper like a print, so `@media print` and `@page` apply. `PrintOptions` has `landscape`, `scale`, the paper (`Paper`
+or any size in millimetres), margins, `backgrounds` and `headerAndFooter` (Windows only). On Linux the page size, orientation and margins are
+honoured and WebKit decides about the rest. `printToPdf` fails with `WindowClosedException` if the window closes first.
+
 ## Security
 
 The page can call everything you register with `onMessage`, so each window has a `SecurityPolicy`. The default,

@@ -4,7 +4,12 @@ import io.github.b077as.jolt.Permission;
 import io.github.b077as.jolt.BlockedEvent;
 import io.github.b077as.jolt.CloseBehavior;
 import io.github.b077as.jolt.ColorScheme;
+import io.github.b077as.jolt.ContextMenuInfo;
+import io.github.b077as.jolt.ContextMenuProvider;
+import io.github.b077as.jolt.EditCommand;
 import io.github.b077as.jolt.JoltException;
+import io.github.b077as.jolt.Menu;
+import io.github.b077as.jolt.PrintOptions;
 import io.github.b077as.jolt.SecurityPolicy;
 import io.github.b077as.jolt.WebWindow;
 import io.github.b077as.jolt.WindowClosedException;
@@ -82,6 +87,11 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
     private volatile boolean focused;
     private volatile CloseBehavior closeBehavior = CloseBehavior.CLOSE;
     private ResourceService resourceService;
+    /** The box that holds the menu bar above the web view; NULL until the first menu bar (UI thread). */
+    private MemorySegment contentBox = MemorySegment.NULL;
+    private GtkMenus.Built menuBar;
+    private MemorySegment menuAccelGroup = MemorySegment.NULL;
+    private volatile ContextMenuProvider contextMenuProvider;
 
     /** Must be called on the UI thread. */
     LinuxWindow(LinuxApplication app, WindowOptions options) {
@@ -133,9 +143,8 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
         Gtk.connect(webView, "drag-data-get", Callbacks.DRAG_DATA_GET, key);
         Gtk.connect(webView, "drag-end", Callbacks.DRAG_END, key);
         Gtk.connect(webView, "drag-failed", Callbacks.DRAG_FAILED, key);
-        if (!options.devTools()) {
-            Gtk.connect(webView, "context-menu", Callbacks.CONTEXT_MENU, key);
-        }
+        // Always connected: the handler asks the window, which suppresses the web view's menu unless devtools are on or a provider is set
+        Gtk.connect(webView, "context-menu", Callbacks.CONTEXT_MENU, key);
 
         // Appearance first, so the window never shows in the wrong colours or without its icon.
         if (options.titleBarScheme() != null) {
@@ -555,6 +564,129 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
         });
     }
 
+    // ---- menu bar, context menu, editing commands and printing (compiled but not yet run on Linux) ----
+
+    private int menuBarHeight;
+
+    @Override
+    public void setMenuBar(Menu menu) {
+        if (options.frameless()) {
+            LOG.log(System.Logger.Level.WARNING, "setMenuBar ignored: a frameless window has no place for a native menu bar");
+            return;
+        }
+        app.dispatch(() -> applyMenuBar(menu));
+    }
+
+    @Override
+    public boolean supportsMenuBar() {
+        return !options.frameless() && GtkMenus.available();
+    }
+
+    /** UI thread. */
+    private void applyMenuBar(Menu menu) {
+        if (destroyed) {
+            return;
+        }
+        if (!GtkMenus.available()) {
+            LOG.log(System.Logger.Level.WARNING, "setMenuBar ignored: native menus are not available on this system");
+            return;
+        }
+        GtkMenus.Built old = menuBar;
+        MemorySegment oldGroup = menuAccelGroup;
+        int oldHeight = menuBarHeight;
+        menuBar = null;
+        menuAccelGroup = MemorySegment.NULL;
+        menuBarHeight = 0;
+        if (menu != null && !menu.items().isEmpty()) {
+            if (contentBox.equals(MemorySegment.NULL)) {
+                contentBox = GtkMenus.makeRoomForBar(window, webView);
+            }
+            menuAccelGroup = GtkMenus.newAccelGroup();
+            GtkMenus.addAccelGroup(window, menuAccelGroup);
+            menuBar = GtkMenus.build(menu, true, menuAccelGroup);
+            menuBarHeight = GtkMenus.placeBar(contentBox, menuBar.root);
+        }
+        if (old != null) {
+            old.destroy();
+            GtkMenus.removeAccelGroup(window, oldGroup);
+        }
+        // The bar takes its height from the page: give it back, so the page area keeps its size
+        int taken = menuBarHeight - oldHeight;
+        if (taken != 0 && !maximized && !fullscreen) {
+            if (shown) {
+                int[] geometry = Gtk.windowGeometry(window);
+                Gtk.windowResize(window, geometry[2], Math.max(1, geometry[3] + taken));
+            } else {
+                Gtk.windowSetDefaultSize(window, options.width(), options.height() + menuBarHeight);
+            }
+        }
+    }
+
+    @Override
+    public void setContextMenu(ContextMenuProvider provider) {
+        contextMenuProvider = provider;
+    }
+
+    @Override
+    public boolean supportsContextMenu() {
+        return GtkMenus.available();
+    }
+
+    /**
+     * The web view's {@code context-menu} signal, which may be raised by the keyboard too ({@code event} is the GDK event or NULL).
+     *
+     * @return true to stop the web view from showing its own menu
+     */
+    boolean onContextMenu(MemorySegment event, MemorySegment hit) {
+        ContextMenuProvider provider = contextMenuProvider;
+        if (provider == null || destroyed || !GtkMenus.available()) {
+            return !options.devTools(); // as before there were providers: no menu, unless the developer tools want theirs
+        }
+        try {
+            String page = Gtk.webViewUri(webView);
+            Menu menu = provider.menuFor(GtkMenus.describe(hit, event, page == null ? "" : page));
+            if (menu != null && !menu.items().isEmpty()) {
+                GtkMenus.popup(app, webView, menu, event);
+            }
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.ERROR, "the context menu failed", e);
+        }
+        return true;
+    }
+
+    @Override
+    public void edit(EditCommand command) {
+        String name = switch (command) {
+            case UNDO -> "Undo";
+            case REDO -> "Redo";
+            case CUT -> "Cut";
+            case COPY -> "Copy";
+            case PASTE -> "Paste";
+            case SELECT_ALL -> "SelectAll";
+        };
+        app.dispatch(() -> {
+            if (!destroyed && GtkMenus.available()) {
+                GtkMenus.execute(webView, name);
+            }
+        });
+    }
+
+    @Override
+    public CompletableFuture<byte[]> printToPdf(PrintOptions printOptions) {
+        java.util.Objects.requireNonNull(printOptions, "options");
+        CompletableFuture<byte[]> result = new CompletableFuture<>();
+        app.dispatch(() -> {
+            if (destroyed) {
+                result.completeExceptionally(new WindowClosedException());
+                return;
+            }
+            inflight.add(result);
+            result.whenComplete((r, e) -> inflight.remove(result));
+            GtkPrinting.start(app, webView, printOptions, result);
+        });
+        return result;
+    }
+
     @Override
     public SecurityPolicy security() {
         return guard.policy();
@@ -840,6 +972,10 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
         inflight.clear();
         ready.completeExceptionally(closed); // no-op if already completed
 
+        if (menuBar != null) {
+            menuBar.release(); // the widgets go with the window; only the callbacks have to be forgotten
+            menuBar = null;
+        }
         Gtk.unref(contentManager); // the web view holds its own reference and is destroyed with the window
         contentManager = webView = window = MemorySegment.NULL;
         app.windowDestroyed(id);

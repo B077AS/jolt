@@ -896,6 +896,118 @@ final class Win32 {
         }
     }
 
+    // ---- menus, keys and hotkeys ----
+
+    private static final MethodHandle REGISTER_HOT_KEY = Native.downcall(USER32, "RegisterHotKey",
+            FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT, JAVA_INT, JAVA_INT), CAPTURE_LAST_ERROR);
+    private static final MethodHandle UNREGISTER_HOT_KEY = Native.downcall(USER32, "UnregisterHotKey",
+            FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT));
+    private static final MethodHandle GET_KEY_STATE = Native.downcall(USER32, "GetKeyState",
+            FunctionDescriptor.of(JAVA_SHORT, JAVA_INT));
+    private static final MethodHandle SET_MENU = Native.downcall(USER32, "SetMenu",
+            FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+    private static final MethodHandle GET_MENU = Native.downcall(USER32, "GetMenu",
+            FunctionDescriptor.of(ADDRESS, ADDRESS));
+    private static final MethodHandle DRAW_MENU_BAR = Native.downcall(USER32, "DrawMenuBar",
+            FunctionDescriptor.of(JAVA_INT, ADDRESS));
+    private static final MethodHandle DESTROY_MENU = Native.downcall(USER32, "DestroyMenu",
+            FunctionDescriptor.of(JAVA_INT, ADDRESS));
+    private static final MethodHandle CLIENT_TO_SCREEN = Native.downcall(USER32, "ClientToScreen",
+            FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+    private static final MethodHandle ADJUST_WINDOW_RECT_EX_FOR_DPI_MENU = Native.downcall(USER32, "AdjustWindowRectExForDpi",
+            FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT));
+
+    /** {@code WM_HOTKEY}, sent to the window that registered the hotkey; {@code wParam} is the id. */
+    static final int WM_HOTKEY = 0x0312;
+
+    /**
+     * Registers a system-wide hotkey for {@code hwnd}'s thread.
+     *
+     * @param errorOut receives {@code GetLastError} (1409 is "already registered")
+     */
+    static boolean registerHotKey(MemorySegment hwnd, int id, int modifiers, int virtualKey, int[] errorOut) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment state = arena.allocate(CAPTURE);
+            int ok = (int) REGISTER_HOT_KEY.invokeExact(state, hwnd, id, modifiers, virtualKey);
+            errorOut[0] = (int) LAST_ERROR.get(state, 0L);
+            return ok != 0;
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    static boolean unregisterHotKey(MemorySegment hwnd, int id) {
+        try {
+            return (int) UNREGISTER_HOT_KEY.invokeExact(hwnd, id) != 0;
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    /** Whether the key is down right now as far as the calling thread's input state goes. */
+    static boolean isKeyDown(int virtualKey) {
+        try {
+            return ((short) GET_KEY_STATE.invokeExact(virtualKey) & 0x8000) != 0;
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    /** Attaches {@code menu} as the menu bar of {@code hwnd} ({@code NULL} removes it). The previous bar is not destroyed. */
+    static boolean setMenu(MemorySegment hwnd, MemorySegment menu) {
+        try {
+            return (int) SET_MENU.invokeExact(hwnd, menu) != 0;
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    static MemorySegment getMenu(MemorySegment hwnd) {
+        try {
+            return (MemorySegment) GET_MENU.invokeExact(hwnd);
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    static void drawMenuBar(MemorySegment hwnd) {
+        try {
+            int ignored = (int) DRAW_MENU_BAR.invokeExact(hwnd);
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    static void destroyMenu(MemorySegment menu) {
+        try {
+            int ignored = (int) DESTROY_MENU.invokeExact(menu);
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    /** Converts a point of {@code hwnd}'s client area to screen coordinates. */
+    static int[] clientToScreen(MemorySegment hwnd, int x, int y) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment point = arena.allocate(8, 4);
+            point.set(JAVA_INT, 0, x);
+            point.set(JAVA_INT, 4, y);
+            int ignored = (int) CLIENT_TO_SCREEN.invokeExact(hwnd, point);
+            return new int[] {point.get(JAVA_INT, 0), point.get(JAVA_INT, 4)};
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    /** Like {@link #adjustWindowRectExForDpi(MemorySegment, int, int, int)} for a window that has a menu bar when {@code menuBar} is true. */
+    static void adjustWindowRectExForDpi(MemorySegment rect, int style, boolean menuBar, int exStyle, int dpi) {
+        try {
+            int ignored = (int) ADJUST_WINDOW_RECT_EX_FOR_DPI_MENU.invokeExact(rect, style, menuBar ? 1 : 0, exStyle, dpi);
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
     private static RuntimeException rethrow(Throwable t) {
         if (t instanceof RuntimeException r) {
             return r;

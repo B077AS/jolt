@@ -2093,4 +2093,171 @@ public abstract class WebWindowContract {
         });
         assertEquals("alive", report.getNow(null));
     }
+
+    // ---- printing to PDF and editing commands ----
+
+    /** The width and height in points of the first page's /MediaBox, or null. */
+    private static double[] mediaBox(byte[] pdf) {
+        java.util.regex.Matcher box = java.util.regex.Pattern
+                .compile("/MediaBox\\s*\\[\\s*([-\\d.]+)\\s+([-\\d.]+)\\s+([-\\d.]+)\\s+([-\\d.]+)\\s*\\]")
+                .matcher(new String(pdf, StandardCharsets.ISO_8859_1));
+        return box.find() ? new double[] {Double.parseDouble(box.group(3)) - Double.parseDouble(box.group(1)),
+                Double.parseDouble(box.group(4)) - Double.parseDouble(box.group(2))} : null;
+    }
+
+    private static void assertPaper(byte[] pdf, double widthMm, double heightMm, String what) {
+        assertTrue(pdf.length > 1000 && new String(pdf, 0, 5, StandardCharsets.ISO_8859_1).equals("%PDF-"), what + ": not a PDF");
+        double[] box = mediaBox(pdf);
+        assertTrue(box != null, what + ": no page size found");
+        double points = 72 / 25.4;
+        assertEquals(widthMm * points, box[0], 3.0, what + " width");
+        assertEquals(heightMm * points, box[1], 3.0, what + " height");
+    }
+
+    @Test
+    public void printToPdfRendersTheShownPageOnTheRequestedPaperPortraitAndLandscape() {
+        List<String> steps = new java.util.concurrent.CopyOnWriteArrayList<>();
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        runApp(60, app -> {
+            WebWindow window = app.createWindow(WindowOptions.defaults().withSize(600, 400));
+            window.onMessage(message -> CompletableFuture.runAsync(() -> {
+                try {
+                    io.github.b077as.jolt.PrintOptions a4 = io.github.b077as.jolt.PrintOptions.defaults(java.util.Locale.GERMANY);
+                    assertPaper(window.printToPdf(a4).get(30, TimeUnit.SECONDS), 210, 297, "A4");
+                    steps.add("a4");
+                    assertPaper(window.printToPdf(a4.withLandscape(true)).get(30, TimeUnit.SECONDS), 297, 210, "A4 landscape");
+                    steps.add("landscape");
+                    assertPaper(window.printToPdf(io.github.b077as.jolt.PrintOptions.defaults(java.util.Locale.US)).get(30, TimeUnit.SECONDS),
+                            215.9, 279.4, "Letter");
+                    steps.add("letter");
+                    assertPaper(window.printToPdf().get(30, TimeUnit.SECONDS), io.github.b077as.jolt.Paper.forLocale(java.util.Locale.getDefault()).widthMm(),
+                            io.github.b077as.jolt.Paper.forLocale(java.util.Locale.getDefault()).heightMm(), "default options");
+                    steps.add("default");
+                } catch (Throwable t) {
+                    failure.set(t);
+                } finally {
+                    window.close();
+                }
+            }));
+            window.loadHtml("<body style='font:20px sans-serif'><h1>Hello PDF</h1><p>Some text to print.</p>"
+                    + "<script>addEventListener('load', () => jolt.postMessage('go'))</script></body>");
+        });
+        assertEquals(null, failure.get() == null ? null : failure.get().toString());
+        assertEquals(List.of("a4", "landscape", "letter", "default"), steps);
+    }
+
+    @Test
+    public void printToPdfSplitsALongPageIntoPagesAndAScaleChangesHowMany() {
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        List<Integer> pages = new java.util.concurrent.CopyOnWriteArrayList<>();
+        runApp(60, app -> {
+            WebWindow window = app.createWindow(WindowOptions.defaults().withSize(600, 400));
+            window.onMessage(message -> CompletableFuture.runAsync(() -> {
+                try {
+                    io.github.b077as.jolt.PrintOptions a4 = io.github.b077as.jolt.PrintOptions.defaults(java.util.Locale.GERMANY);
+                    for (io.github.b077as.jolt.PrintOptions options : List.of(a4, a4.withScale(0.25))) {
+                        byte[] pdf = window.printToPdf(options).get(30, TimeUnit.SECONDS);
+                        java.util.regex.Matcher page = java.util.regex.Pattern.compile("/Type\\s*/Page(?![\\w])")
+                                .matcher(new String(pdf, StandardCharsets.ISO_8859_1));
+                        int count = 0;
+                        while (page.find()) {
+                            count++;
+                        }
+                        pages.add(count);
+                    }
+                } catch (Throwable t) {
+                    failure.set(t);
+                } finally {
+                    window.close();
+                }
+            }));
+            window.loadHtml("<body style='margin:0'><div style='height:6000px;background:linear-gradient(red,blue)'>tall</div>"
+                    + "<script>addEventListener('load', () => jolt.postMessage('go'))</script></body>");
+        });
+        assertEquals(null, failure.get() == null ? null : failure.get().toString());
+        assertEquals(2, pages.size());
+        assertTrue(pages.get(0) >= 3, "6000 px tall needs several A4 pages: " + pages);
+        assertTrue(pages.get(1) < pages.get(0), "a quarter scale needs fewer pages: " + pages);
+    }
+
+    @Test
+    public void printToPdfOfAClosedWindowFailsWithWindowClosed() {
+        AtomicReference<Throwable> error = new AtomicReference<>();
+        runApp(30, app -> {
+            WebWindow keeper = app.createWindow(WindowOptions.defaults().withSize(200, 200).withVisible(false)); // keeps the loop alive
+            WebWindow gone = app.createWindow(WindowOptions.defaults().withSize(200, 200).withVisible(false));
+            gone.onClosed(() -> gone.printToPdf().whenComplete((pdf, t) -> {
+                error.set(t);
+                keeper.close();
+            }));
+            gone.close();
+        });
+        assertTrue(error.get() instanceof WindowClosedException
+                || error.get() instanceof java.util.concurrent.CompletionException && error.get().getCause() instanceof WindowClosedException,
+                String.valueOf(error.get()));
+    }
+
+    @Test
+    public void editCommandsActOnTheFocusedFieldLikeItsContextMenu() {
+        List<String> steps = new java.util.concurrent.CopyOnWriteArrayList<>();
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        runApp(60, app -> {
+            WebWindow window = app.createWindow(WindowOptions.defaults().withSize(500, 300));
+            window.onMessage(message -> CompletableFuture.runAsync(() -> {
+                String original = null;
+                try {
+                    original = app.clipboard().readText().get(5, TimeUnit.SECONDS).orElse(null);
+                    String value = "document.getElementById('%s').value";
+                    evalNow(window, "document.getElementById('a').focus(); 1");
+                    window.edit(io.github.b077as.jolt.EditCommand.SELECT_ALL);
+                    assertTrue(eventually(() -> evalNow(window, "document.getElementById('a').selectionEnd").equals("11"), 5000).get(),
+                            "select all selects the field's text");
+                    steps.add("selected");
+                    app.clipboard().writeText("sentinel").get(5, TimeUnit.SECONDS);
+                    window.edit(io.github.b077as.jolt.EditCommand.COPY);
+                    assertTrue(eventually(() -> readClipboard(app).equals("hello world"), 5000).get(), "copy puts the selection on the clipboard");
+                    steps.add("copied");
+                    evalNow(window, "document.getElementById('b').focus(); 1");
+                    window.edit(io.github.b077as.jolt.EditCommand.PASTE);
+                    assertTrue(eventually(() -> evalNow(window, value.formatted("b")).equals("hello world"), 5000).get(), "paste inserts the clipboard");
+                    steps.add("pasted");
+                    evalNow(window, "document.getElementById('a').focus(); 1");
+                    window.edit(io.github.b077as.jolt.EditCommand.SELECT_ALL);
+                    assertTrue(eventually(() -> evalNow(window, "document.getElementById('a').selectionEnd").equals("11"), 5000).get());
+                    window.edit(io.github.b077as.jolt.EditCommand.CUT);
+                    assertTrue(eventually(() -> evalNow(window, value.formatted("a")).isEmpty(), 5000).get(), "cut removes the selection");
+                    steps.add("cut");
+                    window.edit(io.github.b077as.jolt.EditCommand.UNDO);
+                    assertTrue(eventually(() -> evalNow(window, value.formatted("a")).equals("hello world"), 5000).get(), "undo brings it back");
+                    steps.add("undone");
+                    window.edit(io.github.b077as.jolt.EditCommand.REDO);
+                    assertTrue(eventually(() -> evalNow(window, value.formatted("a")).isEmpty(), 5000).get(), "redo cuts it again");
+                    steps.add("redone");
+                } catch (Throwable t) {
+                    failure.set(t);
+                } finally {
+                    try {
+                        if (original != null) {
+                            app.clipboard().writeText(original).get(5, TimeUnit.SECONDS);
+                        }
+                    } catch (Exception ignored) {
+                        // the user's clipboard text could not be put back
+                    }
+                    window.close();
+                }
+            }));
+            window.loadHtml("<input id=a value='hello world'><input id=b>"
+                    + "<script>addEventListener('load', () => jolt.postMessage('go'))</script>");
+        });
+        assertEquals(null, failure.get() == null ? null : failure.get().toString());
+        assertEquals(List.of("selected", "copied", "pasted", "cut", "undone", "redone"), steps);
+    }
+
+    private static String readClipboard(Application app) {
+        try {
+            return app.clipboard().readText().get(5, TimeUnit.SECONDS).orElse("");
+        } catch (Exception e) {
+            return "";
+        }
+    }
 }

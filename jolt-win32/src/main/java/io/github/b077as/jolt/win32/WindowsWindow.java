@@ -3,8 +3,14 @@ package io.github.b077as.jolt.win32;
 import io.github.b077as.jolt.BlockedEvent;
 import io.github.b077as.jolt.CloseBehavior;
 import io.github.b077as.jolt.ColorScheme;
+import io.github.b077as.jolt.ContextMenuInfo;
+import io.github.b077as.jolt.ContextMenuProvider;
+import io.github.b077as.jolt.EditCommand;
 import io.github.b077as.jolt.JoltException;
+import io.github.b077as.jolt.Menu;
+import io.github.b077as.jolt.PrintOptions;
 import io.github.b077as.jolt.SecurityPolicy;
+import io.github.b077as.jolt.Shortcut;
 import io.github.b077as.jolt.WebWindow;
 import io.github.b077as.jolt.WindowClosedException;
 import io.github.b077as.jolt.WindowOptions;
@@ -89,6 +95,12 @@ final class WindowsWindow implements WebWindow, NativeResourceHost, NativeDialog
     private MemorySegment smallIcon = MemorySegment.NULL;
     private boolean webViewReady;
     private boolean destroyed;
+    /** The menu bar on the window, or null. UI thread. */
+    private WindowsMenus.Built menuBar;
+    private volatile ContextMenuProvider contextMenuProvider;
+    private boolean contextMenuHooked;
+    /** A context menu is open (its own message loop is running). UI thread. */
+    private boolean contextMenuOpen;
     /** {@link #destroyNow} has started; the window goes as soon as an open dialog has returned. */
     private volatile boolean closing;
     /** Fills the window behind the web view, so what shows before the web view has painted is the page's colour, not white. */
@@ -664,6 +676,426 @@ public CompletableFuture<String> eval(String script) {
         });
     }
 
+    // ---- menu bar, context menu, editing commands and printing ----
+
+    @Override
+    public void setMenuBar(Menu menu) {
+        if (options.frameless()) {
+            LOG.log(System.Logger.Level.WARNING, "setMenuBar ignored: a frameless window has no place for a native menu bar");
+            return;
+        }
+        app.dispatch(() -> applyMenuBar(menu));
+    }
+
+    @Override
+    public boolean supportsMenuBar() {
+        return !options.frameless();
+    }
+
+    /** UI thread. */
+    private void applyMenuBar(Menu menu) {
+        if (destroyed) {
+            return;
+        }
+        WindowsMenus.Built built = menu == null || menu.items().isEmpty() ? null : WindowsMenus.build(menu, true);
+        int before = clientHeight();
+        MemorySegment old = Win32.getMenu(hwnd);
+        Win32.setMenu(hwnd, built == null ? MemorySegment.NULL : built.handle);
+        Win32.drawMenuBar(hwnd);
+        if (!old.equals(MemorySegment.NULL)) {
+            Win32.destroyMenu(old);
+        }
+        menuBar = built;
+        // The bar takes (or gives back) part of the page area; the window grows or shrinks so the page keeps its size
+        int taken = before - clientHeight();
+        if (taken != 0 && !fullscreen && !Win32.isZoomed(hwnd) && !Win32.isIconic(hwnd)) {
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment rect = arena.allocate(Win32.RECT);
+                Win32.getWindowRect(hwnd, rect);
+                Win32.setWindowPos(hwnd, 0, 0, rect.get(JAVA_INT, 8) - rect.get(JAVA_INT, 0),
+                        rect.get(JAVA_INT, 12) - rect.get(JAVA_INT, 4) + taken, Win32.SWP_NOMOVE | Win32.SWP_NOZORDER | Win32.SWP_NOACTIVATE);
+            }
+        }
+        resizeWebView();
+    }
+
+    private int clientHeight() {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment rect = arena.allocate(Win32.RECT);
+            Win32.getClientRect(hwnd, rect);
+            return rect.get(JAVA_INT, 12) - rect.get(JAVA_INT, 4);
+        }
+    }
+
+    /** A key press in the web view that may be one of the menu bar's accelerators. Runs inside the web view's event: it only decides and queues. */
+    private void onAcceleratorKey(MemorySegment sender, MemorySegment args) {
+        WindowsMenus.Built bar = menuBar;
+        if (bar == null || !bar.hasAccelerators()) {
+            return;
+        }
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment out = arena.allocate(JAVA_INT);
+            if (Com.call(args, WebView2Abi.ICoreWebView2AcceleratorKeyPressedEventArgs.GET_KEY_EVENT_KIND, Com.HR_PTR, out) < 0) {
+                return;
+            }
+            int kind = out.get(JAVA_INT, 0);
+            if (kind != KEY_EVENT_KEY_DOWN && kind != KEY_EVENT_SYSTEM_KEY_DOWN) {
+                return;
+            }
+            if (Com.call(args, WebView2Abi.ICoreWebView2AcceleratorKeyPressedEventArgs.GET_VIRTUAL_KEY, Com.HR_PTR, out) < 0) {
+                return;
+            }
+            Shortcut shortcut = WindowsKeys.shortcutFor(out.get(JAVA_INT, 0), Win32.isKeyDown(WindowsKeys.VK_CONTROL),
+                    Win32.isKeyDown(WindowsKeys.VK_SHIFT), Win32.isKeyDown(WindowsKeys.VK_MENU),
+                    Win32.isKeyDown(WindowsKeys.VK_LWIN) || Win32.isKeyDown(WindowsKeys.VK_RWIN));
+            Integer commandId = shortcut == null ? null : bar.commandFor(shortcut);
+            if (commandId == null) {
+                return;
+            }
+            Com.call(args, WebView2Abi.ICoreWebView2AcceleratorKeyPressedEventArgs.PUT_HANDLED, Com.HR_INT, 1); // the page never sees it
+            boolean repeat = Com.call(args, WebView2Abi.ICoreWebView2AcceleratorKeyPressedEventArgs.GET_KEY_EVENT_LPARAM, Com.HR_PTR, out) >= 0
+                    && (out.get(JAVA_INT, 0) >> 30 & 1) != 0; // bit 30: the key was already down, so this is auto-repeat
+            if (!repeat) {
+                int id = commandId;
+                app.dispatch(() -> {
+                    if (menuBar == bar) {
+                        bar.activate(id, true);
+                    }
+                });
+            }
+        }
+    }
+
+    @Override
+    public void setContextMenu(ContextMenuProvider provider) {
+        contextMenuProvider = provider;
+        whenReady(() -> {
+            if (provider != null && !contextMenuHooked) {
+                hookContextMenu();
+            }
+            applyDefaultContextMenus();
+        });
+    }
+
+    @Override
+    public boolean supportsContextMenu() {
+        return true;
+    }
+
+    /**
+     * The web view raises {@code ContextMenuRequested} only while its default context menus are enabled, so they are switched on while
+     * a provider is installed (our handler then always takes over, and the web view shows nothing itself) and go back to what
+     * {@link WindowOptions#devTools()} says when it is removed. UI thread.
+     */
+    private void applyDefaultContextMenus() {
+        boolean enabled = options.devTools() || contextMenuProvider != null;
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment out = arena.allocate(ADDRESS);
+            Com.callChecked("get_Settings", webView, WebView2Abi.ICoreWebView2.GET_SETTINGS, Com.HR_PTR, out);
+            MemorySegment settings = Native.readPointer(out);
+            try {
+                Com.call(settings, WebView2Abi.ICoreWebView2Settings.PUT_ARE_DEFAULT_CONTEXT_MENUS_ENABLED, Com.HR_INT, enabled ? 1 : 0);
+            } finally {
+                Com.release(settings);
+            }
+        }
+    }
+
+    /** UI thread, after the web view is ready. The handler stays installed; it does nothing while there is no provider. */
+    private void hookContextMenu() {
+        MemorySegment web11 = Com.queryInterface(webView, WebView2Abi.ICoreWebView2_11.IID);
+        if (web11.equals(MemorySegment.NULL)) {
+            LOG.log(System.Logger.Level.WARNING, "setContextMenu has no effect: the installed WebView2 runtime is too old for it");
+            return;
+        }
+        try {
+            ComHandler handler = ComHandler.ptrPtr(WebView2Abi.ICoreWebView2ContextMenuRequestedEventHandler.IID,
+                    this::onContextMenuRequested, app::deferFree);
+            handlers.add(handler);
+            try (Arena arena = Arena.ofConfined()) {
+                Com.callChecked("add_ContextMenuRequested", web11, WebView2Abi.ICoreWebView2_11.ADD_CONTEXT_MENU_REQUESTED,
+                        Com.HR_PTR_PTR, handler.object, arena.allocate(JAVA_LONG));
+            }
+            contextMenuHooked = true;
+        } finally {
+            Com.release(web11);
+        }
+    }
+
+    /** The user asked for a context menu. Runs inside the web view's event: reads what was clicked, takes over, and queues the menu. */
+    private void onContextMenuRequested(MemorySegment sender, MemorySegment args) {
+        ContextMenuProvider provider = contextMenuProvider;
+        if (provider == null) {
+            return; // the web view does what it would have done
+        }
+        ContextMenuInfo info;
+        int[] at = new int[2];
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment point = arena.allocate(8, 4);
+            if (Com.call(args, WebView2Abi.ICoreWebView2ContextMenuRequestedEventArgs.GET_LOCATION, Com.HR_PTR, point) >= 0) {
+                at[0] = point.get(JAVA_INT, 0);
+                at[1] = point.get(JAVA_INT, 4);
+            }
+            MemorySegment out = arena.allocate(ADDRESS);
+            String page = "", link = "", source = "", selection = "";
+            boolean editable = false, hasSelection = false;
+            if (Com.call(args, WebView2Abi.ICoreWebView2ContextMenuRequestedEventArgs.GET_CONTEXT_MENU_TARGET, Com.HR_PTR, out) >= 0) {
+                MemorySegment target = Native.readPointer(out);
+                try {
+                    editable = targetFlag(target, WebView2Abi.ICoreWebView2ContextMenuTarget.GET_IS_EDITABLE);
+                    page = targetText(target, WebView2Abi.ICoreWebView2ContextMenuTarget.GET_PAGE_URI);
+                    if (targetFlag(target, WebView2Abi.ICoreWebView2ContextMenuTarget.GET_HAS_LINK_URI)) {
+                        link = targetText(target, WebView2Abi.ICoreWebView2ContextMenuTarget.GET_LINK_URI);
+                    }
+                    if (targetFlag(target, WebView2Abi.ICoreWebView2ContextMenuTarget.GET_HAS_SOURCE_URI)) {
+                        source = targetText(target, WebView2Abi.ICoreWebView2ContextMenuTarget.GET_SOURCE_URI);
+                    }
+                    hasSelection = targetFlag(target, WebView2Abi.ICoreWebView2ContextMenuTarget.GET_HAS_SELECTION);
+                    if (hasSelection) {
+                        selection = targetText(target, WebView2Abi.ICoreWebView2ContextMenuTarget.GET_SELECTION_TEXT);
+                    }
+                } finally {
+                    Com.release(target);
+                }
+            }
+            int dpi = Win32.dpiForWindow(hwnd);
+            info = new ContextMenuInfo(Math.round(at[0] * 96f / dpi), Math.round(at[1] * 96f / dpi), page, link, source, editable,
+                    hasSelection, selection);
+        }
+        Com.call(args, WebView2Abi.ICoreWebView2ContextMenuRequestedEventArgs.PUT_HANDLED, Com.HR_INT, 1); // the web view shows nothing
+        app.dispatch(() -> showContextMenu(provider, info, at[0], at[1]));
+    }
+
+    private static boolean targetFlag(MemorySegment target, int slot) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment out = arena.allocate(JAVA_INT);
+            return Com.call(target, slot, Com.HR_PTR, out) >= 0 && out.get(JAVA_INT, 0) != 0;
+        }
+    }
+
+    private static String targetText(MemorySegment target, int slot) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment out = arena.allocate(ADDRESS);
+            if (Com.call(target, slot, Com.HR_PTR, out) < 0) {
+                return "";
+            }
+            MemorySegment raw = Native.readPointer(out);
+            if (raw.equals(MemorySegment.NULL)) {
+                return "";
+            }
+            String text = Native.readWide(raw);
+            Win32.coTaskMemFree(raw);
+            return text;
+        }
+    }
+
+    /** UI thread, outside the web view's event: asks the provider and shows the menu in its own loop. */
+    private void showContextMenu(ContextMenuProvider provider, ContextMenuInfo info, int clientX, int clientY) {
+        if (destroyed || contextMenuOpen) {
+            return;
+        }
+        Menu menu;
+        try {
+            menu = provider.menuFor(info);
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.ERROR, "the context menu provider failed", e);
+            return;
+        }
+        if (menu == null || menu.items().isEmpty()) {
+            return;
+        }
+        WindowsMenus.Built popup = null;
+        contextMenuOpen = true;
+        try {
+            WindowsTray.makeMenusThemeAware();
+            popup = WindowsMenus.build(menu, false);
+            int[] screen = Win32.clientToScreen(hwnd, clientX, clientY);
+            Win32.setForegroundWindow(hwnd); // without it the menu does not close when the user clicks elsewhere
+            int chosen = WindowsMenus.track(popup.handle, hwnd, screen[0], screen[1]);
+            Win32.postMessage(hwnd, 0, 0, 0); // WM_NULL: lets the menu loop finish cleanly
+            if (chosen != 0) {
+                WindowsMenus.Built shown = popup;
+                int id = chosen;
+                app.dispatch(() -> shown.activate(id, false));
+            }
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.ERROR, "showing the context menu failed", e);
+        } finally {
+            contextMenuOpen = false;
+            if (popup != null) {
+                popup.destroy();
+            }
+        }
+    }
+
+    @Override
+    public void edit(EditCommand command) {
+        String name = switch (command) {
+            case UNDO -> "undo";
+            case REDO -> "redo";
+            case CUT -> "cut";
+            case COPY -> "copy";
+            case PASTE -> "paste";
+            case SELECT_ALL -> "selectAll";
+        };
+        // The browser's own editing commands, as a key press would run them: they work without a user gesture and use the real clipboard
+        whenReady(() -> callDevTools("Input.dispatchKeyEvent", "{\"type\":\"rawKeyDown\",\"commands\":[\"" + name + "\"]}")
+                .exceptionally(t -> {
+                    LOG.log(System.Logger.Level.WARNING, "edit({0}) failed: {1}", command, t.toString());
+                    return null;
+                }));
+    }
+
+    /** Calls a DevTools Protocol method; the future gets the raw JSON answer. UI thread, web view ready. Package-private for tests, which synthesize input with it. */
+    CompletableFuture<String> callDevTools(String method, String paramsJson) {
+        CompletableFuture<String> result = new CompletableFuture<>();
+        ComHandler[] handler = new ComHandler[1];
+        handler[0] = ComHandler.hrPtr(WebView2Abi.ICoreWebView2CallDevToolsProtocolMethodCompletedHandler.IID, (hr, json) -> {
+            try {
+                if (hr < 0) {
+                    result.completeExceptionally(new JoltException(method + " failed: " + Com.hex(hr)));
+                } else {
+                    result.complete(Native.readWide(json));
+                }
+            } finally {
+                handler[0].release();
+            }
+        }, app::deferFree);
+        try (Arena arena = Arena.ofConfined()) {
+            int hr = Com.call(webView, WebView2Abi.ICoreWebView2.CALL_DEV_TOOLS_PROTOCOL_METHOD, Com.HR_PTR_PTR_PTR,
+                    Native.allocWide(arena, method), Native.allocWide(arena, paramsJson), handler[0].object);
+            if (hr < 0) {
+                handler[0].release();
+                result.completeExceptionally(new JoltException("CallDevToolsProtocolMethod failed: " + Com.hex(hr)));
+            }
+        }
+        return result;
+    }
+
+    @Override
+    public CompletableFuture<byte[]> printToPdf(PrintOptions options) {
+        java.util.Objects.requireNonNull(options, "options");
+        CompletableFuture<byte[]> result = new CompletableFuture<>();
+        app.dispatch(() -> {
+            if (destroyed) {
+                result.completeExceptionally(new WindowClosedException());
+                return;
+            }
+            inflight.add(result);
+            result.whenComplete((r, e) -> inflight.remove(result));
+            onceReady(() -> startPrintToPdf(options, result));
+        });
+        return result;
+    }
+
+    /** UI thread, web view ready: has WebView2 write the PDF to a temporary file, then reads it back. */
+    private void startPrintToPdf(PrintOptions printOptions, CompletableFuture<byte[]> result) {
+        MemorySegment web7 = Com.queryInterface(webView, WebView2Abi.ICoreWebView2_7.IID);
+        if (web7.equals(MemorySegment.NULL)) {
+            result.completeExceptionally(new UnsupportedOperationException("the installed WebView2 runtime is too old to print to PDF"));
+            return;
+        }
+        MemorySegment settings = MemorySegment.NULL;
+        java.nio.file.Path file = null;
+        try {
+            settings = createPrintSettings(printOptions);
+            if (settings.equals(MemorySegment.NULL)) {
+                result.completeExceptionally(new UnsupportedOperationException("the installed WebView2 runtime is too old to print to PDF"));
+                return;
+            }
+            java.nio.file.Path target = file = java.nio.file.Files.createTempFile("jolt-print-", ".pdf");
+            ComHandler[] handler = new ComHandler[1];
+            handler[0] = ComHandler.hrInt(WebView2Abi.ICoreWebView2PrintToPdfCompletedHandler.IID,
+                    (hr, success) -> {
+                        try {
+                            finishPrintToPdf(hr, success != 0, target, result);
+                        } finally {
+                            handler[0].release();
+                        }
+                    }, app::deferFree);
+            try (Arena arena = Arena.ofConfined()) {
+                int hr = Com.call(web7, WebView2Abi.ICoreWebView2_7.PRINT_TO_PDF, Com.HR_PTR_PTR_PTR,
+                        Native.allocWide(arena, target.toString()), settings, handler[0].object);
+                if (hr < 0) {
+                    handler[0].release();
+                    deleteQuietly(target);
+                    result.completeExceptionally(new JoltException("PrintToPdf failed: " + Com.hex(hr)));
+                }
+            }
+        } catch (java.io.IOException | RuntimeException e) {
+            deleteQuietly(file);
+            result.completeExceptionally(e instanceof JoltException ? e : new JoltException("Printing to PDF failed: " + e.getMessage(), e));
+        } finally {
+            if (!settings.equals(MemorySegment.NULL)) {
+                Com.release(settings);
+            }
+            Com.release(web7);
+        }
+    }
+
+    private void finishPrintToPdf(int hr, boolean success, java.nio.file.Path file, CompletableFuture<byte[]> result) {
+        try {
+            if (hr < 0 || !success) {
+                result.completeExceptionally(new JoltException("Printing to PDF failed" + (hr < 0 ? ": " + Com.hex(hr) : "")));
+            } else {
+                result.complete(java.nio.file.Files.readAllBytes(file));
+            }
+        } catch (java.io.IOException e) {
+            result.completeExceptionally(new JoltException("The PDF could not be read back: " + e.getMessage(), e));
+        } finally {
+            deleteQuietly(file);
+        }
+    }
+
+    private static void deleteQuietly(java.nio.file.Path file) {
+        if (file != null) {
+            try {
+                java.nio.file.Files.deleteIfExists(file);
+            } catch (java.io.IOException e) {
+                LOG.log(System.Logger.Level.DEBUG, "could not delete {0}: {1}", file, e.toString());
+            }
+        }
+    }
+
+    /** A new {@code ICoreWebView2PrintSettings} with {@code printOptions} applied (the caller releases it), or NULL if the runtime has none. */
+    private MemorySegment createPrintSettings(PrintOptions printOptions) {
+        MemorySegment env6 = Com.queryInterface(environment, WebView2Abi.ICoreWebView2Environment6.IID);
+        if (env6.equals(MemorySegment.NULL)) {
+            return MemorySegment.NULL;
+        }
+        MemorySegment settings;
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment out = arena.allocate(ADDRESS);
+            Com.callChecked("CreatePrintSettings", env6, WebView2Abi.ICoreWebView2Environment6.CREATE_PRINT_SETTINGS, Com.HR_PTR, out);
+            settings = Native.readPointer(out);
+        } finally {
+            Com.release(env6);
+        }
+        double inch = 25.4;
+        Com.callChecked("put_Orientation", settings, WebView2Abi.ICoreWebView2PrintSettings.PUT_ORIENTATION, Com.HR_INT,
+                printOptions.landscape() ? 1 : 0);
+        Com.callChecked("put_ScaleFactor", settings, WebView2Abi.ICoreWebView2PrintSettings.PUT_SCALE_FACTOR, Com.HR_DOUBLE, printOptions.scale());
+        Com.callChecked("put_PageWidth", settings, WebView2Abi.ICoreWebView2PrintSettings.PUT_PAGE_WIDTH, Com.HR_DOUBLE,
+                printOptions.paperWidthMm() / inch);
+        Com.callChecked("put_PageHeight", settings, WebView2Abi.ICoreWebView2PrintSettings.PUT_PAGE_HEIGHT, Com.HR_DOUBLE,
+                printOptions.paperHeightMm() / inch);
+        Com.callChecked("put_MarginTop", settings, WebView2Abi.ICoreWebView2PrintSettings.PUT_MARGIN_TOP, Com.HR_DOUBLE,
+                printOptions.marginTopMm() / inch);
+        Com.callChecked("put_MarginRight", settings, WebView2Abi.ICoreWebView2PrintSettings.PUT_MARGIN_RIGHT, Com.HR_DOUBLE,
+                printOptions.marginRightMm() / inch);
+        Com.callChecked("put_MarginBottom", settings, WebView2Abi.ICoreWebView2PrintSettings.PUT_MARGIN_BOTTOM, Com.HR_DOUBLE,
+                printOptions.marginBottomMm() / inch);
+        Com.callChecked("put_MarginLeft", settings, WebView2Abi.ICoreWebView2PrintSettings.PUT_MARGIN_LEFT, Com.HR_DOUBLE,
+                printOptions.marginLeftMm() / inch);
+        Com.callChecked("put_ShouldPrintBackgrounds", settings, WebView2Abi.ICoreWebView2PrintSettings.PUT_SHOULD_PRINT_BACKGROUNDS,
+                Com.HR_INT, printOptions.backgrounds() ? 1 : 0);
+        Com.callChecked("put_ShouldPrintHeaderAndFooter", settings, WebView2Abi.ICoreWebView2PrintSettings.PUT_SHOULD_PRINT_HEADER_AND_FOOTER,
+                Com.HR_INT, printOptions.headerAndFooter() ? 1 : 0);
+        return settings;
+    }
+
+    private static final int KEY_EVENT_KEY_DOWN = 0, KEY_EVENT_SYSTEM_KEY_DOWN = 2; // COREWEBVIEW2_KEY_EVENT_KIND
+
     @Override
     public SecurityPolicy security() {
         return guard.policy();
@@ -804,6 +1236,17 @@ public CompletableFuture<String> eval(String script) {
                 return null;
             }
             case Win32.WM_COMMAND -> {
+                WindowsMenus.Built bar = menuBar;
+                int commandId = (int) (wParam & 0xFFFF);
+                // From a menu the high word is 0 and lParam is 0 (a taskbar button has THBN_CLICKED in the high word)
+                if (bar != null && (wParam >> 16 & 0xFFFF) == 0 && lParam == 0 && bar.handles(commandId)) {
+                    app.dispatch(() -> {
+                        if (menuBar == bar) {
+                            bar.activate(commandId, true);
+                        }
+                    });
+                    return 0L;
+                }
                 return taskbarButtons.onCommand(wParam) ? 0L : null;
             }
             case Win32.WM_CLOSE -> {
@@ -1042,7 +1485,7 @@ public CompletableFuture<String> eval(String script) {
             rect.set(JAVA_INT, 8, Math.round(logicalWidth * dpi / 96f));
             rect.set(JAVA_INT, 12, Math.round(logicalHeight * dpi / 96f));
             if (!options.frameless()) {
-                Win32.adjustWindowRectExForDpi(rect, style, 0, dpi); // a frameless window is all client area
+                Win32.adjustWindowRectExForDpi(rect, style, menuBar != null, 0, dpi); // a frameless window is all client area
             }
             Win32.setWindowPos(hwnd, 0, 0, rect.get(JAVA_INT, 8) - rect.get(JAVA_INT, 0),
                     rect.get(JAVA_INT, 12) - rect.get(JAVA_INT, 4),
@@ -1057,7 +1500,7 @@ public CompletableFuture<String> eval(String script) {
             MemorySegment rect = arena.allocate(Win32.RECT);
             rect.set(JAVA_INT, 8, Math.round(options.minWidth() * dpi / 96f));
             rect.set(JAVA_INT, 12, Math.round(options.minHeight() * dpi / 96f));
-            Win32.adjustWindowRectExForDpi(rect, STYLE, 0, dpi);
+            Win32.adjustWindowRectExForDpi(rect, STYLE, menuBar != null, 0, dpi);
             MemorySegment info = MemorySegment.ofAddress(lParam).reinterpret(40); // MINMAXINFO: five POINTs
             info.set(JAVA_INT, 24, rect.get(JAVA_INT, 8) - rect.get(JAVA_INT, 0));
             info.set(JAVA_INT, 28, rect.get(JAVA_INT, 12) - rect.get(JAVA_INT, 4));
@@ -1137,6 +1580,14 @@ public CompletableFuture<String> eval(String script) {
                     WebView2Abi.ICoreWebView2NewWindowRequestedEventHandler.IID, this::onNewWindowRequested, app::deferFree));
             addEvent(WebView2Abi.ICoreWebView2.ADD_PERMISSION_REQUESTED, ComHandler.ptrPtr(
                     WebView2Abi.ICoreWebView2PermissionRequestedEventHandler.IID, this::onPermissionRequested, app::deferFree));
+            // The web view takes the keyboard: it is the only way the menu bar's accelerators get to see a key press at all
+            ComHandler accelerator = ComHandler.ptrPtr(WebView2Abi.ICoreWebView2AcceleratorKeyPressedEventHandler.IID,
+                    this::onAcceleratorKey, app::deferFree);
+            handlers.add(accelerator);
+            try (Arena arena = Arena.ofConfined()) {
+                Com.callChecked("add_AcceleratorKeyPressed", controller, WebView2Abi.ICoreWebView2Controller.ADD_ACCELERATOR_KEY_PRESSED,
+                        Com.HR_PTR_PTR, accelerator.object, arena.allocate(JAVA_LONG));
+            }
             resizeWebView();
             Com.call(controller, WebView2Abi.ICoreWebView2Controller.MOVE_FOCUS, Com.HR_INT, MOVE_FOCUS_PROGRAMMATIC);
 
@@ -1632,6 +2083,7 @@ public CompletableFuture<String> eval(String script) {
             handler.release();
         }
         handlers.clear();
+        menuBar = null; // Windows destroys a window's menu bar with the window
         destroyIcons();
         taskbarButtons.dispose();
         if (!backgroundBrush.equals(MemorySegment.NULL)) {

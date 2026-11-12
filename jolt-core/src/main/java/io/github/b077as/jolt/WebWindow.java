@@ -271,6 +271,79 @@ public interface WebWindow {
         return false;
     }
 
+    /**
+     * Gives this window a menu bar under its title bar: {@code File  Edit  View ...} with the usual drop-down menus and keyboard
+     * accelerators (see {@link Menu}). {@code null} or an empty menu removes it. It replaces the previous bar, so to change a checkbox
+     * or enable an entry, build the menu again and set it again. The page area keeps its size: a window that is not maximized or full
+     * screen grows by the height of the bar.
+     *
+     * <p>A <b>frameless</b> window has no place for a native bar: {@link #supportsMenuBar()} is {@code false} for it and the call is
+     * ignored (draw the menu in the page, or use {@link #setContextMenu}). While the web view has the keyboard focus, an accelerator
+     * of the bar is handled before the page sees the key press. Callbacks run on the UI thread.
+     */
+    default void setMenuBar(Menu menu) {}
+
+    /** Whether {@link #setMenuBar} does anything for this window: false on a platform that has no native menu bar and for a frameless window. */
+    default boolean supportsMenuBar() {
+        return false;
+    }
+
+    /**
+     * Shows a menu of your own when the user right-clicks in the page, instead of the web view's. {@code provider} is asked for every
+     * right click (and for the menu key) and is told what is under the pointer; the menu it returns pops up at that place as a native
+     * menu. {@code null} gives the old behaviour back: no menu, or the web view's own one in a window created with
+     * {@link WindowOptions#devTools()}. Pages cannot influence what the menu offers.
+     *
+     * <p>The commands of a text field's menu are {@link #edit(EditCommand)}. A page that draws its own context menu in the DOM still
+     * works: only a window with a provider uses the native one.
+     */
+    default void setContextMenu(ContextMenuProvider provider) {}
+
+    /** Whether {@link #setContextMenu} does anything for this window. */
+    default boolean supportsContextMenu() {
+        return false;
+    }
+
+    /**
+     * Runs an editing command on the page's focused element or selection, as a text field's context menu would: cut, copy, paste, undo, redo or
+     * select all. They act on what the user is looking at; {@link EditCommand#PASTE} pastes the system clipboard's text.
+     *
+     * @throws UnsupportedOperationException if this window cannot do it
+     */
+    default void edit(EditCommand command) {
+        throw new UnsupportedOperationException("this window cannot run editing commands");
+    }
+
+    /** {@link #printToPdf(PrintOptions)} with {@link PrintOptions#defaults()}. */
+    default CompletableFuture<byte[]> printToPdf() {
+        return printToPdf(PrintOptions.defaults());
+    }
+
+    /**
+     * Renders the page currently shown as a PDF document and returns its bytes, without any dialog; save them with
+     * {@link Dialogs} or hand them to something else. The page is laid out for the paper like a print, so a style sheet can adapt it with
+     * {@code @media print} and {@code @page}. Only the document in the window is printed; it must have finished loading. Fails with
+     * {@link UnsupportedOperationException} if this window cannot, and with {@link JoltException} if the web view reports an error.
+     * Safe from any thread.
+     *
+     * <pre>{@code
+     * window.printToPdf(PrintOptions.defaults().withLandscape(true))
+     *       .thenAccept(pdf -> Files.write(Path.of("report.pdf"), pdf));
+     * }</pre>
+     */
+    default CompletableFuture<byte[]> printToPdf(PrintOptions options) {
+        return CompletableFuture.failedFuture(new UnsupportedOperationException("this window cannot print to PDF"));
+    }
+
+    /**
+     * Opens the web view's print dialog for the page, where the user picks a printer, pages and copies (and "Save as PDF"). It is what
+     * {@code window.print()} does in the page, so a page can call that itself. The dialog belongs to the web view: this does not tell
+     * you what the user chose.
+     */
+    default void print() {
+        eval("window.print()").exceptionally(t -> null);
+    }
+
     /** Opens a {@link BinaryChannel} with the default {@link ChannelOptions}. */
     default BinaryChannel openChannel(String name) {
         return openChannel(name, ChannelOptions.defaults());
