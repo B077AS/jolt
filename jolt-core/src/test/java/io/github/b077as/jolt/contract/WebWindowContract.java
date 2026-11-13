@@ -773,6 +773,50 @@ public abstract class WebWindowContract {
     }
 
     /**
+     * Strict mode (`data-jolt-drop-strict` on <html>): a file drag over anything outside a drop zone gets dropEffect 'none' (the
+     * not-allowed cursor); inside a zone it stays 'copy'. Without the attribute the whole page accepts. Synthetic drag events: the
+     * page script decides the effect, whatever the platform does with it.
+     */
+    @Test
+    public void strictFileDropsRefuseDragsOutsideZonesOnlyWhenTheAttributeIsSet() throws Exception {
+        CompletableFuture<String> result = new CompletableFuture<>();
+        String probe = """
+                (() => {
+                  const effect = (target) => {
+                    const files = new DataTransfer(); files.items.add(new File(['x'], 'a.txt'));
+                    let assigned = 'untouched'; // a constructed DataTransfer keeps dropEffect read-only in some engines: record what the page script sets
+                    Object.defineProperty(files, 'dropEffect', { get: () => assigned, set: (v) => { assigned = v; } });
+                    const over = new DragEvent('dragover', { dataTransfer: files, bubbles: true, cancelable: true });
+                    target.dispatchEvent(over);
+                    return assigned;
+                  };
+                  const zone = document.getElementById('zone'), outside = document.getElementById('outside');
+                  const out = [];
+                  out.push('loose:' + effect(zone) + '/' + effect(outside));
+                  document.documentElement.setAttribute('data-jolt-drop-strict', '');
+                  out.push('strict:' + effect(zone) + '/' + effect(outside));
+                  document.documentElement.removeAttribute('data-jolt-drop-strict');
+                  out.push('loose again:' + effect(outside));
+                  return out.join(',');
+                })()
+                """;
+        runApp(40, app -> {
+            WebWindow window = app.createWindow(WindowOptions.defaults().withSize(400, 300));
+            window.onFileDrop(drop -> {});
+            window.onMessage(message -> CompletableFuture.runAsync(() -> {
+                try {
+                    result.complete(evalNow(window, probe));
+                } finally {
+                    window.close();
+                }
+            }));
+            window.loadHtml("<div id='zone' data-jolt-drop='docs' style='width:200px;height:100px'></div><div id='outside' style='height:100px'></div>"
+                    + "<script>addEventListener('load', () => jolt.postMessage('hello'))</script>");
+        });
+        assertEquals("loose:copy/copy,strict:copy/none,loose again:copy", result.getNow(null));
+    }
+
+    /**
      * A page can send any text through the bridge, including the messages of the file features. Those must never turn into files:
      * the paths of a drop come from the platform, and what to drag out is the application's decision.
      */
