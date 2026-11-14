@@ -11,6 +11,8 @@ import io.github.b077as.jolt.Notification;
 import io.github.b077as.jolt.OpenWindowRequest;
 import io.github.b077as.jolt.RequestHandler;
 import io.github.b077as.jolt.ResourceOptions;
+import io.github.b077as.jolt.Rpc;
+import io.github.b077as.jolt.RpcException;
 import io.github.b077as.jolt.Permission;
 import io.github.b077as.jolt.SecurityPolicy;
 import io.github.b077as.jolt.WebWindow;
@@ -28,6 +30,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -109,6 +112,171 @@ public abstract class WebWindowContract {
             window.loadHtml("<script>window.jolt.postMessage('hello from page')</script>");
         });
         assertEquals("hello from page", received.getNow(null));
+    }
+
+    public record Sum(int a, int b) {}
+
+    /** The page's report of everything it saw, as a map. */
+    private static Map<?, ?> report(String json) {
+        return (Map<?, ?>) io.github.b077as.jolt.internal.BasicJson.parse(json);
+    }
+
+    @Test
+    public void rpcCallsReachJavaHandlersAndTheirResultsErrorsProgressAndEventsComeBack() {
+        List<String> javaSaw = new java.util.concurrent.CopyOnWriteArrayList<>();
+        runApp(30, app -> {
+            WebWindow window = app.createWindow(WindowOptions.defaults().withSize(400, 300));
+            Rpc rpc = Rpc.create();
+            rpc.on("add", Sum.class, sum -> sum.a() + sum.b())
+                    .on("fail", call -> {
+                        throw new RpcException("not_found", "No such note", Map.of("id", 7));
+                    })
+                    .on("work", call -> {
+                        for (int i = 1; i <= 3; i++) {
+                            call.progress(i);
+                        }
+                        return "done";
+                    })
+                    .on("emit", call -> {
+                        rpc.emit("tick", Map.of("n", 1));
+                        return true;
+                    })
+                    .on("echo", call -> call.params(Object.class))
+                    .attach(window);
+            window.onMessage(message -> {
+                javaSaw.add(message);
+                window.close();
+            });
+            window.loadHtml("""
+                    <script>
+                    (async () => {
+                      const out = {};
+                      const pageSaw = [];
+                      jolt.onMessage((m) => pageSaw.push(m));
+                      jolt.onEvent('tick', (d) => { out.event = d; });
+                      out.sum = await jolt.call('add', { a: 2, b: 3 });
+                      try { await jolt.call('fail'); } catch (e) { out.error = { name: e.name, code: e.code, message: e.message, data: e.data }; }
+                      try { await jolt.call('missing'); } catch (e) { out.missing = e.code; }
+                      const progress = [];
+                      out.work = await jolt.call('work', {}, { onProgress: (p) => progress.push(p) });
+                      out.progress = progress;
+                      out.emitted = await jolt.call('emit');
+                      const awkward = { s: 'quote" backslash\\\\ <\\/script> \\u2028 \\u00e9 \\ud83d\\ude00', n: [1.5, -2, null, true] };
+                      out.echoOk = JSON.stringify(await jolt.call('echo', awkward)) === JSON.stringify(awkward);
+                      const many = await Promise.all(Array.from({ length: 50 }, (_, i) => jolt.call('add', { a: i, b: 1 })));
+                      out.manyOk = many.every((v, i) => v === i + 1);
+                      out.pageSaw = pageSaw;
+                      jolt.postMessage(JSON.stringify(out));
+                    })().catch((e) => jolt.postMessage('failed: ' + e));
+                    </script>
+                    """);
+        });
+        assertEquals(1, javaSaw.size(), "Java's onMessage must see only the page's own message: " + javaSaw);
+        Map<?, ?> out = report(javaSaw.get(0));
+        assertEquals(new java.math.BigDecimal(5), out.get("sum"));
+        Map<?, ?> error = (Map<?, ?>) out.get("error");
+        assertEquals("JoltRpcError", error.get("name"));
+        assertEquals("not_found", error.get("code"));
+        assertEquals("No such note", error.get("message"));
+        assertEquals(Map.of("id", new java.math.BigDecimal(7)), error.get("data"));
+        assertEquals(RpcException.UNKNOWN_METHOD, out.get("missing"));
+        assertEquals("done", out.get("work"));
+        assertEquals(List.of(new java.math.BigDecimal(1), new java.math.BigDecimal(2), new java.math.BigDecimal(3)), out.get("progress"));
+        assertEquals(true, out.get("emitted"));
+        assertEquals(Map.of("n", new java.math.BigDecimal(1)), out.get("event"));
+        assertEquals(true, out.get("echoOk"));
+        assertEquals(true, out.get("manyOk"));
+        assertEquals(List.of(), out.get("pageSaw"), "the page's jolt.onMessage must not see RPC traffic");
+    }
+
+    @Test
+    public void anAbortedOrTimedOutRpcCallInterruptsItsHandler() throws Exception {
+        java.util.concurrent.CountDownLatch interrupted = new java.util.concurrent.CountDownLatch(2);
+        CompletableFuture<String> got = new CompletableFuture<>();
+        runApp(30, app -> {
+            WebWindow window = app.createWindow(WindowOptions.defaults().withSize(400, 300));
+            Rpc.create().on("slow", call -> {
+                try {
+                    Thread.sleep(25_000);
+                } catch (InterruptedException e) {
+                    interrupted.countDown();
+                }
+                return "too late";
+            }).attach(window);
+            window.onMessage(message -> {
+                got.complete(message);
+                window.close();
+            });
+            window.loadHtml("""
+                    <script>
+                    (async () => {
+                      const out = {};
+                      const controller = new AbortController();
+                      const aborted = jolt.call('slow', {}, { signal: controller.signal });
+                      setTimeout(() => controller.abort(), 200);
+                      try { await aborted; } catch (e) { out.aborted = e.name; }
+                      try { await jolt.call('slow', {}, { timeout: 200 }); } catch (e) { out.timeout = e.code; }
+                      jolt.postMessage(JSON.stringify(out));
+                    })();
+                    </script>
+                    """);
+        });
+        Map<?, ?> out = report(got.getNow("{}"));
+        assertEquals("AbortError", out.get("aborted"));
+        assertEquals("timeout", out.get("timeout"));
+        assertTrue(interrupted.await(5, TimeUnit.SECONDS), "both handlers were interrupted");
+    }
+
+    @Test
+    public void rpcCallsLeftRunningByAPageThatNavigatedAwayAreCancelled() {
+        CompletableFuture<Boolean> interrupted = new CompletableFuture<>();
+        AtomicBoolean closing = new AtomicBoolean();
+        AtomicBoolean interruptedBeforeClose = new AtomicBoolean();
+        byte[] page = """
+                <script>
+                if (location.search !== '?second') {
+                  jolt.call('slow');
+                  setTimeout(() => location.replace(location.pathname + '?second'), 300);
+                } else {
+                  jolt.call('ping').then((v) => jolt.postMessage('second:' + v));
+                }
+                </script>
+                """.getBytes(StandardCharsets.UTF_8);
+        runApp(30, app -> {
+            WebWindow window = app.createWindow(WindowOptions.defaults().withSize(400, 300));
+            Rpc.create().on("slow", call -> {
+                try {
+                    Thread.sleep(25_000);
+                } catch (InterruptedException e) {
+                    interruptedBeforeClose.set(!closing.get());
+                    interrupted.complete(true);
+                }
+                return null;
+            }).on("ping", call -> "pong").attach(window);
+            window.onMessage(message -> {
+                assertEquals("second:pong", message);
+                interrupted.whenComplete((v, t) -> app.dispatch(() -> {
+                    closing.set(true);
+                    window.close();
+                }));
+            });
+            window.loadResources(path -> path.endsWith("index.html") ? page : null);
+        });
+        assertTrue(interruptedBeforeClose.get(), "the old page's call was cancelled when the new page spoke, not when the window closed");
+    }
+
+    @Test
+    public void jolt_callWithoutAnAttachedRpcRejectsAtOnce() {
+        CompletableFuture<String> got = new CompletableFuture<>();
+        runApp(30, app -> {
+            WebWindow window = app.createWindow(WindowOptions.defaults().withSize(300, 200));
+            window.onMessage(message -> {
+                got.complete(message);
+                window.close();
+            });
+            window.loadHtml("<script>jolt.call('x').catch((e) => jolt.postMessage(e.name + '|' + e.code))</script>");
+        });
+        assertEquals("JoltRpcError|not_enabled", got.getNow(null));
     }
 
     /**

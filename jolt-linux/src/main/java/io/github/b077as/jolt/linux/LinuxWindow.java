@@ -24,6 +24,7 @@ import io.github.b077as.jolt.internal.FrameScript;
 import io.github.b077as.jolt.internal.NativeDialogHost;
 import io.github.b077as.jolt.internal.NativeFileDragHost;
 import io.github.b077as.jolt.internal.PageFileDrag;
+import io.github.b077as.jolt.internal.PageRpc;
 import io.github.b077as.jolt.internal.PageFileDrop;
 import io.github.b077as.jolt.internal.NativeResourceHost;
 import io.github.b077as.jolt.internal.ResourceService;
@@ -898,7 +899,8 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
         }
         // The page that sent it. WebKitGTK does not say which frame, so the top-level page stands in; with navigation
         // locked, no untrusted frame can be inside a trusted page.
-        if (!guard.allowMessageFrom(Gtk.webViewUri(webView))) {
+        String source = Gtk.webViewUri(webView);
+        if (!guard.allowMessageFrom(source)) {
             return;
         }
         if (FrameProtocol.isFrameMessage(text)) {
@@ -914,6 +916,10 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
         if (FileDragProtocol.isDragMessage(text)) {
             PageFileDrag.handle(this, text);
             return;
+        }
+        if (PageRpc.isRpcMessage(text)) {
+            PageRpc.deliver(this, text, source);
+            return; // never reaches the application's message listeners
         }
         for (Consumer<String> listener : messageListeners) {
             try {

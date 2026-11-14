@@ -24,6 +24,7 @@ import io.github.b077as.jolt.internal.NativeDialogHost;
 import io.github.b077as.jolt.internal.NativeFileDragHost;
 import io.github.b077as.jolt.internal.NativeResourceHost;
 import io.github.b077as.jolt.internal.PageFileDrag;
+import io.github.b077as.jolt.internal.PageRpc;
 import io.github.b077as.jolt.internal.PageFileDrop;
 import io.github.b077as.jolt.internal.ResourceService;
 import io.github.b077as.jolt.internal.SecurityGuard;
@@ -1864,7 +1865,8 @@ public CompletableFuture<String> eval(String script) {
     }
 
     private void onWebMessage(MemorySegment sender, MemorySegment args) {
-        if (!guard.allowMessageFrom(readUri(args, WebView2Abi.ICoreWebView2WebMessageReceivedEventArgs.GET_SOURCE))) {
+        String source = readUri(args, WebView2Abi.ICoreWebView2WebMessageReceivedEventArgs.GET_SOURCE);
+        if (!guard.allowMessageFrom(source)) {
             return;
         }
         String text;
@@ -1892,6 +1894,10 @@ public CompletableFuture<String> eval(String script) {
         if (FileDragProtocol.isDragMessage(text)) {
             PageFileDrag.handle(this, text);
             return;
+        }
+        if (PageRpc.isRpcMessage(text)) {
+            PageRpc.deliver(this, text, source);
+            return; // never reaches the application's message listeners
         }
         for (Consumer<String> listener : messageListeners) {
             try {

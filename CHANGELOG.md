@@ -9,6 +9,19 @@ The latest version is the one on [Maven Central](https://central.sonatype.com/ar
 ## Unreleased
 
 ### Added
+- **RPC: `Rpc`, `jolt.call` and `jolt.onEvent`.** Request/response between the page and Java is now built in, so an app no longer copies
+  its own `Rpc` class and page module. `Rpc.create().on(method, Params.class, handler).attach(window)`; the page runs
+  `await jolt.call(method, params, { signal, timeout, onProgress })`, and Java pushes events with `rpc.emit(name, data)` that the page
+  receives with `jolt.onEvent`. Handlers run on virtual threads and may return a `CompletionStage`. `RpcCall` gives handlers progress,
+  cancellation and the calling window. **JSON is pluggable:** the built-in `JsonCodec.basic()` has no dependency (records, enums,
+  collections, maps, arrays, `Optional`, `UUID`, `java.time`), and `JsonCodec.of(...)` plugs in Gson, Jackson or anything else.
+  **Errors:** an `RpcException(code, message, data)` reaches the page as a `JoltRpcError` with those fields. Any other exception reaches it
+  only as `internal` with a generic message, and it is logged and given to `onError` (`RpcOptions.withExposeErrorMessages` while you develop).
+  **Cancellation:** an `AbortSignal`, a timeout, a reload or navigation, closing the window or `detach` interrupts the handler's thread.
+  **Security and limits:** only trusted origins may call, and only from the top-level document. By default a window can have 64 calls
+  running at once, and a request can be up to 8 million characters (`RpcOptions`). RPC messages never reach `onMessage` on either side. One `Rpc` can
+  serve several windows. Tested: 45 unit tests (codec, protocol, engine) and 4 contract tests with real windows on **Windows**. **Linux:
+  compiled, not run.**
 - **Menu bar: `WebWindow.setMenuBar(Menu)`.** A native `File / Edit / View` bar built in Java. `Menu` is immutable like `TrayMenu` and has
   actions, checkboxes, separators and submenus, each with an optional **accelerator** (`Shortcut`, such as `Ctrl+Shift+N`) and `&` mnemonics.
   The window grows by the height of the bar so the page area keeps its size; a frameless window has no bar (`supportsMenuBar()` says so). While

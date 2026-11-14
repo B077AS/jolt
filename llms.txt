@@ -15,6 +15,8 @@ Modules (all released with the same version):
 - `Application.openExternal(URI)` (http, https, mailto) and `AppOptions.withQuietNativeLogs`, since 0.2.5.
 - Since 0.3.0: system notifications (`Application.notify`, `jolt.notify`); pop-out windows (`WebWindow.enableOpenWindow` with a `WindowOpener`, `jolt.openWindow`, `jolt.broadcast`/`onBroadcast`, `WindowOptions.withOwner`, `ResourceOptions.withStartPath`, `Application.windows()`); `WebWindow.focus/minimize/isMinimized/isVisible`; tray icon (`Application.isTraySupported/createTray`, `Tray`, `TrayMenu`); close to tray (`WebWindow.setCloseBehavior(CloseBehavior.HIDE)`); start with the computer (`Application.autostart()`); one copy per user (`SingleInstance.acquire`); frameless windows (`WindowOptions.withFrameless`, `data-jolt-drag`, `jolt.frame`, ready-made title bar with `data-jolt-titlebar` coloured by `--jolt-caption-*` CSS variables, window state as `data-jolt-maximized` and `jolt.frame.onChange`, Windows 11 snap layouts over the maximize button).
 
+- Unreleased: built-in RPC (`Rpc.create().on(...).attach(window)`, page `await jolt.call(method, params, {signal, timeout, onProgress})`, `rpc.emit` + `jolt.onEvent`, `RpcException` codes, `RpcCall` progress/cancellation). JSON through `JsonCodec`: `JsonCodec.basic()` (no dependency, records/collections) or `JsonCodec.of(gson::toJson, gson::fromJson)` for any library.
+
 Run with `--enable-native-access=ALL-UNNAMED` (or set `Enable-Native-Access: ALL-UNNAMED` in the jar manifest).
 
 ## Docs

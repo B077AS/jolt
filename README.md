@@ -140,21 +140,69 @@ try {
 
 ### Calling Java functions from the page
 
-Messages are plain strings. For real apps, add a tiny request/response layer on top: the page sends
-`{"id": 1, "method": "notes.add", "params": {...}}` and Java answers `{"id": 1, "result": ...}` or `{"id": 1, "error": "..."}`.
-A small `Rpc` helper of your own (about 40 lines on the Java side and as many on the page) is all it takes:
+Messages are plain strings. For request/response, attach an `Rpc` to the window: the page calls Java methods with
+`jolt.call` and gets their results as promises, and Java pushes events that the page receives with `jolt.onEvent`.
 
 ```java
-new Rpc(window)
-    .on("notes.list", params -> store.list())
-    .on("notes.add",  params -> store.add(params.get("text").getAsString()));
+record NewNote(String text, List<String> tags) {}
+
+Rpc rpc = Rpc.create()
+        .on("notes.list", call -> store.list())                              // no parameters
+        .on("notes.add", NewNote.class, note -> store.add(note.text(), note.tags()))
+        .on("export", ExportRequest.class, (request, call) -> {              // long work
+            for (Page page : request.pages()) {
+                call.checkCancelled();                                       // the page gave up?
+                write(page);
+                call.progress(page.number());                                // reaches onProgress
+            }
+            return "done";
+        });
+rpc.attach(window);                                                          // before the page loads
+rpc.emit("notes.changed", store.count());                                    // to every attached window, any thread
 ```
 
 ```js
-const note = await call('notes.add', { text: 'Buy milk' });
+const notes = await jolt.call('notes.list');
+await jolt.call('notes.add', { text: 'Buy milk', tags: ['home'] });
+const result = await jolt.call('export', { pages }, {
+  timeout: 60_000, signal: controller.signal, onProgress: (n) => (bar.value = n),
+});
+const stop = jolt.onEvent('notes.changed', (count) => (badge.textContent = count));   // stop() unsubscribes
 ```
 
-Copy that pattern into your project. It works with any JSON library.
+- **Threads:** handlers run on a virtual thread per call, never on the UI thread, so they may block. `RpcOptions.withExecutor` picks another executor.
+- **JSON:** the built-in `JsonCodec.basic()` needs no library and reads/writes records, enums, collections, maps, arrays,
+  `Optional`, `UUID` and `java.time` values. To use your own library, pass a codec:
+  `RpcOptions.defaults().withCodec(JsonCodec.of(gson::toJson, gson::fromJson))`, or for Jackson
+  `JsonCodec.of(mapper::writeValueAsString, (json, type) -> mapper.readValue(json, mapper.constructType(type)))`.
+- **Errors:** throw `new RpcException("not_found", "No note 7", data)` and the promise rejects with a `JoltRpcError` that has
+  `code`, `message` and `data`. Any other exception reaches the page only as `code: "internal"` with a generic message, so
+  paths and SQL do not leak; it is logged and passed to `rpc.onError(...)`. `RpcOptions.withExposeErrorMessages(true)` shows
+  the real message while you develop. Jolt's own codes: `unknown_method`, `bad_params`, `too_many_calls`, `too_large`,
+  `unavailable`, and in the page `timeout` and `not_enabled`.
+- **Cancellation:** an aborted `signal`, a passed `timeout`, a reload or navigation, closing the window or `rpc.detach(window)`
+  cancels the call. Java interrupts the handler's thread and drops its answer.
+- **Limits and security:** only pages whose origin the `SecurityPolicy` trusts can call, and only from the top-level
+  document. A window can have 64 calls running at once and send requests of up to 8 million characters (`RpcOptions`).
+  Treat parameters as untrusted input. For bulk or binary data, use a channel.
+- One `Rpc` can serve several windows (`RpcCall.window()` says which one called). RPC traffic never reaches
+  `window.onMessage` or `jolt.onMessage`, so they stay free for your own messages.
+
+For TypeScript:
+
+```ts
+declare global {
+  interface Window {
+    jolt: {
+      call<T = unknown>(method: string, params?: unknown,
+                        options?: { signal?: AbortSignal; timeout?: number; onProgress?: (data: unknown) => void }): Promise<T>;
+      onEvent<T = unknown>(name: string, callback: (data: T) => void): () => void;
+      postMessage(message: string): void;
+      onMessage(callback: (message: string) => void): () => void;
+    };
+  }
+}
+```
 
 ### Binary data: channels
 
@@ -329,8 +377,7 @@ Your page is normal HTML, CSS and JavaScript. The web view is Chromium (Windows)
   Separate HTML, CSS and JS files work, relative URLs and ES modules too, and the origin is stable so `localStorage` survives
   restarts. A single self-contained HTML file (Vite with `vite-plugin-singlefile`) can use `loadHtml` instead.
 
-A small typed wrapper around `jolt.postMessage` (for example a `call<T>(method, params)` function with one function per Java
-handler) keeps the rest of the frontend free of the bridge. [Parsel](https://github.com/B077AS/parsel) is built this way, with a
+A small typed module around `jolt.call` (one function per Java handler) keeps the rest of the frontend free of the bridge. [Parsel](https://github.com/B077AS/parsel) is built this way, with a
 Vue page on top of Vite. Other frameworks go through the same Vite setup.
 
 ## Serving files and answering requests from Java
