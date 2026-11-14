@@ -1,6 +1,6 @@
 # Changelog
 
-All published versions of Jolt, newest first. Every module (`jolt-core`, `jolt-win32`, `jolt-linux`, `jolt-credentials`) is
+All published versions of Jolt, newest first. Every module (`jolt-core`, `jolt-win32`, `jolt-linux`, `jolt-credentials`, `jolt-spring-boot-starter`) is
 released with the same version number. Jolt is early software (version 0.x): APIs can still change between versions, and
 this file says when they do.
 
@@ -9,6 +9,16 @@ The latest version is the one on [Maven Central](https://central.sonatype.com/ar
 ## Unreleased
 
 ### Added
+- **Spring Boot: the new module `jolt-spring-boot-starter`** (Spring Boot 4). `JoltSpringApplication.run(App.class, args)` runs a
+  Spring Boot application in a Jolt window. **rpc mode** (no web server): the page's files come from `src/main/resources/ui` and bean methods
+  marked `@JoltRpc` answer `jolt.call` (one parameter decoded into its type, plus optionally `RpcCall` and `WebWindow`). RPC uses the
+  application's own JSON library (its Jackson 3, Jackson 2 or Gson bean, else `JsonCodec.basic()`). **web mode** (Spring MVC): the window shows
+  the application's own server on a free `127.0.0.1` port. A guard lets only the window in: a one-time entry token, then an `HttpOnly`,
+  `SameSite=Strict` session cookie; requests without it, with a non-loopback `Host` or a foreign `Origin` on a state-changing request get 403.
+  Spring starts on another thread while the window and its web view are created; the window is shown once the page has loaded; a failed
+  start is shown in the window. Closing the window closes the context and the other way round. `JoltRuntime`, `Application` and `WebWindow`
+  can be injected; settings are `jolt.*` properties. Tested: 16 unit tests and 3 tests with real windows on **Windows**. **Linux: compiled,
+  not run.**
 - **RPC: `Rpc`, `jolt.call` and `jolt.onEvent`.** Request/response between the page and Java is now built in, so an app no longer copies
   its own `Rpc` class and page module. `Rpc.create().on(method, Params.class, handler).attach(window)`; the page runs
   `await jolt.call(method, params, { signal, timeout, onProgress })`, and Java pushes events with `rpc.emit(name, data)` that the page

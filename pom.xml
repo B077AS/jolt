@@ -40,6 +40,7 @@
     <module>jolt-win32</module>
     <module>jolt-linux</module>
     <module>jolt-credentials</module>
+    <module>jolt-spring-boot-starter</module>
   </modules>
 
   <properties>
@@ -75,6 +76,11 @@
       <dependency>
         <groupId>io.github.b077as</groupId>
         <artifactId>jolt-credentials</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.github.b077as</groupId>
+        <artifactId>jolt-spring-boot-starter</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>

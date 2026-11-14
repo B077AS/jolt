@@ -1,0 +1,19 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>web mode</title>
+<p>web mode</p>
+<script>
+  (async () => {
+    const out = {};
+    try {
+      out.get = (await (await fetch('/api/greet?name=Jolt')).json()).greeting;
+      out.post = await (await fetch('/api/echo', { method: 'POST', body: 'ping', headers: { 'Content-Type': 'text/plain' } })).text();
+      out.rpc = await jolt.call('greet.hello', { name: 'Web', tags: [] });
+      out.origin = location.origin;
+      out.path = location.pathname;
+    } catch (e) {
+      out.error = String((e && e.message) || e);
+    }
+    await jolt.call('test.report', out);
+  })();
+</script>

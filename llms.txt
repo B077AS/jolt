@@ -10,6 +10,7 @@ Modules (all released with the same version):
 - `jolt-win32`: Windows backend (WebView2). Add it together with `jolt-core`; it only activates on Windows.
 - `jolt-linux`: Linux backend (GTK 3 + WebKitGTK 4.1, X11 or Wayland). Only activates on Linux.
 - Window placement, since 0.2.2: `WindowOptions.withMaximized`, `withCentered` (the default), `withVisible(false)` plus `show()` once the page is ready (no blank flash at startup), `WebWindow.maximize/restore/isMaximized`.
+- `jolt-spring-boot-starter`: optional, unreleased. `JoltSpringApplication.run(App.class, args)` runs a Spring Boot 4 app in a window: rpc mode (`@JoltRpc` bean methods for `jolt.call`, page files in `src/main/resources/ui`) or web mode (the app's own Spring MVC server on 127.0.0.1, guarded so only the window can use it). Settings `jolt.*`.
 - `jolt-credentials`: optional, since 0.2.1. Stores passwords and tokens in the Windows Credential Manager or the Linux Secret Service. No dependency on `jolt-core`.
 - File dialogs and binary channels, since 0.2.4 and 0.2.3: `WebWindow.dialogs()` (open, save, choose-folder), `jolt.saveAs` in the page, `WebWindow.openChannel` for raw bytes between Java and the page.
 - `Application.openExternal(URI)` (http, https, mailto) and `AppOptions.withQuietNativeLogs`, since 0.2.5.
@@ -23,4 +24,5 @@ Run with `--enable-native-access=ALL-UNNAMED` (or set `Enable-Native-Access: ALL
 - [README](README.md): install, first window, messaging between page and Java, serving a multi-file frontend, request handlers and routing, uploads, security policy, packaging, troubleshooting.
 - [CHANGELOG](CHANGELOG.md): what changed in each version.
 - [Maven Central](https://central.sonatype.com/artifact/io.github.b077as/jolt-core): published artifacts.
+- [jpack](https://github.com/B077AS/jpack): the companion for shipping: install folder with its own runtime, self-updates, launcher hand-over (`startNow` / `notifyShown`).
 - [Parsel](https://github.com/B077AS/parsel): the reference example, a complete desktop mail client built on Jolt (Java backend, Vue frontend).
