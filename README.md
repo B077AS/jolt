@@ -73,7 +73,7 @@ Add the API and both backends; each one only activates on its own OS.
 ```xml
 <properties>
   <maven.compiler.release>25</maven.compiler.release>
-  <jolt.version>0.4.1</jolt.version>
+  <jolt.version>0.4.2</jolt.version>
 </properties>
 
 <dependencies>
@@ -98,9 +98,9 @@ Add the API and both backends; each one only activates on its own OS.
 Gradle:
 
 ```kotlin
-implementation("io.github.b077as:jolt-core:0.4.1")
-implementation("io.github.b077as:jolt-win32:0.4.1")
-implementation("io.github.b077as:jolt-linux:0.4.1")
+implementation("io.github.b077as:jolt-core:0.4.2")
+implementation("io.github.b077as:jolt-win32:0.4.2")
+implementation("io.github.b077as:jolt-linux:0.4.2")
 ```
 
 Run Java with `--enable-native-access=ALL-UNNAMED`, or put `Enable-Native-Access: ALL-UNNAMED` in your jar manifest
@@ -652,7 +652,7 @@ the entries change; `JumpList.empty()` removes them. `supportsJumpList()` says w
 
 ## Menu bar, context menu, global hotkeys and PDF
 
-Added after 0.4.1. A `Menu` is built in Java, like a tray menu, and a `Shortcut` is a key combination written the usual way
+Added in 0.4.2. A `Menu` is built in Java, like a tray menu, and a `Shortcut` is a key combination written the usual way
 (`Shortcut.parse("Ctrl+Shift+N")`: modifiers `Ctrl`, `Shift`, `Alt`, `Meta`; keys `A`-`Z`, `0`-`9`, `F1`-`F24`, `Enter`, `Space`, `Tab`, `Escape`,
 the arrows, `Home`/`End`/`PageUp`/`PageDown`, `Insert`/`Delete`, and punctuation such as `,` or `Comma`).
 

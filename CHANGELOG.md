@@ -6,7 +6,7 @@ this file says when they do.
 
 The latest version is the one on [Maven Central](https://central.sonatype.com/artifact/io.github.b077as/jolt-core).
 
-## Unreleased
+## 0.4.2 - 2026-11-19
 
 ### Added
 - **Spring Boot: the new module `jolt-spring-boot-starter`** (Spring Boot 4). `JoltSpringApplication.run(App.class, args)` runs a

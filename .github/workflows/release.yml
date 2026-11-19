@@ -16,7 +16,7 @@ jobs:
       - name: Setup Java and Apache Maven
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
+          distribution: 'zulu'
           java-version: '25'
           server-id: central
           server-username: MAVEN_USERNAME
