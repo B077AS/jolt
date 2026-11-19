@@ -148,7 +148,8 @@ class JoltSpringApplicationTest {
         Map<String, Object> out = report.get().get(5, TimeUnit.SECONDS);
         assertEquals("Hello Jolt [a, b]", out.get("greeting"), out.toString());
         assertEquals("no_way: Not today", out.get("refused"), out.toString());
-        assertEquals("https://jolt.localhost", out.get("origin"), "served inside the web view, no port");
+        String origin = String.valueOf(out.get("origin"));
+        assertTrue(origin.equals("https://jolt.localhost") || origin.equals("jolt://app"), "served inside the web view, no port: " + origin);
         assertEquals("RPC", out.get("mode"));
         assertFalse(context.isActive(), "closed");
         assertNotNull(window.get());

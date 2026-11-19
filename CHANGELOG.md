@@ -17,8 +17,7 @@ The latest version is the one on [Maven Central](https://central.sonatype.com/ar
   `SameSite=Strict` session cookie; requests without it, with a non-loopback `Host` or a foreign `Origin` on a state-changing request get 403.
   Spring starts on another thread while the window and its web view are created; the window is shown once the page has loaded; a failed
   start is shown in the window. Closing the window closes the context and the other way round. `JoltRuntime`, `Application` and `WebWindow`
-  can be injected; settings are `jolt.*` properties. Tested: 16 unit tests and 3 tests with real windows on **Windows**. **Linux: compiled,
-  not run.**
+  can be injected; settings are `jolt.*` properties. Tested: 16 unit tests and 3 tests with real windows on **Windows**, and on **Linux** (X11 and Wayland, headless).
 - **RPC: `Rpc`, `jolt.call` and `jolt.onEvent`.** Request/response between the page and Java is now built in, so an app no longer copies
   its own `Rpc` class and page module. `Rpc.create().on(method, Params.class, handler).attach(window)`; the page runs
   `await jolt.call(method, params, { signal, timeout, onProgress })`, and Java pushes events with `rpc.emit(name, data)` that the page
@@ -30,8 +29,7 @@ The latest version is the one on [Maven Central](https://central.sonatype.com/ar
   **Cancellation:** an `AbortSignal`, a timeout, a reload or navigation, closing the window or `detach` interrupts the handler's thread.
   **Security and limits:** only trusted origins may call, and only from the top-level document. By default a window can have 64 calls
   running at once, and a request can be up to 8 million characters (`RpcOptions`). RPC messages never reach `onMessage` on either side. One `Rpc` can
-  serve several windows. Tested: 45 unit tests (codec, protocol, engine) and 4 contract tests with real windows on **Windows**. **Linux:
-  compiled, not run.**
+  serve several windows. Tested: 45 unit tests (codec, protocol, engine) and 4 contract tests with real windows on **Windows** and **Linux** (X11 and Wayland, headless).
 - **Menu bar: `WebWindow.setMenuBar(Menu)`.** A native `File / Edit / View` bar built in Java. `Menu` is immutable like `TrayMenu` and has
   actions, checkboxes, separators and submenus, each with an optional **accelerator** (`Shortcut`, such as `Ctrl+Shift+N`) and `&` mnemonics.
   The window grows by the height of the bar so the page area keeps its size; a frameless window has no bar (`supportsMenuBar()` says so). While
@@ -52,18 +50,16 @@ The latest version is the one on [Maven Central](https://central.sonatype.com/ar
   millimetres, margins, backgrounds, header and footer), and **`WebWindow.print()`** opens the web view's print dialog (it runs `window.print()`).
   Windows: `PrintToPdf`, tested for A4, Letter, landscape, scale and several pages. `print()` opens a dialog and is not covered by a test.
 - Internals: `WebView2Abi` was regenerated from the same SDK (1.0.4314.35) with the print, accelerator and context-menu interfaces added.
-- **Not yet verified: Linux for the four features above.** The code compiles but has not been run (no Linux session was available): GTK menus and
-  accelerator groups, the `context-menu` signal and `webkit_web_view_execute_editing_command`, and `WebKitPrintOperation` writing through GTK's
-  "Print to File". The contract tests `printToPdf*` and `editCommands*` in `WebWindowContract` will hold the Linux backend to the same behaviour
-  the first time it is run on X11 and Wayland. Also not verified: how the Windows menu looks, `print()`, and a context menu chosen with the mouse
+- **Linux for the four features above is tested**: the contract tests (`printToPdf*`, `editCommands*`, menu bar, context menu) and `LinuxMenusTest` pass
+  on X11 (Xvfb) and on Wayland (a headless KWin). Not verified: how the Windows menu looks, `print()`, and a context menu chosen with the mouse
   (the tests open the menu and close it from code).
 - **Fixed-size windows: `WindowOptions.withResizable(false)`.** The window keeps the size it was created with: no sizing border, no
   maximize box, `maximized` and `minWidth`/`minHeight` are ignored, `WebWindow.maximize()` does nothing, and Size/Maximize from the system
   menu (Alt+Space) are refused. Minimize and full screen still work. A frameless window gets no resize handles, the title bar kit leaves out
   the maximize button, and `<html>` gets `data-jolt-not-resizable` so a page can hide a maximize button of its own. `WindowOptions` gained
   the component `resizable` (last, default `true`), so code that calls its canonical constructor directly must pass it; the `with...`
-  methods are unaffected. Windows: tested on real windows (style bits, system commands). Not yet verified: Linux (`gtk_window_set_resizable`;
-  the compiled code has not been run, and a window manager may still treat the window its own way), how a fixed-size window looks on Windows 10.
+  methods are unaffected. Windows: tested on real windows (style bits, system commands). Linux (`gtk_window_set_resizable`) is tested on X11 and Wayland (headless KWin);
+  not verified: how a fixed-size window looks on Windows 10.
 - **Strict file drops.** Put `data-jolt-drop-strict` on `<html>` and a file drag over anything outside a `data-jolt-drop` element gets
   `dropEffect = 'none'` (the system's not-allowed cursor), and a drop there is not delivered to `onFileDrop`. Without the attribute the
   whole page accepts drops, as before. Windows (WebView2): done in the page script. Linux: only the delivery is refused; the cursor still
