@@ -13,6 +13,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import static java.lang.foreign.ValueLayout.ADDRESS;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
+import static java.lang.foreign.ValueLayout.JAVA_DOUBLE;
 import static java.lang.foreign.ValueLayout.JAVA_INT;
 
 /**
@@ -49,6 +50,8 @@ final class Com {
     static final FunctionDescriptor HR_STREAM_READ = FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT, ADDRESS);
     /** {@code HRESULT m(this, int)}: {@code BOOL}/enum setters. */
     static final FunctionDescriptor HR_INT = FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT);
+    /** {@code HRESULT m(this, double)}: {@code put_ScaleFactor}, the page size and margins of print settings. */
+    static final FunctionDescriptor HR_DOUBLE = FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_DOUBLE);
     /** {@code HRESULT m(this)}. */
     static final FunctionDescriptor HR_VOID = FunctionDescriptor.of(JAVA_INT, ADDRESS);
     /** {@code HRESULT m(this, RECT by value)}: {@code put_Bounds}. */

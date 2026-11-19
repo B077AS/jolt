@@ -1,10 +1,70 @@
 # Changelog
 
-All published versions of Jolt, newest first. Every module (`jolt-core`, `jolt-win32`, `jolt-linux`, `jolt-credentials`) is
+All published versions of Jolt, newest first. Every module (`jolt-core`, `jolt-win32`, `jolt-linux`, `jolt-credentials`, `jolt-spring-boot-starter`) is
 released with the same version number. Jolt is early software (version 0.x): APIs can still change between versions, and
 this file says when they do.
 
 The latest version is the one on [Maven Central](https://central.sonatype.com/artifact/io.github.b077as/jolt-core).
+
+## 0.4.2 - 2026-11-19
+
+### Added
+- **Spring Boot: the new module `jolt-spring-boot-starter`** (Spring Boot 4). `JoltSpringApplication.run(App.class, args)` runs a
+  Spring Boot application in a Jolt window. **rpc mode** (no web server): the page's files come from `src/main/resources/ui` and bean methods
+  marked `@JoltRpc` answer `jolt.call` (one parameter decoded into its type, plus optionally `RpcCall` and `WebWindow`). RPC uses the
+  application's own JSON library (its Jackson 3, Jackson 2 or Gson bean, else `JsonCodec.basic()`). **web mode** (Spring MVC): the window shows
+  the application's own server on a free `127.0.0.1` port. A guard lets only the window in: a one-time entry token, then an `HttpOnly`,
+  `SameSite=Strict` session cookie; requests without it, with a non-loopback `Host` or a foreign `Origin` on a state-changing request get 403.
+  Spring starts on another thread while the window and its web view are created; the window is shown once the page has loaded; a failed
+  start is shown in the window. Closing the window closes the context and the other way round. `JoltRuntime`, `Application` and `WebWindow`
+  can be injected; settings are `jolt.*` properties. Tested: 16 unit tests and 3 tests with real windows on **Windows**, and on **Linux** (X11 and Wayland, headless).
+- **RPC: `Rpc`, `jolt.call` and `jolt.onEvent`.** Request/response between the page and Java is now built in, so an app no longer copies
+  its own `Rpc` class and page module. `Rpc.create().on(method, Params.class, handler).attach(window)`; the page runs
+  `await jolt.call(method, params, { signal, timeout, onProgress })`, and Java pushes events with `rpc.emit(name, data)` that the page
+  receives with `jolt.onEvent`. Handlers run on virtual threads and may return a `CompletionStage`. `RpcCall` gives handlers progress,
+  cancellation and the calling window. **JSON is pluggable:** the built-in `JsonCodec.basic()` has no dependency (records, enums,
+  collections, maps, arrays, `Optional`, `UUID`, `java.time`), and `JsonCodec.of(...)` plugs in Gson, Jackson or anything else.
+  **Errors:** an `RpcException(code, message, data)` reaches the page as a `JoltRpcError` with those fields. Any other exception reaches it
+  only as `internal` with a generic message, and it is logged and given to `onError` (`RpcOptions.withExposeErrorMessages` while you develop).
+  **Cancellation:** an `AbortSignal`, a timeout, a reload or navigation, closing the window or `detach` interrupts the handler's thread.
+  **Security and limits:** only trusted origins may call, and only from the top-level document. By default a window can have 64 calls
+  running at once, and a request can be up to 8 million characters (`RpcOptions`). RPC messages never reach `onMessage` on either side. One `Rpc` can
+  serve several windows. Tested: 45 unit tests (codec, protocol, engine) and 4 contract tests with real windows on **Windows** and **Linux** (X11 and Wayland, headless).
+- **Menu bar: `WebWindow.setMenuBar(Menu)`.** A native `File / Edit / View` bar built in Java. `Menu` is immutable like `TrayMenu` and has
+  actions, checkboxes, separators and submenus, each with an optional **accelerator** (`Shortcut`, such as `Ctrl+Shift+N`) and `&` mnemonics.
+  The window grows by the height of the bar so the page area keeps its size; a frameless window has no bar (`supportsMenuBar()` says so). While
+  the web view has the focus the accelerators are handled before the page sees the key (Windows: `AcceleratorKeyPressed`; Linux: a GTK
+  accelerator group). Windows: tested on real windows (the menu is read back with the Win32 menu functions, commands and check marks, the page
+  area before, with and after the bar, and the accelerators with real key presses). The bar is drawn by Windows, so it stays light in a dark app,
+  and Jolt does not hide it in full screen (not tested).
+- **Context menu: `WebWindow.setContextMenu(ContextMenuProvider)`** shows a menu of your own instead of the web view's, told by the web view what
+  was clicked (`ContextMenuInfo`: position, link, image or media address, editable, selection). Windows: WebView2 `ContextMenuRequested`, tested
+  with a synthesized right click on a link, a selection and a text field. WebView2 raises that event only while its default menus are enabled, so
+  Jolt enables them while a provider is set and the provider always replaces the web view's menu. **`WebWindow.edit(EditCommand)`** runs cut, copy,
+  paste, undo, redo and select all on what has the focus (Windows: the DevTools `Input.dispatchKeyEvent` editing commands, tested against the real
+  clipboard).
+- **Global hotkeys: `Application.registerHotkey(Shortcut, Runnable)`** returns a `Hotkey` to close; it fails if another program holds the keys
+  and refuses a combination without Ctrl, Alt or Meta (function keys excepted). **Windows only**: `RegisterHotKey`, tested including a real key
+  press. On Linux `supportsGlobalHotkeys()` is `false` and `registerHotkey` throws `UnsupportedOperationException`.
+- **PDF: `WebWindow.printToPdf(PrintOptions)`** returns the bytes of a PDF of the shown page (`PrintOptions`: landscape, scale, `Paper` or a size in
+  millimetres, margins, backgrounds, header and footer), and **`WebWindow.print()`** opens the web view's print dialog (it runs `window.print()`).
+  Windows: `PrintToPdf`, tested for A4, Letter, landscape, scale and several pages. `print()` opens a dialog and is not covered by a test.
+- Internals: `WebView2Abi` was regenerated from the same SDK (1.0.4314.35) with the print, accelerator and context-menu interfaces added.
+- **Linux for the four features above is tested**: the contract tests (`printToPdf*`, `editCommands*`, menu bar, context menu) and `LinuxMenusTest` pass
+  on X11 (Xvfb) and on Wayland (a headless KWin). Not verified: how the Windows menu looks, `print()`, and a context menu chosen with the mouse
+  (the tests open the menu and close it from code).
+- **Fixed-size windows: `WindowOptions.withResizable(false)`.** The window keeps the size it was created with: no sizing border, no
+  maximize box, `maximized` and `minWidth`/`minHeight` are ignored, `WebWindow.maximize()` does nothing, and Size/Maximize from the system
+  menu (Alt+Space) are refused. Minimize and full screen still work. A frameless window gets no resize handles, the title bar kit leaves out
+  the maximize button, and `<html>` gets `data-jolt-not-resizable` so a page can hide a maximize button of its own. `WindowOptions` gained
+  the component `resizable` (last, default `true`), so code that calls its canonical constructor directly must pass it; the `with...`
+  methods are unaffected. Windows: tested on real windows (style bits, system commands). Linux (`gtk_window_set_resizable`) is tested on X11 and Wayland (headless KWin);
+  not verified: how a fixed-size window looks on Windows 10.
+- **Strict file drops.** Put `data-jolt-drop-strict` on `<html>` and a file drag over anything outside a `data-jolt-drop` element gets
+  `dropEffect = 'none'` (the system's not-allowed cursor), and a drop there is not delivered to `onFileDrop`. Without the attribute the
+  whole page accepts drops, as before. Windows (WebView2): done in the page script. Linux: only the delivery is refused; the cursor still
+  shows "copy" outside zones because the host window reports the drag natively. Not yet verified: that WebKitGTK/WebView2 render
+  `dropEffect = 'none'` as the not-allowed cursor.
 
 ## 0.4.1 - 2026-11-08
 

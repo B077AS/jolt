@@ -67,6 +67,20 @@ public final class BridgeScript {
                         if (!w) throw new Error("onBroadcast is not enabled: call enableOpenWindow() on the Java window");
                         return w.onBroadcast(callback);
                       },
+                      call: (method, params, options) => {
+                        const r = window.__joltRpc;
+                        if (r) return r.call(method, params, options);
+                        const e = new Error("jolt.call is not enabled: attach an Rpc to the Java window (Rpc.create().attach(window))");
+                        e.name = 'JoltRpcError';
+                        e.code = 'not_enabled';
+                        e.data = null;
+                        return Promise.reject(e);
+                      },
+                      onEvent: (name, callback) => {
+                        const r = window.__joltRpc;
+                        if (!r) throw new Error("jolt.onEvent is not enabled: attach an Rpc to the Java window (Rpc.create().attach(window))");
+                        return r.onEvent(name, callback);
+                      },
                       channel: (name, options) => {
                         const open = window.__joltChannelFactory;
                         if (!open) throw new Error("no binary channel: call openChannel(name) on the Java side before the page loads");

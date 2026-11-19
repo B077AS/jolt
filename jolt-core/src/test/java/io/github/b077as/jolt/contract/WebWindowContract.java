@@ -11,6 +11,8 @@ import io.github.b077as.jolt.Notification;
 import io.github.b077as.jolt.OpenWindowRequest;
 import io.github.b077as.jolt.RequestHandler;
 import io.github.b077as.jolt.ResourceOptions;
+import io.github.b077as.jolt.Rpc;
+import io.github.b077as.jolt.RpcException;
 import io.github.b077as.jolt.Permission;
 import io.github.b077as.jolt.SecurityPolicy;
 import io.github.b077as.jolt.WebWindow;
@@ -28,6 +30,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -109,6 +112,171 @@ public abstract class WebWindowContract {
             window.loadHtml("<script>window.jolt.postMessage('hello from page')</script>");
         });
         assertEquals("hello from page", received.getNow(null));
+    }
+
+    public record Sum(int a, int b) {}
+
+    /** The page's report of everything it saw, as a map. */
+    private static Map<?, ?> report(String json) {
+        return (Map<?, ?>) io.github.b077as.jolt.internal.BasicJson.parse(json);
+    }
+
+    @Test
+    public void rpcCallsReachJavaHandlersAndTheirResultsErrorsProgressAndEventsComeBack() {
+        List<String> javaSaw = new java.util.concurrent.CopyOnWriteArrayList<>();
+        runApp(30, app -> {
+            WebWindow window = app.createWindow(WindowOptions.defaults().withSize(400, 300));
+            Rpc rpc = Rpc.create();
+            rpc.on("add", Sum.class, sum -> sum.a() + sum.b())
+                    .on("fail", call -> {
+                        throw new RpcException("not_found", "No such note", Map.of("id", 7));
+                    })
+                    .on("work", call -> {
+                        for (int i = 1; i <= 3; i++) {
+                            call.progress(i);
+                        }
+                        return "done";
+                    })
+                    .on("emit", call -> {
+                        rpc.emit("tick", Map.of("n", 1));
+                        return true;
+                    })
+                    .on("echo", call -> call.params(Object.class))
+                    .attach(window);
+            window.onMessage(message -> {
+                javaSaw.add(message);
+                window.close();
+            });
+            window.loadHtml("""
+                    <script>
+                    (async () => {
+                      const out = {};
+                      const pageSaw = [];
+                      jolt.onMessage((m) => pageSaw.push(m));
+                      jolt.onEvent('tick', (d) => { out.event = d; });
+                      out.sum = await jolt.call('add', { a: 2, b: 3 });
+                      try { await jolt.call('fail'); } catch (e) { out.error = { name: e.name, code: e.code, message: e.message, data: e.data }; }
+                      try { await jolt.call('missing'); } catch (e) { out.missing = e.code; }
+                      const progress = [];
+                      out.work = await jolt.call('work', {}, { onProgress: (p) => progress.push(p) });
+                      out.progress = progress;
+                      out.emitted = await jolt.call('emit');
+                      const awkward = { s: 'quote" backslash\\\\ <\\/script> \\u2028 \\u00e9 \\ud83d\\ude00', n: [1.5, -2, null, true] };
+                      out.echoOk = JSON.stringify(await jolt.call('echo', awkward)) === JSON.stringify(awkward);
+                      const many = await Promise.all(Array.from({ length: 50 }, (_, i) => jolt.call('add', { a: i, b: 1 })));
+                      out.manyOk = many.every((v, i) => v === i + 1);
+                      out.pageSaw = pageSaw;
+                      jolt.postMessage(JSON.stringify(out));
+                    })().catch((e) => jolt.postMessage('failed: ' + e));
+                    </script>
+                    """);
+        });
+        assertEquals(1, javaSaw.size(), "Java's onMessage must see only the page's own message: " + javaSaw);
+        Map<?, ?> out = report(javaSaw.get(0));
+        assertEquals(new java.math.BigDecimal(5), out.get("sum"));
+        Map<?, ?> error = (Map<?, ?>) out.get("error");
+        assertEquals("JoltRpcError", error.get("name"));
+        assertEquals("not_found", error.get("code"));
+        assertEquals("No such note", error.get("message"));
+        assertEquals(Map.of("id", new java.math.BigDecimal(7)), error.get("data"));
+        assertEquals(RpcException.UNKNOWN_METHOD, out.get("missing"));
+        assertEquals("done", out.get("work"));
+        assertEquals(List.of(new java.math.BigDecimal(1), new java.math.BigDecimal(2), new java.math.BigDecimal(3)), out.get("progress"));
+        assertEquals(true, out.get("emitted"));
+        assertEquals(Map.of("n", new java.math.BigDecimal(1)), out.get("event"));
+        assertEquals(true, out.get("echoOk"));
+        assertEquals(true, out.get("manyOk"));
+        assertEquals(List.of(), out.get("pageSaw"), "the page's jolt.onMessage must not see RPC traffic");
+    }
+
+    @Test
+    public void anAbortedOrTimedOutRpcCallInterruptsItsHandler() throws Exception {
+        java.util.concurrent.CountDownLatch interrupted = new java.util.concurrent.CountDownLatch(2);
+        CompletableFuture<String> got = new CompletableFuture<>();
+        runApp(30, app -> {
+            WebWindow window = app.createWindow(WindowOptions.defaults().withSize(400, 300));
+            Rpc.create().on("slow", call -> {
+                try {
+                    Thread.sleep(25_000);
+                } catch (InterruptedException e) {
+                    interrupted.countDown();
+                }
+                return "too late";
+            }).attach(window);
+            window.onMessage(message -> {
+                got.complete(message);
+                window.close();
+            });
+            window.loadHtml("""
+                    <script>
+                    (async () => {
+                      const out = {};
+                      const controller = new AbortController();
+                      const aborted = jolt.call('slow', {}, { signal: controller.signal });
+                      setTimeout(() => controller.abort(), 200);
+                      try { await aborted; } catch (e) { out.aborted = e.name; }
+                      try { await jolt.call('slow', {}, { timeout: 200 }); } catch (e) { out.timeout = e.code; }
+                      jolt.postMessage(JSON.stringify(out));
+                    })();
+                    </script>
+                    """);
+        });
+        Map<?, ?> out = report(got.getNow("{}"));
+        assertEquals("AbortError", out.get("aborted"));
+        assertEquals("timeout", out.get("timeout"));
+        assertTrue(interrupted.await(5, TimeUnit.SECONDS), "both handlers were interrupted");
+    }
+
+    @Test
+    public void rpcCallsLeftRunningByAPageThatNavigatedAwayAreCancelled() {
+        CompletableFuture<Boolean> interrupted = new CompletableFuture<>();
+        AtomicBoolean closing = new AtomicBoolean();
+        AtomicBoolean interruptedBeforeClose = new AtomicBoolean();
+        byte[] page = """
+                <script>
+                if (location.search !== '?second') {
+                  jolt.call('slow');
+                  setTimeout(() => location.replace(location.pathname + '?second'), 300);
+                } else {
+                  jolt.call('ping').then((v) => jolt.postMessage('second:' + v));
+                }
+                </script>
+                """.getBytes(StandardCharsets.UTF_8);
+        runApp(30, app -> {
+            WebWindow window = app.createWindow(WindowOptions.defaults().withSize(400, 300));
+            Rpc.create().on("slow", call -> {
+                try {
+                    Thread.sleep(25_000);
+                } catch (InterruptedException e) {
+                    interruptedBeforeClose.set(!closing.get());
+                    interrupted.complete(true);
+                }
+                return null;
+            }).on("ping", call -> "pong").attach(window);
+            window.onMessage(message -> {
+                assertEquals("second:pong", message);
+                interrupted.whenComplete((v, t) -> app.dispatch(() -> {
+                    closing.set(true);
+                    window.close();
+                }));
+            });
+            window.loadResources(path -> path.endsWith("index.html") ? page : null);
+        });
+        assertTrue(interruptedBeforeClose.get(), "the old page's call was cancelled when the new page spoke, not when the window closed");
+    }
+
+    @Test
+    public void jolt_callWithoutAnAttachedRpcRejectsAtOnce() {
+        CompletableFuture<String> got = new CompletableFuture<>();
+        runApp(30, app -> {
+            WebWindow window = app.createWindow(WindowOptions.defaults().withSize(300, 200));
+            window.onMessage(message -> {
+                got.complete(message);
+                window.close();
+            });
+            window.loadHtml("<script>jolt.call('x').catch((e) => jolt.postMessage(e.name + '|' + e.code))</script>");
+        });
+        assertEquals("JoltRpcError|not_enabled", got.getNow(null));
     }
 
     /**
@@ -669,6 +837,51 @@ public abstract class WebWindowContract {
         assertEquals(maximizeIsHonoured() ? List.of("hidden true", "shown true") : List.of("hidden true", "shown ok"), steps);
     }
 
+    /** A window the user cannot resize is not maximized at creation either, and asking for it later does nothing. */
+    @Test
+    public void aWindowThatIsNotResizableCannotBeMaximized() {
+        List<String> steps = new ArrayList<>();
+        runApp(30, app -> {
+            WebWindow window = app.createWindow(WindowOptions.defaults().withSize(400, 300).withResizable(false).withMaximized(true));
+            steps.add("created " + window.isMaximized());
+            window.maximize();
+            // the eval is queued behind the maximize request, so by the time it answers the request has been handled
+            window.eval("1 + 1").whenComplete((r, e) -> {
+                steps.add("after maximize " + window.isMaximized());
+                window.close();
+            });
+        });
+        assertEquals(List.of("created false", "after maximize false"), steps);
+    }
+
+    /** A frameless non-resizable window: no resize handles, no maximize button in the kit, and the page can tell. */
+    @Test
+    public void aFramelessWindowThatIsNotResizableHasNoResizeHandlesAndNoMaximizeButton() {
+        CompletableFuture<String> result = new CompletableFuture<>();
+        runApp(40, app -> {
+            WebWindow window = app.createWindow(WindowOptions.defaults().withSize(500, 300).withFrameless(true).withResizable(false));
+            window.onMessage(message -> {
+                if (message.equals("hello")) {
+                    // off the UI thread: evalNow waits for an answer that the UI thread has to give
+                    CompletableFuture.runAsync(() -> result.complete(evalNow(window, """
+                            (() => {
+                              const bar = document.querySelector('[data-jolt-titlebar]');
+                              const names = [...bar.querySelector('[data-jolt-caption]').shadowRoot.querySelectorAll('button')]
+                                .map((b) => b.className).join(',');
+                              return [names, document.querySelectorAll('[data-jolt-handle]').length,
+                                      document.documentElement.hasAttribute('data-jolt-not-resizable')].join('|');
+                            })()
+                            """))).thenRun(window::close);
+                }
+            });
+            window.loadHtml("""
+                    <header data-jolt-titlebar style="display:flex;height:32px"><span>Title</span></header>
+                    <script>addEventListener('load', () => jolt.postMessage('hello'))</script>
+                    """);
+        });
+        assertEquals("minimize,close|0|true", result.getNow("not answered"));
+    }
+
     /**
      * What the page does while files are dragged over it. A real drop from the file manager cannot be made from inside the page, so
      * this uses synthetic drag events; those must make the page accept the drag and mark the drop area, but never reach Java (only a
@@ -725,6 +938,50 @@ public abstract class WebWindowContract {
                 steps);
         assertTrue(drops.isEmpty(), "a synthetic drop must not reach onFileDrop: " + drops);
         assertTrue(strays.isEmpty(), "nothing but the page's own message may reach onMessage: " + strays);
+    }
+
+    /**
+     * Strict mode (`data-jolt-drop-strict` on <html>): a file drag over anything outside a drop zone gets dropEffect 'none' (the
+     * not-allowed cursor); inside a zone it stays 'copy'. Without the attribute the whole page accepts. Synthetic drag events: the
+     * page script decides the effect, whatever the platform does with it.
+     */
+    @Test
+    public void strictFileDropsRefuseDragsOutsideZonesOnlyWhenTheAttributeIsSet() throws Exception {
+        CompletableFuture<String> result = new CompletableFuture<>();
+        String probe = """
+                (() => {
+                  const effect = (target) => {
+                    const files = new DataTransfer(); files.items.add(new File(['x'], 'a.txt'));
+                    let assigned = 'untouched'; // a constructed DataTransfer keeps dropEffect read-only in some engines: record what the page script sets
+                    Object.defineProperty(files, 'dropEffect', { get: () => assigned, set: (v) => { assigned = v; } });
+                    const over = new DragEvent('dragover', { dataTransfer: files, bubbles: true, cancelable: true });
+                    target.dispatchEvent(over);
+                    return assigned;
+                  };
+                  const zone = document.getElementById('zone'), outside = document.getElementById('outside');
+                  const out = [];
+                  out.push('loose:' + effect(zone) + '/' + effect(outside));
+                  document.documentElement.setAttribute('data-jolt-drop-strict', '');
+                  out.push('strict:' + effect(zone) + '/' + effect(outside));
+                  document.documentElement.removeAttribute('data-jolt-drop-strict');
+                  out.push('loose again:' + effect(outside));
+                  return out.join(',');
+                })()
+                """;
+        runApp(40, app -> {
+            WebWindow window = app.createWindow(WindowOptions.defaults().withSize(400, 300));
+            window.onFileDrop(drop -> {});
+            window.onMessage(message -> CompletableFuture.runAsync(() -> {
+                try {
+                    result.complete(evalNow(window, probe));
+                } finally {
+                    window.close();
+                }
+            }));
+            window.loadHtml("<div id='zone' data-jolt-drop='docs' style='width:200px;height:100px'></div><div id='outside' style='height:100px'></div>"
+                    + "<script>addEventListener('load', () => jolt.postMessage('hello'))</script>");
+        });
+        assertEquals("loose:copy/copy,strict:copy/none,loose again:copy", result.getNow(null));
     }
 
     /**
@@ -2047,5 +2304,172 @@ public abstract class WebWindowContract {
             gone.close();
         });
         assertEquals("alive", report.getNow(null));
+    }
+
+    // ---- printing to PDF and editing commands ----
+
+    /** The width and height in points of the first page's /MediaBox, or null. */
+    private static double[] mediaBox(byte[] pdf) {
+        java.util.regex.Matcher box = java.util.regex.Pattern
+                .compile("/MediaBox\\s*\\[\\s*([-\\d.]+)\\s+([-\\d.]+)\\s+([-\\d.]+)\\s+([-\\d.]+)\\s*\\]")
+                .matcher(new String(pdf, StandardCharsets.ISO_8859_1));
+        return box.find() ? new double[] {Double.parseDouble(box.group(3)) - Double.parseDouble(box.group(1)),
+                Double.parseDouble(box.group(4)) - Double.parseDouble(box.group(2))} : null;
+    }
+
+    private static void assertPaper(byte[] pdf, double widthMm, double heightMm, String what) {
+        assertTrue(pdf.length > 1000 && new String(pdf, 0, 5, StandardCharsets.ISO_8859_1).equals("%PDF-"), what + ": not a PDF");
+        double[] box = mediaBox(pdf);
+        assertTrue(box != null, what + ": no page size found");
+        double points = 72 / 25.4;
+        assertEquals(widthMm * points, box[0], 3.0, what + " width");
+        assertEquals(heightMm * points, box[1], 3.0, what + " height");
+    }
+
+    @Test
+    public void printToPdfRendersTheShownPageOnTheRequestedPaperPortraitAndLandscape() {
+        List<String> steps = new java.util.concurrent.CopyOnWriteArrayList<>();
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        runApp(60, app -> {
+            WebWindow window = app.createWindow(WindowOptions.defaults().withSize(600, 400));
+            window.onMessage(message -> CompletableFuture.runAsync(() -> {
+                try {
+                    io.github.b077as.jolt.PrintOptions a4 = io.github.b077as.jolt.PrintOptions.defaults(java.util.Locale.GERMANY);
+                    assertPaper(window.printToPdf(a4).get(30, TimeUnit.SECONDS), 210, 297, "A4");
+                    steps.add("a4");
+                    assertPaper(window.printToPdf(a4.withLandscape(true)).get(30, TimeUnit.SECONDS), 297, 210, "A4 landscape");
+                    steps.add("landscape");
+                    assertPaper(window.printToPdf(io.github.b077as.jolt.PrintOptions.defaults(java.util.Locale.US)).get(30, TimeUnit.SECONDS),
+                            215.9, 279.4, "Letter");
+                    steps.add("letter");
+                    assertPaper(window.printToPdf().get(30, TimeUnit.SECONDS), io.github.b077as.jolt.Paper.forLocale(java.util.Locale.getDefault()).widthMm(),
+                            io.github.b077as.jolt.Paper.forLocale(java.util.Locale.getDefault()).heightMm(), "default options");
+                    steps.add("default");
+                } catch (Throwable t) {
+                    failure.set(t);
+                } finally {
+                    window.close();
+                }
+            }));
+            window.loadHtml("<body style='font:20px sans-serif'><h1>Hello PDF</h1><p>Some text to print.</p>"
+                    + "<script>addEventListener('load', () => jolt.postMessage('go'))</script></body>");
+        });
+        assertEquals(null, failure.get() == null ? null : failure.get().toString());
+        assertEquals(List.of("a4", "landscape", "letter", "default"), steps);
+    }
+
+    @Test
+    public void printToPdfSplitsALongPageIntoPagesAndAScaleChangesHowMany() {
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        List<Integer> pages = new java.util.concurrent.CopyOnWriteArrayList<>();
+        runApp(60, app -> {
+            WebWindow window = app.createWindow(WindowOptions.defaults().withSize(600, 400));
+            window.onMessage(message -> CompletableFuture.runAsync(() -> {
+                try {
+                    io.github.b077as.jolt.PrintOptions a4 = io.github.b077as.jolt.PrintOptions.defaults(java.util.Locale.GERMANY);
+                    for (io.github.b077as.jolt.PrintOptions options : List.of(a4, a4.withScale(0.25))) {
+                        byte[] pdf = window.printToPdf(options).get(30, TimeUnit.SECONDS);
+                        java.util.regex.Matcher page = java.util.regex.Pattern.compile("/Type\\s*/Page(?![\\w])")
+                                .matcher(new String(pdf, StandardCharsets.ISO_8859_1));
+                        int count = 0;
+                        while (page.find()) {
+                            count++;
+                        }
+                        pages.add(count);
+                    }
+                } catch (Throwable t) {
+                    failure.set(t);
+                } finally {
+                    window.close();
+                }
+            }));
+            window.loadHtml("<body style='margin:0'><div style='height:6000px;background:linear-gradient(red,blue)'>tall</div>"
+                    + "<script>addEventListener('load', () => jolt.postMessage('go'))</script></body>");
+        });
+        assertEquals(null, failure.get() == null ? null : failure.get().toString());
+        assertEquals(2, pages.size());
+        assertTrue(pages.get(0) >= 3, "6000 px tall needs several A4 pages: " + pages);
+        assertTrue(pages.get(1) < pages.get(0), "a quarter scale needs fewer pages: " + pages);
+    }
+
+    @Test
+    public void printToPdfOfAClosedWindowFailsWithWindowClosed() {
+        AtomicReference<Throwable> error = new AtomicReference<>();
+        runApp(30, app -> {
+            WebWindow keeper = app.createWindow(WindowOptions.defaults().withSize(200, 200).withVisible(false)); // keeps the loop alive
+            WebWindow gone = app.createWindow(WindowOptions.defaults().withSize(200, 200).withVisible(false));
+            gone.onClosed(() -> gone.printToPdf().whenComplete((pdf, t) -> {
+                error.set(t);
+                keeper.close();
+            }));
+            gone.close();
+        });
+        assertTrue(error.get() instanceof WindowClosedException
+                || error.get() instanceof java.util.concurrent.CompletionException && error.get().getCause() instanceof WindowClosedException,
+                String.valueOf(error.get()));
+    }
+
+    @Test
+    public void editCommandsActOnTheFocusedFieldLikeItsContextMenu() {
+        List<String> steps = new java.util.concurrent.CopyOnWriteArrayList<>();
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        runApp(60, app -> {
+            WebWindow window = app.createWindow(WindowOptions.defaults().withSize(500, 300));
+            window.onMessage(message -> CompletableFuture.runAsync(() -> {
+                String original = null;
+                try {
+                    original = app.clipboard().readText().get(5, TimeUnit.SECONDS).orElse(null);
+                    String value = "document.getElementById('%s').value";
+                    evalNow(window, "document.getElementById('a').focus(); 1");
+                    window.edit(io.github.b077as.jolt.EditCommand.SELECT_ALL);
+                    assertTrue(eventually(() -> evalNow(window, "document.getElementById('a').selectionEnd").equals("11"), 5000).get(),
+                            "select all selects the field's text");
+                    steps.add("selected");
+                    app.clipboard().writeText("sentinel").get(5, TimeUnit.SECONDS);
+                    window.edit(io.github.b077as.jolt.EditCommand.COPY);
+                    assertTrue(eventually(() -> readClipboard(app).equals("hello world"), 5000).get(), "copy puts the selection on the clipboard");
+                    steps.add("copied");
+                    evalNow(window, "document.getElementById('b').focus(); 1");
+                    window.edit(io.github.b077as.jolt.EditCommand.PASTE);
+                    assertTrue(eventually(() -> evalNow(window, value.formatted("b")).equals("hello world"), 5000).get(), "paste inserts the clipboard");
+                    steps.add("pasted");
+                    evalNow(window, "document.getElementById('a').focus(); 1");
+                    window.edit(io.github.b077as.jolt.EditCommand.SELECT_ALL);
+                    assertTrue(eventually(() -> evalNow(window, "document.getElementById('a').selectionEnd").equals("11"), 5000).get());
+                    window.edit(io.github.b077as.jolt.EditCommand.CUT);
+                    assertTrue(eventually(() -> evalNow(window, value.formatted("a")).isEmpty(), 5000).get(), "cut removes the selection");
+                    steps.add("cut");
+                    window.edit(io.github.b077as.jolt.EditCommand.UNDO);
+                    assertTrue(eventually(() -> evalNow(window, value.formatted("a")).equals("hello world"), 5000).get(), "undo brings it back");
+                    steps.add("undone");
+                    window.edit(io.github.b077as.jolt.EditCommand.REDO);
+                    assertTrue(eventually(() -> evalNow(window, value.formatted("a")).isEmpty(), 5000).get(), "redo cuts it again");
+                    steps.add("redone");
+                } catch (Throwable t) {
+                    failure.set(t);
+                } finally {
+                    try {
+                        if (original != null) {
+                            app.clipboard().writeText(original).get(5, TimeUnit.SECONDS);
+                        }
+                    } catch (Exception ignored) {
+                        // the user's clipboard text could not be put back
+                    }
+                    window.close();
+                }
+            }));
+            window.loadHtml("<input id=a value='hello world'><input id=b>"
+                    + "<script>addEventListener('load', () => jolt.postMessage('go'))</script>");
+        });
+        assertEquals(null, failure.get() == null ? null : failure.get().toString());
+        assertEquals(List.of("selected", "copied", "pasted", "cut", "undone", "redone"), steps);
+    }
+
+    private static String readClipboard(Application app) {
+        try {
+            return app.clipboard().readText().get(5, TimeUnit.SECONDS).orElse("");
+        } catch (Exception e) {
+            return "";
+        }
     }
 }

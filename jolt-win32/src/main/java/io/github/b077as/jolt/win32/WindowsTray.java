@@ -286,7 +286,7 @@ final class WindowsTray implements Tray {
      * two exports of uxtheme.dll (ordinals 135 and 136, in every release since 1809) do it. Best effort: if they are missing the
      * menus stay light.
      */
-    private static void makeMenusThemeAware() {
+    static void makeMenusThemeAware() {
         if (menusMadeThemeAware) {
             return;
         }

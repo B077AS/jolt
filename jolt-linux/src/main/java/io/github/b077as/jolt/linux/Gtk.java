@@ -74,7 +74,8 @@ final class Gtk {
     private static final MethodHandle GTK_WINDOW_UNFULLSCREEN = h(GTK, "gtk_window_unfullscreen", FunctionDescriptor.ofVoid(ADDRESS));
     private static final MethodHandle GTK_WINDOW_SET_DECORATED = h(GTK, "gtk_window_set_decorated", FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT));
     private static final MethodHandle GTK_WINDOW_CLOSE = h(GTK, "gtk_window_close", FunctionDescriptor.ofVoid(ADDRESS));
-    private static final MethodHandle GTK_WINDOW_GET_DECORATED = h(GTK, "gtk_window_get_decorated", FunctionDescriptor.of(JAVA_INT, ADDRESS));
+    private static final MethodHandle GTK_WINDOW_SET_RESIZABLE = h(GTK, "gtk_window_set_resizable", FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT));
+    private static final MethodHandle GTK_WINDOW_GET_DECORATED =h(GTK, "gtk_window_get_decorated", FunctionDescriptor.of(JAVA_INT, ADDRESS));
     private static final MethodHandle GTK_WINDOW_ICONIFY = h(GTK, "gtk_window_iconify", FunctionDescriptor.ofVoid(ADDRESS));
     private static final MethodHandle GTK_WINDOW_DEICONIFY = h(GTK, "gtk_window_deiconify", FunctionDescriptor.ofVoid(ADDRESS));
     private static final MethodHandle GTK_WINDOW_BEGIN_MOVE_DRAG = h(GTK, "gtk_window_begin_move_drag",
@@ -323,6 +324,11 @@ final class Gtk {
             geometry.set(JAVA_INT, 4, minHeight);
             call(GTK_WINDOW_SET_GEOMETRY_HINTS, window, MemorySegment.NULL, geometry, gdkHintMinSize);
         }
+    }
+
+    /** Whether the user (and the window manager's maximize and resize controls) may change the window's size. */
+    static void windowSetResizable(MemorySegment window, boolean resizable) {
+        call(GTK_WINDOW_SET_RESIZABLE, window, resizable ? 1 : 0);
     }
 
     static void windowResize(MemorySegment window, int width, int height) {

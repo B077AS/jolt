@@ -73,7 +73,7 @@ Add the API and both backends; each one only activates on its own OS.
 ```xml
 <properties>
   <maven.compiler.release>25</maven.compiler.release>
-  <jolt.version>0.4.1</jolt.version>
+  <jolt.version>0.4.2</jolt.version>
 </properties>
 
 <dependencies>
@@ -98,9 +98,9 @@ Add the API and both backends; each one only activates on its own OS.
 Gradle:
 
 ```kotlin
-implementation("io.github.b077as:jolt-core:0.4.1")
-implementation("io.github.b077as:jolt-win32:0.4.1")
-implementation("io.github.b077as:jolt-linux:0.4.1")
+implementation("io.github.b077as:jolt-core:0.4.2")
+implementation("io.github.b077as:jolt-win32:0.4.2")
+implementation("io.github.b077as:jolt-linux:0.4.2")
 ```
 
 Run Java with `--enable-native-access=ALL-UNNAMED`, or put `Enable-Native-Access: ALL-UNNAMED` in your jar manifest
@@ -140,21 +140,69 @@ try {
 
 ### Calling Java functions from the page
 
-Messages are plain strings. For real apps, add a tiny request/response layer on top: the page sends
-`{"id": 1, "method": "notes.add", "params": {...}}` and Java answers `{"id": 1, "result": ...}` or `{"id": 1, "error": "..."}`.
-A small `Rpc` helper of your own (about 40 lines on the Java side and as many on the page) is all it takes:
+Messages are plain strings. For request/response, attach an `Rpc` to the window: the page calls Java methods with
+`jolt.call` and gets their results as promises, and Java pushes events that the page receives with `jolt.onEvent`.
 
 ```java
-new Rpc(window)
-    .on("notes.list", params -> store.list())
-    .on("notes.add",  params -> store.add(params.get("text").getAsString()));
+record NewNote(String text, List<String> tags) {}
+
+Rpc rpc = Rpc.create()
+        .on("notes.list", call -> store.list())                              // no parameters
+        .on("notes.add", NewNote.class, note -> store.add(note.text(), note.tags()))
+        .on("export", ExportRequest.class, (request, call) -> {              // long work
+            for (Page page : request.pages()) {
+                call.checkCancelled();                                       // the page gave up?
+                write(page);
+                call.progress(page.number());                                // reaches onProgress
+            }
+            return "done";
+        });
+rpc.attach(window);                                                          // before the page loads
+rpc.emit("notes.changed", store.count());                                    // to every attached window, any thread
 ```
 
 ```js
-const note = await call('notes.add', { text: 'Buy milk' });
+const notes = await jolt.call('notes.list');
+await jolt.call('notes.add', { text: 'Buy milk', tags: ['home'] });
+const result = await jolt.call('export', { pages }, {
+  timeout: 60_000, signal: controller.signal, onProgress: (n) => (bar.value = n),
+});
+const stop = jolt.onEvent('notes.changed', (count) => (badge.textContent = count));   // stop() unsubscribes
 ```
 
-Copy that pattern into your project. It works with any JSON library.
+- **Threads:** handlers run on a virtual thread per call, never on the UI thread, so they may block. `RpcOptions.withExecutor` picks another executor.
+- **JSON:** the built-in `JsonCodec.basic()` needs no library and reads/writes records, enums, collections, maps, arrays,
+  `Optional`, `UUID` and `java.time` values. To use your own library, pass a codec:
+  `RpcOptions.defaults().withCodec(JsonCodec.of(gson::toJson, gson::fromJson))`, or for Jackson
+  `JsonCodec.of(mapper::writeValueAsString, (json, type) -> mapper.readValue(json, mapper.constructType(type)))`.
+- **Errors:** throw `new RpcException("not_found", "No note 7", data)` and the promise rejects with a `JoltRpcError` that has
+  `code`, `message` and `data`. Any other exception reaches the page only as `code: "internal"` with a generic message, so
+  paths and SQL do not leak; it is logged and passed to `rpc.onError(...)`. `RpcOptions.withExposeErrorMessages(true)` shows
+  the real message while you develop. Jolt's own codes: `unknown_method`, `bad_params`, `too_many_calls`, `too_large`,
+  `unavailable`, and in the page `timeout` and `not_enabled`.
+- **Cancellation:** an aborted `signal`, a passed `timeout`, a reload or navigation, closing the window or `rpc.detach(window)`
+  cancels the call. Java interrupts the handler's thread and drops its answer.
+- **Limits and security:** only pages whose origin the `SecurityPolicy` trusts can call, and only from the top-level
+  document. A window can have 64 calls running at once and send requests of up to 8 million characters (`RpcOptions`).
+  Treat parameters as untrusted input. For bulk or binary data, use a channel.
+- One `Rpc` can serve several windows (`RpcCall.window()` says which one called). RPC traffic never reaches
+  `window.onMessage` or `jolt.onMessage`, so they stay free for your own messages.
+
+For TypeScript:
+
+```ts
+declare global {
+  interface Window {
+    jolt: {
+      call<T = unknown>(method: string, params?: unknown,
+                        options?: { signal?: AbortSignal; timeout?: number; onProgress?: (data: unknown) => void }): Promise<T>;
+      onEvent<T = unknown>(name: string, callback: (data: T) => void): () => void;
+      postMessage(message: string): void;
+      onMessage(callback: (message: string) => void): () => void;
+    };
+  }
+}
+```
 
 ### Binary data: channels
 
@@ -329,8 +377,7 @@ Your page is normal HTML, CSS and JavaScript. The web view is Chromium (Windows)
   Separate HTML, CSS and JS files work, relative URLs and ES modules too, and the origin is stable so `localStorage` survives
   restarts. A single self-contained HTML file (Vite with `vite-plugin-singlefile`) can use `loadHtml` instead.
 
-A small typed wrapper around `jolt.postMessage` (for example a `call<T>(method, params)` function with one function per Java
-handler) keeps the rest of the frontend free of the bridge. [Parsel](https://github.com/B077AS/parsel) is built this way, with a
+A small typed module around `jolt.call` (one function per Java handler) keeps the rest of the frontend free of the bridge. [Parsel](https://github.com/B077AS/parsel) is built this way, with a
 Vue page on top of Vite. Other frameworks go through the same Vite setup.
 
 ## Serving files and answering requests from Java
@@ -395,6 +442,7 @@ The OS draws the icon and title bar, so you set them from Java, at creation or l
 WindowOptions options = WindowOptions.defaults()
         .withSize(1200, 780)
         .withMinSize(600, 400)                   // smallest size the user can drag to
+        .withResizable(false)                    // fixed size: no sizing border, no maximize (ignores min size and maximized)
         .withIcon(iconBytes)                     // multi-size .ico (best) or PNG
         .withTitleBarScheme(ColorScheme.DARK)
         .withBackgroundColor(0x0F1117)           // behind the page until it paints: no white flash
@@ -602,6 +650,165 @@ the entries change; `JumpList.empty()` removes them. `supportsJumpList()` says w
   on the launcher icon when the running window is matched to that file. Categories and icons are not used, and a `.desktop` file of your own
   at that place is never changed.
 
+## Menu bar, context menu, global hotkeys and PDF
+
+Added in 0.4.2. A `Menu` is built in Java, like a tray menu, and a `Shortcut` is a key combination written the usual way
+(`Shortcut.parse("Ctrl+Shift+N")`: modifiers `Ctrl`, `Shift`, `Alt`, `Meta`; keys `A`-`Z`, `0`-`9`, `F1`-`F24`, `Enter`, `Space`, `Tab`, `Escape`,
+the arrows, `Home`/`End`/`PageUp`/`PageDown`, `Insert`/`Delete`, and punctuation such as `,` or `Comma`).
+
+### A menu bar
+
+```java
+window.setMenuBar(Menu.of(
+        Menu.submenu("&File",                                          // & marks the letter that opens it with Alt; && is a real &
+                Menu.action("&New window", "Ctrl+N", () -> newWindow()),
+                Menu.action("&Open...", "Ctrl+O", () -> open()),
+                Menu.separator(),
+                Menu.action("E&xit", "Alt+F4", app::quit)),
+        Menu.submenu("&View",
+                Menu.check("&Dense list", dense, "Ctrl+D", on -> setDense(on)),   // the mark flips at once; on is the new state
+                Menu.action("&Reload", "F5", () -> window.eval("location.reload()")))));
+```
+
+A menu is immutable: to change a checkbox or grey out an entry, build the menu again and call `setMenuBar` again (`null` removes the bar). The
+window grows by the height of the bar, so the page area keeps its size. While the page has the keyboard focus the bar's accelerators are handled
+**before** the page sees the key, so `Ctrl+N` does not also reach the page. A **frameless** window has no place for a native bar
+(`supportsMenuBar()` is `false` for it): draw the menu in the page, or use a context menu. On Windows the bar is drawn by the system and stays light
+in a dark app, and Jolt does not hide it in full screen (not tested).
+
+### A context menu
+
+`setContextMenu` replaces the web view's right-click menu. The provider is told what is under the pointer (the web view works that out itself, so a
+page cannot lie about it) and returns a `Menu`, or `null` for none:
+
+```java
+window.setContextMenu(info -> {
+    if (info.isLink()) {
+        return Menu.of(Menu.action("Open link", () -> app.openExternal(URI.create(info.linkUrl()))),
+                       Menu.action("Copy link", () -> app.clipboard().writeText(info.linkUrl())));
+    }
+    if (info.editable()) {
+        return Menu.of(Menu.action("Cut", "Ctrl+X", () -> window.edit(EditCommand.CUT)),
+                       Menu.action("Copy", "Ctrl+C", () -> window.edit(EditCommand.COPY)),
+                       Menu.action("Paste", "Ctrl+V", () -> window.edit(EditCommand.PASTE)));
+    }
+    return null;
+});
+```
+
+`info` has the position (`x`, `y`, in logical pixels), `pageUrl`, `linkUrl`, `sourceUrl` (image, audio or video), `editable`, `hasSelection` and
+`selectedText` (empty on Linux, which only says whether something is selected). `window.edit(...)` runs the editing commands a text field's menu
+offers (cut, copy, paste, undo, redo, select all) on whatever has the focus. Pass `null` to `setContextMenu` to go back to the old behaviour: no
+menu, or the web view's own in a window created with developer tools. A page that draws its own menu in the DOM keeps working.
+
+### A global hotkey
+
+```java
+if (app.supportsGlobalHotkeys()) {
+    app.registerHotkey(Shortcut.parse("Ctrl+Alt+M"), main::focus)       // runs on the UI thread, whichever program has the focus
+       .whenComplete((hotkey, error) -> {
+           if (error != null) log.warn("Ctrl+Alt+M is taken: {}", error.getMessage());
+           // else keep `hotkey` and call hotkey.close() to give the keys back
+       });
+}
+```
+
+It fails (the future completes with a `JoltException`) when another program already holds the combination, and a combination with no Ctrl, Alt or
+Meta (apart from function keys) is refused with `IllegalArgumentException`, because it would take a letter away from every program. **Windows
+only for now**: on Linux `supportsGlobalHotkeys()` is `false` and `registerHotkey` throws `UnsupportedOperationException` (X11 would need key
+grabs; Wayland offers nothing outside the desktop portals).
+
+### Print and PDF
+
+```java
+window.printToPdf(PrintOptions.defaults().withLandscape(true).withMargins(15))      // A4 or Letter by the user's country
+      .thenAccept(pdf -> Files.write(Path.of("report.pdf"), pdf));                  // the bytes of a PDF, no dialog
+window.print();                                                                      // the web view's print dialog, as window.print()
+```
+
+The page is laid out for the paper like a print, so `@media print` and `@page` apply. `PrintOptions` has `landscape`, `scale`, the paper (`Paper`
+or any size in millimetres), margins, `backgrounds` and `headerAndFooter` (Windows only). On Linux the page size, orientation and margins are
+honoured and WebKit decides about the rest. `printToPdf` fails with `WindowClosedException` if the window closes first.
+
+## Spring Boot (`jolt-spring-boot-starter`)
+
+A Spring Boot application can be the backend of a Jolt window: its beans, Spring Data repositories, validation and configuration stay as
+they are. Add the starter next to the backends (it needs Spring Boot 4) and start the application with `JoltSpringApplication`:
+
+```xml
+<dependency>
+  <groupId>io.github.b077as</groupId>
+  <artifactId>jolt-spring-boot-starter</artifactId>
+  <version>${jolt.version}</version>
+</dependency>
+```
+
+```java
+@SpringBootApplication
+public class NotesApp {
+    public static void main(String[] args) {
+        JoltSpringApplication.run(NotesApp.class, args);
+    }
+}
+```
+
+There are two ways for the page to reach the beans. By default (`jolt.mode=auto`) the starter picks **web** when the application runs a
+servlet web server (Spring MVC), and **rpc** otherwise.
+
+**rpc mode** (no web server): the page's files come from `src/main/resources/ui` (`jolt.ui`), and bean methods marked `@JoltRpc` answer
+`jolt.call`. Nothing listens on the network. Set `spring.main.web-application-type=none` if Spring MVC is on the class path anyway.
+
+```java
+@Service
+@JoltRpc("notes")                                  // optional prefix
+class NotesService {
+    @JoltRpc List<Note> list() { ... }             // jolt.call("notes.list")
+    @JoltRpc Note add(NewNote note) { ... }        // jolt.call("notes.add", { text: "..." })
+    @JoltRpc String export(Request r, RpcCall call) { call.progress(50); ... }
+}
+```
+
+A method takes at most one parameter for what the page sends (decoded into its type, generics included), plus optionally the `RpcCall`
+and the calling `WebWindow`. It runs on a virtual thread and may return a `CompletionStage`. Errors work as with `Rpc`: an `RpcException`
+reaches the page with its code, anything else only as `internal`. The JSON library is the application's own: its Jackson 3 `ObjectMapper`
+(Spring Boot 4's default), a Jackson 2 or Gson bean, or else `JsonCodec.basic()`. A `JsonCodec`, `RpcOptions` or `Rpc` bean of your
+own replaces the starter's. Inject `Rpc` to push events with `rpc.emit(...)`. Two methods with one name, or a name starting with `jolt.`,
+stop the application at startup.
+
+**web mode** (Spring MVC): the window shows the application's own server, so existing controllers, templates (Thymeleaf, JTE), htmx and
+static files work unchanged, and `jolt.call` works there too. The server listens on `127.0.0.1` on a free port, and only the window can
+use it:
+- The window first opens a one-time entry address. That sets an `HttpOnly`, `SameSite=Strict` session cookie in the window's own web view
+  profile and redirects to `jolt.web.start-path`.
+- Every request without that cookie gets 403: other programs on the machine, and pages in the user's browser.
+- A `Host` that is not a loopback name (DNS rebinding) is refused, and so is a state-changing request from another `Origin`.
+
+The guard is only there when the application is started by `JoltSpringApplication`, so a `@SpringBootTest` or a plain run of the same
+application in a browser is unaffected. WebFlux applications are not supported in web mode.
+
+**Start-up.** The calling thread becomes Jolt's UI thread, and Spring starts on another thread at the same time, so the window and its web
+view are created while the beans are. The window stays hidden until the page has loaded (`jolt.window.show=on-load`; with `manual` the
+page calls `jolt.call("jolt.window.show")`), and appears after `jolt.window.show-after` (10 s) at the latest. If Spring fails to start, the
+window shows the error instead of vanishing.
+
+Closing the window closes the Spring context, and closing the context (`SpringApplication.exit`) closes the window. `JoltRuntime`,
+`Application` and `WebWindow` can be injected. `JoltRuntime.whenShown()` completes once the window is on screen, which is the moment to
+tell a [jpack](#installs-that-update-themselves-jpack) launcher.
+
+Settings (`application.properties`): `jolt.app-id`, `jolt.mode`, `jolt.ui`, `jolt.window.{title,width,height,min-width,min-height,maximized,frameless,resizable,dev-tools,show,show-after}`,
+`jolt.web.start-path`, `jolt.rpc.{expose-error-messages,max-concurrent-calls,max-message-chars}`. The window settings are read before
+the beans exist, so they come from the environment; for anything else use the builder:
+
+```java
+new JoltSpringApplication(NotesApp.class)
+        .window(options -> options.withIcon(icon).withBackgroundColor(0x1E1E1E))
+        .onWindow(window -> window.setMenuBar(menu))     // on the UI thread, before the page loads
+        .run(args);
+```
+
+Tested on Windows with real windows: rpc mode, web mode (GET, POST, `jolt.call`, a request without the cookie refused), and a failed
+start shown in the window. Linux: compiled, not run.
+
 ## Security
 
 The page can call everything you register with `onMessage`, so each window has a `SecurityPolicy`. The default,
@@ -660,6 +867,27 @@ jpackage --type app-image --name MyApp `
 
 That gives about 32 MB (about 120 MB without `--add-modules` and `--jlink-options`). Add the modules your own dependencies need.
 This was run on Windows; the same command should work on Linux but has not been tried. Code signing is up to you.
+
+### Installs that update themselves: jpack
+
+[jpack](https://github.com/B077AS/jpack) is Jolt's companion for shipping: a Maven plugin builds the install folder with its own Java
+runtime, and a small native program next to the app starts it, downloads new releases (jars, the runtime, everything) and swaps them in.
+An optional launcher window (a small Jolt window, for example) shows the check and the download, then hands over to the app.
+
+The launcher can stay on screen until the app's window is up, so there is no moment with nothing to look at. The launcher calls
+`jpack.startNow("app")` and waits on `jpack.whenShown("app")`; the app tells jpack once its window is visible:
+
+```java
+window.show();
+if (Jpack.isAvailable()) {
+    try (Jpack jpack = Jpack.connect()) {
+        jpack.notifyShown();
+    }
+}
+```
+
+When an update was downloaded, the launcher has to close first (files are only swapped while no Java program runs), so a short gap
+remains there; show something like "Starting…" before it closes. See jpack's README for the whole launcher pattern.
 
 ## When something goes wrong
 

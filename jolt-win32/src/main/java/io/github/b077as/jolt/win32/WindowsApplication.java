@@ -184,6 +184,23 @@ final class WindowsApplication implements Application {
         return submit(() -> Win32.shellOpen(target));
     }
 
+    private final WindowsHotkeys hotkeys = new WindowsHotkeys(this);
+
+    @Override
+    public boolean supportsGlobalHotkeys() {
+        return true;
+    }
+
+    @Override
+    public CompletableFuture<io.github.b077as.jolt.Hotkey> registerHotkey(io.github.b077as.jolt.Shortcut shortcut, Runnable onPress) {
+        java.util.Objects.requireNonNull(shortcut, "shortcut");
+        java.util.Objects.requireNonNull(onPress, "onPress");
+        if (!shortcut.isGlobalHotkeyCandidate()) {
+            throw new IllegalArgumentException(shortcut + " cannot be a global hotkey: it needs Ctrl, Alt or Meta, or must be a function key");
+        }
+        return submit(() -> hotkeys.register(dispatchWindow, shortcut, onPress));
+    }
+
     private WindowsToasts toasts;
 
     @Override
@@ -445,6 +462,7 @@ final class WindowsApplication implements Application {
             }
             runFrees();
             queue.clear(); // tasks still queued when the loop ended are dropped
+            hotkeys.releaseAll();
             MemorySegment target = dispatchWindow;
             dispatchWindow = null;
             if (target != null) {
@@ -482,6 +500,13 @@ final class WindowsApplication implements Application {
                 if (c != null) {
                     c.onUpdate();
                 }
+                return 0;
+            }
+        }
+        if (msg == Win32.WM_HOTKEY) {
+            MemorySegment target = dispatchWindow;
+            if (target != null && target.address() == hwnd.address()) {
+                hotkeys.fire((int) wParam);
                 return 0;
             }
         }

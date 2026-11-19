@@ -108,6 +108,34 @@ public interface Application extends AutoCloseable {
         throw new UnsupportedOperationException("this platform has no clipboard support");
     }
 
+    /**
+     * Whether {@link #registerHotkey} can work here. Windows: yes. Linux: not yet (X11 would need key grabs and Wayland has no such API
+     * outside the desktop portals), so it is {@code false} there.
+     */
+    default boolean supportsGlobalHotkeys() {
+        return false;
+    }
+
+    /**
+     * Registers a system-wide keyboard shortcut, such as {@code Ctrl+Alt+M} to bring a tray application to the front. {@code onPress}
+     * runs on the UI thread whenever the user presses it, whichever application has the focus, and the key press is not passed on to
+     * that application. The future completes with a {@link Hotkey} to close, or fails with {@link JoltException} if the combination is
+     * already taken (by another program, or by an earlier hotkey of this one) or the system refused it. Safe from any thread.
+     *
+     * <pre>{@code
+     * app.registerHotkey(Shortcut.parse("Ctrl+Alt+M"), window::focus)
+     *    .exceptionally(t -> { log.warn("Ctrl+Alt+M is taken"); return null; });
+     * }</pre>
+     * A hotkey must include Ctrl, Alt or Meta, or be a function key (see {@link Shortcut#isGlobalHotkeyCandidate()}): a bare letter
+     * would be taken away from every program. Hotkeys end when the application does.
+     *
+     * @throws IllegalArgumentException      if the shortcut is not fit to be a global hotkey
+     * @throws UnsupportedOperationException if {@link #supportsGlobalHotkeys()} is false
+     */
+    default CompletableFuture<Hotkey> registerHotkey(Shortcut shortcut, Runnable onPress) {
+        throw new UnsupportedOperationException("this platform cannot register global hotkeys");
+    }
+
     /** Starting the application when the user signs in, see {@link Autostart}. */
     default Autostart autostart() {
         throw new UnsupportedOperationException("this platform cannot start applications at sign-in");

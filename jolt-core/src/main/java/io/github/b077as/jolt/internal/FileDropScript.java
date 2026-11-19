@@ -7,6 +7,11 @@ package io.github.b077as.jolt.internal;
  * {@code data-jolt-drop-active} on {@code <html>} and {@code data-jolt-drop-over} on the nearest {@code [data-jolt-drop]} element,
  * for CSS to style. When the user drops, it tells the host the drop zone, the pointer position and the file names. WebView2 gets
  * the {@code File} objects with the message, which is how it learns their paths; elsewhere the host window reports the drop itself.
+ *
+ * <p>Opt-in strict mode: with {@code data-jolt-drop-strict} on {@code <html>}, a file drag over anything outside a
+ * {@code [data-jolt-drop]} element gets {@code dropEffect = 'none'} (the system's not-allowed cursor) and a drop there is not
+ * delivered. Without the attribute the whole page accepts drops. On Linux the host window still sees the drag natively, so only
+ * the delivery is refused there, not the cursor.
  */
 public final class FileDropScript {
 
@@ -22,6 +27,8 @@ public final class FileDropScript {
                   let over = null;
                   const hasFiles = (e) => !!e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types || [], 'Files') >= 0;
                   const zoneOf = (t) => (t && t.closest) ? t.closest('[data-jolt-drop]') : null;
+                  // strict mode: <html data-jolt-drop-strict> refuses file drags (not-allowed cursor, no delivery) outside [data-jolt-drop]
+                  const strict = () => !!document.documentElement && document.documentElement.hasAttribute('data-jolt-drop-strict');
                   const mark = (el) => {
                     if (over === el) return;
                     if (over) over.removeAttribute('data-jolt-drop-over');
@@ -36,8 +43,9 @@ public final class FileDropScript {
                   const accept = (e) => {
                     if (!hasFiles(e)) return;
                     e.preventDefault();
-                    try { e.dataTransfer.dropEffect = 'copy'; } catch (x) {}
-                    mark(zoneOf(e.target));
+                    const zone = zoneOf(e.target);
+                    try { e.dataTransfer.dropEffect = (strict() && !zone) ? 'none' : 'copy'; } catch (x) {}
+                    mark(zone);
                     active(true);
                   };
                   addEventListener('dragenter', accept, true);
@@ -55,6 +63,7 @@ public final class FileDropScript {
                     mark(null);
                     active(false);
                     if (!e.isTrusted) return;
+                    if (strict() && !zone) return;
                     const files = Array.prototype.slice.call(e.dataTransfer.files || [], 0, MAX_FILES);
                     if (!files.length) return;
                     const message = PREFIX + JSON.stringify({
