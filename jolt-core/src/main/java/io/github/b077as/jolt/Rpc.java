@@ -1,6 +1,7 @@
 package io.github.b077as.jolt;
 
 import io.github.b077as.jolt.internal.PageRpc;
+import io.github.b077as.jolt.internal.RpcControllers;
 import io.github.b077as.jolt.internal.RpcProtocol;
 
 import java.lang.reflect.Type;
@@ -122,6 +123,41 @@ public final class Rpc {
         Objects.requireNonNull(type, "type");
         Objects.requireNonNull(handler, "handler");
         return on(method, call -> handler.handle(call.params(type), call));
+    }
+
+    /**
+     * Registers the {@link JoltRpc} methods of {@code controller} as handlers (named by the annotation, with the class's prefix), and
+     * its {@link JoltRpcExceptionHandler} methods as {@link #onException} handlers:
+     *
+     * <pre>{@code
+     * rpc.register(new NotesService(store));      // "notes.list", "notes.add", ... from @JoltRpc methods
+     * }</pre>
+     * <b>This is not the preferred way</b>; {@link #on(String, RpcHandler)} is. The methods are found by reflection when this is called,
+     * so a mistake (a repeated name, a method of the wrong shape) is reported at that point instead of by the compiler, and reflection
+     * needs extra configuration for native images and for trimmed module sets. It earns its place when there is a great deal to
+     * register: one class per area of the app, with its error handling beside it, instead of a long list of {@code on} calls. See
+     * {@link JoltRpc} for what a method may take and return.
+     *
+     * <p>A name that already has a handler is an error (unlike {@code on}, which replaces), and so is a controller without any
+     * annotated method. Nothing is registered if the controller is refused. {@link JoltRpcExceptionHandler} methods replace earlier
+     * handlers for the same exception type, as {@code onException} does.
+     *
+     * @throws IllegalStateException if the controller has no annotated methods, a method has the wrong shape or a reserved ({@code jolt.})
+     *                               or repeated name, or a name is already taken
+     */
+    public Rpc register(Object controller) {
+        Objects.requireNonNull(controller, "controller");
+        RpcControllers.Scan scan = RpcControllers.scan(controller);
+        for (String name : scan.methods().keySet()) {
+            checkName(name, "method");
+            if (handlers.containsKey(name)) {
+                throw new IllegalStateException("Rpc already has a handler for '" + name + "', which " + controller.getClass().getName()
+                        + " registers with @JoltRpc");
+            }
+        }
+        scan.methods().forEach(handlers::put);
+        scan.exceptionHandlers().forEach(exceptionHandlers::put);
+        return this;
     }
 
     /** Stops answering {@code method}; the page then gets {@link RpcException#UNKNOWN_METHOD}. */

@@ -1,6 +1,8 @@
 package io.github.b077as.jolt.spring;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import io.github.b077as.jolt.JoltRpc;
+import io.github.b077as.jolt.JoltRpcExceptionHandler;
 import io.github.b077as.jolt.JsonCodec;
 import io.github.b077as.jolt.Rpc;
 import io.github.b077as.jolt.RpcCall;

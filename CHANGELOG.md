@@ -9,6 +9,15 @@ The latest version is the one on [Maven Central](https://central.sonatype.com/ar
 ## Unreleased
 
 ### Added
+- **RPC: `Rpc.register(Object controller)`, with `@JoltRpc` and `@JoltRpcExceptionHandler` in core.** Registers the annotated
+  methods of an object (a class-level `@JoltRpc("notes")` is the prefix; superclasses are scanned; an annotated override is
+  registered once) and the exception handlers. Documented as the alternative to `rpc.on(...)`, not the preferred way: it is
+  reflection, so mistakes show up when `register` is called instead of at compile time, native images and `jlink`-trimmed module
+  sets need configuration, and names are strings. For apps with very many methods. A name that already has a handler, a
+  controller without annotated methods, a static method, a `jolt.` name or a method of the wrong shape is an
+  `IllegalStateException`, and nothing of the controller is registered. Tested: `RpcRegisterTest` (6).
+- The binding logic (which argument gets the parameters, the `RpcCall`, the window) and the shape checks moved to
+  `internal/RpcControllers`, used by both `Rpc.register` and the Spring starter, so they behave alike.
 - **RPC: `Rpc.onException(Class<E>, RpcExceptionHandler<E>)`.** Chooses what the page is told when a handler throws something that
   is not an `RpcException`, per exception type. Until now the page got a generic `internal` error for everything, or, with
   `RpcOptions.withExposeErrorMessages(true)`, every exception as `ClassName: message`. An app whose messages are meant for the user
@@ -28,6 +37,8 @@ The latest version is the one on [Maven Central](https://central.sonatype.com/ar
   checked at startup (one exception parameter, returns `RpcException`, no two handlers for one type).
 
 ### Changed
+- **Spring starter:** `@JoltRpc` and `@JoltRpcExceptionHandler` moved from `io.github.b077as.jolt.spring` to `io.github.b077as.jolt` (core). Unreleased, so
+  only the import changes. Beans are still found by the starter (through proxies, with composed annotations).
 - **Breaking (unreleased API, so no deprecation):** `RpcOptions` lost `exposeErrorMessages` and `withExposeErrorMessages`; it is now
   `RpcOptions(codec, maxMessageChars, maxConcurrentCalls, executor)`. Use `RpcException.exposing` as above, or in the Spring starter
   the unchanged property `jolt.rpc.expose-error-messages=true`, which now registers that catch-all handler (an app's own handler for

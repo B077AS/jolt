@@ -207,6 +207,32 @@ declare global {
 }
 ```
 
+#### Annotated controllers (not the preferred way)
+
+`rpc.on(...)` is the way to register handlers: the compiler checks it and it needs no reflection. If you have a great many
+methods, you can instead put them in classes and register the objects:
+
+```java
+@JoltRpc("notes")                                    // optional prefix
+class NotesService {
+    @JoltRpc List<Note> list() { ... }               // "notes.list"
+    @JoltRpc("add") Note add(NewNote note) { ... }   // "notes.add"
+    @JoltRpc String export(Request r, RpcCall call) { call.progress(50); ... }
+}
+class RpcErrors {
+    @JoltRpcExceptionHandler                         // like rpc.onException(SQLException.class, ...)
+    RpcException sql(SQLException e) { return new RpcException("sql", e.getMessage()); }
+}
+rpc.register(new NotesService(store)).register(new RpcErrors());
+```
+
+A method takes at most one parameter for what the page sends (generics included) plus optionally the `RpcCall` and the
+calling `WebWindow`; what it returns is sent back, and everything about errors, threads and cancellation is as above. The
+cost: the methods are found by reflection, so a repeated name or a method of the wrong shape is reported when `register` is
+called, not by the compiler; reflection needs configuration for native images and for trimmed (`jlink`) module sets; and the
+names are strings in annotations. It pays off when one class per area of the app reads better than a long list of `on`
+calls. In a Spring Boot application, beans are found automatically (see below).
+
 ### Binary data: channels
 
 For big or binary data (video frames, images, files) open a named two-way channel. No base64, no JSON (since 0.2.3).
@@ -758,7 +784,7 @@ public class NotesApp {
 There are two ways for the page to reach the beans. By default (`jolt.mode=auto`) the starter picks **web** when the application runs a
 servlet web server (Spring MVC), and **rpc** otherwise.
 
-**rpc mode** (no web server): the page's files come from `src/main/resources/ui` (`jolt.ui`), and bean methods marked `@JoltRpc` answer
+**rpc mode** (no web server): the page's files come from `src/main/resources/ui` (`jolt.ui`), and bean methods marked `@JoltRpc` (`io.github.b077as.jolt.JoltRpc`, the same annotation `Rpc.register` uses) answer
 `jolt.call`. Nothing listens on the network. Set `spring.main.web-application-type=none` if Spring MVC is on the class path anyway.
 
 ```java

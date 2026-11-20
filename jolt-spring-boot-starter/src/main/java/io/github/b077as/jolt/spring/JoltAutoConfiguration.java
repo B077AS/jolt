@@ -22,7 +22,7 @@ import org.springframework.core.Ordered;
 
 /**
  * What the starter adds to every application that has it on the class path: the {@link Rpc} that answers {@code jolt.call},
- * with the application's own JSON library, and the registration of {@link JoltRpc} and {@link JoltRpcExceptionHandler} methods. In web mode (a servlet application
+ * with the application's own JSON library, and the registration of {@link io.github.b077as.jolt.JoltRpc} and {@link io.github.b077as.jolt.JoltRpcExceptionHandler} methods. In web mode (a servlet application
  * started with {@link JoltSpringApplication}) also the {@link LoopbackGuard} in front of every request.
  *
  * <p>Each bean backs off when the application defines its own.

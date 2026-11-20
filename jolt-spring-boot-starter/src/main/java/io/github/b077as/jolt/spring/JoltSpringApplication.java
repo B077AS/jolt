@@ -45,7 +45,7 @@ import java.util.function.UnaryOperator;
  * <ul>
  *   <li><b>rpc</b> (no web server; {@code spring.main.web-application-type=none} or no Spring MVC on the class path): the page's
  *       files come from {@code jolt.ui} ({@code classpath:ui} by default, i.e. {@code src/main/resources/ui}) and call
- *       {@link JoltRpc} bean methods with {@code jolt.call}. Nothing listens on the network.</li>
+ *       {@link io.github.b077as.jolt.JoltRpc} bean methods with {@code jolt.call}. Nothing listens on the network.</li>
  *   <li><b>web</b> (a servlet web application, Spring MVC): the window shows the application's own server, with its
  *       controllers, templates and static files as they are. The server listens on {@code 127.0.0.1} on a free port (unless
  *       {@code server.address} / {@code server.port} say otherwise) and answers only the window: see {@code jolt.web.*}.
