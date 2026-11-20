@@ -66,13 +66,12 @@ The latest version is the one on [Maven Central](https://central.sonatype.com/ar
   unexpected ones (unhandled, or handled with a 5xx). A handler that throws or returns `null` is logged and the exception is treated
   as unhandled (it used to be rethrown with the handler's own failure on top). The routing rule is shared with `Rpc.onException`
   (`internal/TypeRouted`). Old `onError((r, e) -> response)` becomes `onException(Exception.class, (r, e) -> response)`.
-- **Breaking (unreleased API):** `RpcOptions` is now `(codec, maxMessageChars, maxConcurrentCalls, streamWindow, executor)`.
-- **Spring starter:** `@JoltRpc` and `@JoltRpcExceptionHandler` moved from `io.github.b077as.jolt.spring` to `io.github.b077as.jolt` (core). Unreleased, so
-  only the import changes. Beans are still found by the starter (through proxies, with composed annotations).
-- **Breaking (unreleased API, so no deprecation):** `RpcOptions` lost `exposeErrorMessages` and `withExposeErrorMessages`; it is now
-  `RpcOptions(codec, maxMessageChars, maxConcurrentCalls, executor)`. Use `RpcException.exposing` as above, or in the Spring starter
-  the unchanged property `jolt.rpc.expose-error-messages=true`, which now registers that catch-all handler (an app's own handler for
-  `Throwable` replaces it).
+- **Breaking: `RpcOptions`** lost `exposeErrorMessages` / `withExposeErrorMessages` and gained `streamWindow`: it is now
+  `RpcOptions(codec, maxMessageChars, maxConcurrentCalls, streamWindow, executor)`. For development use `RpcException.exposing` as above
+  (`rpc.onException(Throwable.class, ...)`); in the Spring starter the property `jolt.rpc.expose-error-messages=true` is unchanged and now
+  registers that catch-all handler (an app's own handler for `Throwable` replaces it).
+- **Breaking, Spring starter:** `@JoltRpc` moved from `io.github.b077as.jolt.spring` to `io.github.b077as.jolt` (core), so only the import
+  changes. Beans are still found by the starter (through proxies, with composed annotations).
 - A `bad_params` answer no longer carries the codec's message, even in development (it can name the app's classes and fields); it is
   in the log and in the `RpcException`'s cause.
 
