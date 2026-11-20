@@ -2,7 +2,7 @@
 
 > Jolt opens a native window on Windows and Linux whose contents are a web page, and lets that page talk to Java in the same process. It uses the web view the operating system already has (WebView2 on Windows, WebKitGTK 4.1 on Linux), so there is no bundled browser. It is built on Java 25's Foreign Function & Memory API: no JNI, no native code to compile. License: Apache 2.0. Status: early (0.x), APIs can still change.
 
-Current version: 0.4.2 (see CHANGELOG.md for what each version added; Maven Central is the source of truth for the latest).
+Current version: 0.5.0 (see CHANGELOG.md for what each version added; Maven Central is the source of truth for the latest).
 Group id: `io.github.b077as`. Java 25 or newer. macOS is not supported.
 
 Modules (all released with the same version):
@@ -17,11 +17,18 @@ Modules (all released with the same version):
 - Since 0.3.0: system notifications (`Application.notify`, `jolt.notify`); pop-out windows (`WebWindow.enableOpenWindow` with a `WindowOpener`, `jolt.openWindow`, `jolt.broadcast`/`onBroadcast`, `WindowOptions.withOwner`, `ResourceOptions.withStartPath`, `Application.windows()`); `WebWindow.focus/minimize/isMinimized/isVisible`; tray icon (`Application.isTraySupported/createTray`, `Tray`, `TrayMenu`); close to tray (`WebWindow.setCloseBehavior(CloseBehavior.HIDE)`); start with the computer (`Application.autostart()`); one copy per user (`SingleInstance.acquire`); frameless windows (`WindowOptions.withFrameless`, `data-jolt-drag`, `jolt.frame`, ready-made title bar with `data-jolt-titlebar` coloured by `--jolt-caption-*` CSS variables, window state as `data-jolt-maximized` and `jolt.frame.onChange`, Windows 11 snap layouts over the maximize button).
 
 - Since 0.4.2: built-in RPC (`Rpc.create().on(...).attach(window)`, page `await jolt.call(method, params, {signal, timeout, onProgress})`, `rpc.emit` + `jolt.onEvent`, `RpcException` codes, `RpcCall` progress/cancellation). JSON through `JsonCodec`: `JsonCodec.basic()` (no dependency, records/collections) or `JsonCodec.of(gson::toJson, gson::fromJson)` for any library.
+- Since 0.5.0: RPC server streaming (a handler returns a `Flow.Publisher` or fills `call.stream()`; the page reads `for await (const x of jolt.stream(method, params, {signal}))`, with back pressure), interceptors (`rpc.before(...)`, `rpc.around(...)`), TypeScript declarations (`rpc.writeTypeScript(path)`: typed `window.jolt`, a type per record/enum), exception handlers by type (`rpc.onException(SQLException.class, (call, e) -> new RpcException(...))`, also `router.onException` for `Router`), and annotated controllers (`rpc.register(controller)` with `@JoltRpc`, an alternative to `on`, not the preferred way). `RpcOptions` and `Router.onError` changed (see CHANGELOG).
 
 Run with `--enable-native-access=ALL-UNNAMED` (or set `Enable-Native-Access: ALL-UNNAMED` in the jar manifest).
 
 ## Docs
-- [README](README.md): install, first window, messaging between page and Java, serving a multi-file frontend, request handlers and routing, uploads, security policy, packaging, troubleshooting.
+- [README](README.md): install, first window, messaging between page and Java, RPC basics, security policy, credentials, troubleshooting, and an index of the pages below.
+- [docs/rpc.md](docs/rpc.md): calling Java from the page (calls, events, errors, streaming, interceptors, TypeScript types), binary channels.
+- [docs/frontend.md](docs/frontend.md): serving a multi-file frontend, request handlers and routing, uploads.
+- [docs/windows.md](docs/windows.md): window size and position, frameless windows and title bar, file dialogs, drag and drop, notifications, pop-out windows.
+- [docs/desktop-integration.md](docs/desktop-integration.md): tray, taskbar, menu bar, context menu, global hotkeys, PDF.
+- [docs/spring-boot.md](docs/spring-boot.md): the Spring Boot starter.
+- [docs/packaging.md](docs/packaging.md): jpackage and self-updating installs (jpack).
 - [CHANGELOG](CHANGELOG.md): what changed in each version.
 - [Maven Central](https://central.sonatype.com/artifact/io.github.b077as/jolt-core): published artifacts.
 - [jpack](https://github.com/B077AS/jpack): the companion for shipping: install folder with its own runtime, self-updates, launcher hand-over (`startNow` / `notifyShown`).

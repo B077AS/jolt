@@ -6,7 +6,7 @@ this file says when they do.
 
 The latest version is the one on [Maven Central](https://central.sonatype.com/artifact/io.github.b077as/jolt-core).
 
-## Unreleased
+## 0.5.0 - 2026-11-20
 
 ### Added
 - **RPC: server streaming.** A handler returns a `Flow.Publisher` or calls `call.stream()` for an `RpcStream` (`send` / `complete` /
@@ -75,6 +75,11 @@ The latest version is the one on [Maven Central](https://central.sonatype.com/ar
   `Throwable` replaces it).
 - A `bad_params` answer no longer carries the codec's message, even in development (it can name the app's classes and fields); it is
   in the log and in the `RpcException`'s cause.
+
+### Verified
+- The RPC changes (streaming, interceptors, `register`, exception handlers, TypeScript declarations), the `Router` error handling and the
+  Spring starter changes pass their tests on Windows 11 and on Linux, on X11 and on Wayland. The TypeScript output is also compiled with the
+  real TypeScript compiler (strict) by a test that runs when `JOLT_TSC` points at `tsc`.
 
 ## 0.4.2 - 2026-11-19
 
