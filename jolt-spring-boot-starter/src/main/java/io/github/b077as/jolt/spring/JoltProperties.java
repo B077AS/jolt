@@ -204,7 +204,7 @@ public class JoltProperties {
         }
     }
 
-    /** {@code jolt.rpc.*}: see {@link io.github.b077as.jolt.RpcOptions}. */
+    /** {@code jolt.rpc.*}: see {@link io.github.b077as.jolt.RpcOptions}; {@code expose-error-messages} registers a catch-all {@link io.github.b077as.jolt.Rpc#onException}. */
     public static class Rpc {
         private boolean exposeErrorMessages;
         private int maxConcurrentCalls = 64;

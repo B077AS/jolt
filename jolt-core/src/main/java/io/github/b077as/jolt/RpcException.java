@@ -15,7 +15,10 @@ import java.util.regex.Pattern;
  * catch (e) { if (e.code === "not_found") showEmpty(); else throw e; }
  * }</pre>
  * Any other exception a handler throws reaches the page only as {@link #INTERNAL} with a generic message (its own message could
- * reveal paths, SQL or other details; see {@link RpcOptions#exposeErrorMessages()}).
+ * reveal paths, SQL or other details), unless the app says otherwise for that type with {@link Rpc#onException}. While developing,
+ * {@code rpc.onException(Throwable.class, (call, e) -> RpcException.exposing(e))} shows every message.
+ *
+ * <p>The message is cut to {@value #MAX_MESSAGE_CHARS} characters on its way to the page.
  *
  * <p>Jolt itself uses these codes: {@link #UNKNOWN_METHOD}, {@link #BAD_PARAMS}, {@link #INTERNAL}, {@link #TOO_MANY_CALLS},
  * {@link #TOO_LARGE}, {@link #UNAVAILABLE}; and in the page only, {@code "timeout"}, {@code "not_enabled"} and
@@ -35,6 +38,9 @@ public class RpcException extends RuntimeException {
     public static final String TOO_LARGE = "too_large";
     /** The window is no longer attached to an {@link Rpc} (see {@link Rpc#detach}), or the call was stopped because it was. */
     public static final String UNAVAILABLE = "unavailable";
+
+    /** The longest message the page is sent; a longer one is cut. */
+    public static final int MAX_MESSAGE_CHARS = 4096;
 
     private static final Pattern CODE = Pattern.compile("[A-Za-z0-9_.\\-]{1,64}");
 
@@ -66,6 +72,16 @@ public class RpcException extends RuntimeException {
     /** {@link #BAD_PARAMS} with {@code message}, for a handler that checks its parameters itself. */
     public static RpcException badParams(String message) {
         return new RpcException(BAD_PARAMS, message);
+    }
+
+    /**
+     * {@link #INTERNAL} showing the real class and message of {@code error} to the page, for development:
+     * {@code rpc.onException(Throwable.class, (call, e) -> RpcException.exposing(e))}. It is still treated as unexpected (logged,
+     * given to {@link Rpc#onError}), because the code is {@code internal}.
+     */
+    public static RpcException exposing(Throwable error) {
+        String message = error.getMessage() != null ? error.getClass().getSimpleName() + ": " + error.getMessage() : error.toString();
+        return new RpcException(INTERNAL, message, null, error);
     }
 
     public String code() {

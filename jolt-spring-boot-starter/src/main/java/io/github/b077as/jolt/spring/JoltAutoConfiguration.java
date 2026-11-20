@@ -2,6 +2,7 @@ package io.github.b077as.jolt.spring;
 
 import io.github.b077as.jolt.JsonCodec;
 import io.github.b077as.jolt.Rpc;
+import io.github.b077as.jolt.RpcException;
 import io.github.b077as.jolt.RpcOptions;
 import io.github.b077as.jolt.spring.internal.JsonCodecs;
 import io.github.b077as.jolt.spring.internal.LoopbackGuard;
@@ -21,7 +22,7 @@ import org.springframework.core.Ordered;
 
 /**
  * What the starter adds to every application that has it on the class path: the {@link Rpc} that answers {@code jolt.call},
- * with the application's own JSON library, and the registration of {@link JoltRpc} methods. In web mode (a servlet application
+ * with the application's own JSON library, and the registration of {@link JoltRpc} and {@link JoltRpcExceptionHandler} methods. In web mode (a servlet application
  * started with {@link JoltSpringApplication}) also the {@link LoopbackGuard} in front of every request.
  *
  * <p>Each bean backs off when the application defines its own.
@@ -46,15 +47,19 @@ public class JoltAutoConfiguration {
         JoltProperties.Rpc rpc = properties.getRpc();
         return RpcOptions.defaults()
                 .withCodec(codec)
-                .withExposeErrorMessages(rpc.isExposeErrorMessages())
                 .withMaxConcurrentCalls(rpc.getMaxConcurrentCalls())
                 .withMaxMessageChars(rpc.getMaxMessageChars());
     }
 
+    /** With {@code jolt.rpc.expose-error-messages=true}, a catch-all handler that shows the page every exception (the app's own handlers replace it). */
     @Bean
     @ConditionalOnMissingBean
-    public Rpc joltRpc(RpcOptions options) {
-        return Rpc.create(options);
+    public Rpc joltRpc(RpcOptions options, JoltProperties properties) {
+        Rpc rpc = Rpc.create(options);
+        if (properties.getRpc().isExposeErrorMessages()) {
+            rpc.onException(Throwable.class, (call, error) -> RpcException.exposing(error));
+        }
+        return rpc;
     }
 
     /** Static, as a bean post-processor must be, so that it does not pull this configuration in early. */

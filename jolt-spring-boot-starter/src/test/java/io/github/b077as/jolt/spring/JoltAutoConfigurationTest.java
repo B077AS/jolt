@@ -141,11 +141,116 @@ class JoltAutoConfigurationTest {
 
     @Test
     void propertiesReachTheRpcOptions() {
-        runner.withPropertyValues("jolt.rpc.expose-error-messages=true", "jolt.rpc.max-concurrent-calls=3").run(context -> {
+        runner.withPropertyValues("jolt.rpc.max-concurrent-calls=3", "jolt.rpc.max-message-chars=1000").run(context -> {
             Rpc rpc = context.getBean(Rpc.class);
-            assertTrue(rpc.options().exposeErrorMessages());
             assertEquals(3, rpc.options().maxConcurrentCalls());
+            assertEquals(1000, rpc.options().maxMessageChars());
         });
+    }
+
+    @Test
+    void exposeErrorMessagesShowsThePageEveryExceptionWhileDeveloping() {
+        runner.withUserConfiguration(Notes.class).withPropertyValues("jolt.rpc.expose-error-messages=true").run(context -> {
+            FakePage page = new FakePage();
+            context.getBean(Rpc.class).attach(page.window);
+            Map<?, ?> broken = page.error("notes.broken", "{}");
+            assertEquals(RpcException.INTERNAL, broken.get("code"));
+            assertEquals("IllegalStateException: secret detail", broken.get("message"));
+        });
+    }
+
+    static class RpcErrors {
+        @JoltRpcExceptionHandler
+        RpcException illegalArgument(IllegalArgumentException e) {
+            return new RpcException("invalid", e.getMessage());
+        }
+
+        @JoltRpcExceptionHandler
+        RpcException state(IllegalStateException e, RpcCall call) {
+            return new RpcException("state", call.method() + ": " + e.getMessage());
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    static class NotesWithErrors {
+        @Bean
+        NotesService notesService() {
+            return new NotesService();
+        }
+
+        @Bean
+        RpcErrors rpcErrors() {
+            return new RpcErrors();
+        }
+    }
+
+    @Test
+    void joltRpcExceptionHandlersChooseWhatThePageIsTold() {
+        runner.withUserConfiguration(NotesWithErrors.class).run(context -> {
+            FakePage page = new FakePage();
+            context.getBean(Rpc.class).attach(page.window);
+            Map<?, ?> broken = page.error("notes.broken", "{}");
+            assertEquals("state", broken.get("code"));
+            assertEquals("notes.broken: secret detail", broken.get("message"), "the handler got the exception and the call");
+        });
+    }
+
+    @Test
+    void anApplicationHandlerForThrowableReplacesTheExposeErrorMessagesOne() {
+        class All {
+            @JoltRpcExceptionHandler
+            RpcException all(Throwable e) {
+                return new RpcException("mine", "x");
+            }
+        }
+        runner.withUserConfiguration(Notes.class).withBean(All.class, All::new).withPropertyValues("jolt.rpc.expose-error-messages=true").run(context -> {
+            FakePage page = new FakePage();
+            context.getBean(Rpc.class).attach(page.window);
+            assertEquals("mine", page.error("notes.broken", "{}").get("code"));
+        });
+    }
+
+    static class TwoHandlers {
+        @JoltRpcExceptionHandler
+        RpcException one(IllegalStateException e) {
+            return new RpcException("a", "a");
+        }
+
+        @JoltRpcExceptionHandler
+        RpcException two(IllegalStateException e) {
+            return new RpcException("b", "b");
+        }
+    }
+
+    static class NoException {
+        @JoltRpcExceptionHandler
+        RpcException none(RpcCall call) {
+            return null;
+        }
+    }
+
+    static class WrongReturn {
+        @JoltRpcExceptionHandler
+        String wrong(IllegalStateException e) {
+            return "";
+        }
+    }
+
+    static class ForRpcException {
+        @JoltRpcExceptionHandler
+        RpcException rpc(RpcException e) {
+            return e;
+        }
+    }
+
+    @Test
+    void badExceptionHandlerMethodsStopTheApplication() {
+        for (Class<?> bad : List.of(TwoHandlers.class, NoException.class, WrongReturn.class, ForRpcException.class)) {
+            runner.withBean(bad).run(context -> {
+                assertNotNull(context.getStartupFailure(), bad.getSimpleName());
+                assertTrue(context.getStartupFailure().getMessage().contains("@JoltRpcExceptionHandler"), context.getStartupFailure().getMessage());
+            });
+        }
     }
 
     @JoltRpc

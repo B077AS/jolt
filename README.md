@@ -177,9 +177,12 @@ const stop = jolt.onEvent('notes.changed', (count) => (badge.textContent = count
   `JsonCodec.of(mapper::writeValueAsString, (json, type) -> mapper.readValue(json, mapper.constructType(type)))`.
 - **Errors:** throw `new RpcException("not_found", "No note 7", data)` and the promise rejects with a `JoltRpcError` that has
   `code`, `message` and `data`. Any other exception reaches the page only as `code: "internal"` with a generic message, so
-  paths and SQL do not leak; it is logged and passed to `rpc.onError(...)`. `RpcOptions.withExposeErrorMessages(true)` shows
-  the real message while you develop. Jolt's own codes: `unknown_method`, `bad_params`, `too_many_calls`, `too_large`,
-  `unavailable`, and in the page `timeout` and `not_enabled`.
+  paths and SQL do not leak; it is logged and passed to `rpc.onError(...)`. For the exceptions your app expects, say what the
+  page is told with `rpc.onException(type, (call, error) -> new RpcException(code, message, data))`: a database client shows
+  the database's complaint, a form shows "name is required". The most specific type wins, `Throwable.class` catches the rest,
+  and a handled exception is an expected failure (not logged as a warning, not given to `onError`). While you develop,
+  `rpc.onException(Throwable.class, (call, e) -> RpcException.exposing(e))` shows every message. Jolt's own codes: `unknown_method`,
+  `bad_params`, `too_many_calls`, `too_large`, `unavailable`, and in the page `timeout` and `not_enabled`.
 - **Cancellation:** an aborted `signal`, a passed `timeout`, a reload or navigation, closing the window or `rpc.detach(window)`
   cancels the call. Java interrupts the handler's thread and drops its answer.
 - **Limits and security:** only pages whose origin the `SecurityPolicy` trusts can call, and only from the top-level
@@ -770,7 +773,9 @@ class NotesService {
 
 A method takes at most one parameter for what the page sends (decoded into its type, generics included), plus optionally the `RpcCall`
 and the calling `WebWindow`. It runs on a virtual thread and may return a `CompletionStage`. Errors work as with `Rpc`: an `RpcException`
-reaches the page with its code, anything else only as `internal`. The JSON library is the application's own: its Jackson 3 `ObjectMapper`
+reaches the page with its code, anything else only as `internal` unless a `@JoltRpcExceptionHandler` method says otherwise
+(`@JoltRpcExceptionHandler RpcException sql(SQLException e) { ... }`, like Spring's `@ExceptionHandler`; the property
+`jolt.rpc.expose-error-messages=true` shows every message while you develop). The JSON library is the application's own: its Jackson 3 `ObjectMapper`
 (Spring Boot 4's default), a Jackson 2 or Gson bean, or else `JsonCodec.basic()`. A `JsonCodec`, `RpcOptions` or `Rpc` bean of your
 own replaces the starter's. Inject `Rpc` to push events with `rpc.emit(...)`. Two methods with one name, or a name starting with `jolt.`,
 stop the application at startup.

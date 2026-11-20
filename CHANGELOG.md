@@ -6,6 +6,35 @@ this file says when they do.
 
 The latest version is the one on [Maven Central](https://central.sonatype.com/artifact/io.github.b077as/jolt-core).
 
+## Unreleased
+
+### Added
+- **RPC: `Rpc.onException(Class<E>, RpcExceptionHandler<E>)`.** Chooses what the page is told when a handler throws something that
+  is not an `RpcException`, per exception type. Until now the page got a generic `internal` error for everything, or, with
+  `RpcOptions.withExposeErrorMessages(true)`, every exception as `ClassName: message`. An app whose messages are meant for the user
+  (a database client shows the database's complaint, a form shows "name is required") now registers
+  `rpc.onException(SQLException.class, (call, e) -> new RpcException("sql", e.getMessage()))`. The most specific type wins (as `catch`
+  clauses and Spring's `@ExceptionHandler` do), `Throwable.class` catches the rest, the handler gets the call and the exception
+  (unwrapped from `ExecutionException` / `CompletionException`; also an `Error` such as a `LinkageError`) and always answers with an
+  `RpcException`. Anything without a handler stays a generic `internal` error.
+- **An exception with a handler is an expected failure: it is logged at `DEBUG`, not as a warning, and is not given to `onError`.**
+  One that falls through to the default, or whose handler answers `internal`, is a bug and is logged and reported as before. A handler
+  that throws or returns `null` is logged and the exception is treated as unhandled. Handlers never see `RpcException`s, cancelled
+  calls or a `VirtualMachineError` (answered as `internal` and rethrown, as before).
+- `RpcException.exposing(error)`: `internal` with the real class and message, for development:
+  `rpc.onException(Throwable.class, (call, e) -> RpcException.exposing(e))`.
+- The message the page receives in an error is cut to `RpcException.MAX_MESSAGE_CHARS` (4096) characters.
+- Spring Boot starter: `@JoltRpcExceptionHandler` methods on beans (`RpcException sql(SQLException e)`, optionally also an `RpcCall`),
+  checked at startup (one exception parameter, returns `RpcException`, no two handlers for one type).
+
+### Changed
+- **Breaking (unreleased API, so no deprecation):** `RpcOptions` lost `exposeErrorMessages` and `withExposeErrorMessages`; it is now
+  `RpcOptions(codec, maxMessageChars, maxConcurrentCalls, executor)`. Use `RpcException.exposing` as above, or in the Spring starter
+  the unchanged property `jolt.rpc.expose-error-messages=true`, which now registers that catch-all handler (an app's own handler for
+  `Throwable` replaces it).
+- A `bad_params` answer no longer carries the codec's message, even in development (it can name the app's classes and fields); it is
+  in the log and in the `RpcException`'s cause.
+
 ## 0.4.2 - 2026-11-19
 
 ### Added

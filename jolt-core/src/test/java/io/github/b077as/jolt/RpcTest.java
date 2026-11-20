@@ -178,15 +178,208 @@ class RpcTest {
     }
 
     @Test
-    void errorMessagesCanBeExposedWhileDeveloping() throws Exception {
+    void errorMessagesCanBeExposedWhileDevelopingWithACatchAllHandler() throws Exception {
         FakeWindow page = new FakeWindow();
-        Rpc.create(RpcOptions.defaults().withExposeErrorMessages(true)).on("boom", call -> {
+        CompletableFuture<Throwable> reported = new CompletableFuture<>();
+        Rpc.create().onException(Throwable.class, (call, e) -> RpcException.exposing(e)).on("boom", call -> {
             throw new IllegalStateException("details");
-        }).on("typed", NewNote.class, n -> n).attach(page.window);
+        }).onError((call, error) -> reported.complete(error)).attach(page.window);
         page.send("s", 1, "boom", "{}");
-        assertEquals("IllegalStateException: details", error(page.next()).get("message"));
-        page.send("s", 2, "typed", "[]");
-        assertTrue(((String) error(page.next()).get("message")).contains("expected an object"));
+        Map<?, ?> e = error(page.next());
+        assertEquals(RpcException.INTERNAL, e.get("code"));
+        assertEquals("IllegalStateException: details", e.get("message"));
+        assertTrue(reported.get(5, TimeUnit.SECONDS) instanceof IllegalStateException, "exposed, but still a bug: onError hears of it");
+    }
+
+    @Test
+    void theMessageOfAParameterErrorStaysInJava() throws Exception {
+        FakeWindow page = new FakeWindow();
+        Rpc.create().onException(Throwable.class, (call, e) -> RpcException.exposing(e)).on("typed", NewNote.class, n -> n).attach(page.window);
+        page.send("s", 1, "typed", "[]");
+        Map<?, ?> e = error(page.next());
+        assertEquals(RpcException.BAD_PARAMS, e.get("code"));
+        assertEquals("Invalid parameters for typed", e.get("message"));
+    }
+
+    @Test
+    void anExceptionHandlerChoosesWhatThePageIsToldAndTheFailureIsExpected() throws Exception {
+        FakeWindow page = new FakeWindow();
+        BlockingQueue<Throwable> reported = new LinkedBlockingQueue<>();
+        Rpc.create()
+                .onException(IllegalArgumentException.class,
+                        (call, error) -> new RpcException("failed", error.getMessage(), Map.of("method", call.method())))
+                .on("bad", call -> {
+                    throw new IllegalArgumentException("name is required");
+                })
+                .on("other", call -> {
+                    throw new IllegalStateException("password=hunter2");
+                })
+                .onError((call, error) -> reported.add(error))
+                .attach(page.window);
+        page.send("s", 1, "bad", "{}");
+        Map<?, ?> handled = error(page.next());
+        assertEquals("failed", handled.get("code"));
+        assertEquals("name is required", handled.get("message"));
+        assertEquals(Map.of("method", "bad"), handled.get("data"));
+        // no handler for this type: nothing leaks, and it is reported as a bug
+        page.send("s", 2, "other", "{}");
+        Map<?, ?> hidden = error(page.next());
+        assertEquals(RpcException.INTERNAL, hidden.get("code"));
+        assertEquals("The call to other failed", hidden.get("message"));
+        Throwable first = reported.poll(5, TimeUnit.SECONDS);
+        assertTrue(first instanceof IllegalStateException, "only the unhandled one is reported, not the expected failure: " + first);
+        assertTrue(reported.isEmpty());
+    }
+
+    @Test
+    void theMostSpecificExceptionHandlerWins() throws Exception {
+        FakeWindow page = new FakeWindow();
+        Rpc rpc = Rpc.create()
+                .onException(Throwable.class, (call, e) -> new RpcException("throwable", "t"))
+                .onException(RuntimeException.class, (call, e) -> new RpcException("runtime", "r"))
+                .onException(IllegalArgumentException.class, (call, e) -> new RpcException("argument", "a"))
+                .on("number", call -> Integer.parseInt("x"))                       // NumberFormatException, an IllegalArgumentException
+                .on("state", call -> {
+                    throw new IllegalStateException();                              // only a RuntimeException
+                })
+                .on("native", call -> {
+                    throw new UnsatisfiedLinkError("no libfoo");                    // an Error: only Throwable matches
+                });
+        rpc.attach(page.window);
+        page.send("s", 1, "number", "{}");
+        assertEquals("argument", error(page.next()).get("code"));
+        page.send("s", 2, "state", "{}");
+        assertEquals("runtime", error(page.next()).get("code"));
+        page.send("s", 3, "native", "{}");
+        assertEquals("throwable", error(page.next()).get("code"));
+        // a handler for the same type replaces the earlier one
+        rpc.onException(IllegalArgumentException.class, (call, e) -> new RpcException("replaced", "x"));
+        page.send("s", 4, "number", "{}");
+        assertEquals("replaced", error(page.next()).get("code"));
+    }
+
+    @Test
+    void anExceptionHandlerSeesTheCauseOfAFailedStage() throws Exception {
+        FakeWindow page = new FakeWindow();
+        CompletableFuture<String> failing = new CompletableFuture<>();
+        List<Class<?>> seen = new CopyOnWriteArrayList<>();
+        Rpc.create().onException(Throwable.class, (call, error) -> {
+                    seen.add(error.getClass());
+                    return new RpcException("failed", String.valueOf(error.getMessage()));
+                })
+                .on("later", call -> failing)
+                .attach(page.window);
+        page.send("s", 1, "later", "{}");
+        page.assertNothingSent(100);
+        failing.completeExceptionally(new IllegalStateException("db is down"));
+        assertEquals("db is down", error(page.next()).get("message"));
+        assertEquals(List.of(IllegalStateException.class), seen);
+    }
+
+    @Test
+    void aHandlerThatFailsOrReturnsNullMeansTheExceptionIsAnUnhandledOne() throws Exception {
+        FakeWindow page = new FakeWindow();
+        BlockingQueue<Throwable> reported = new LinkedBlockingQueue<>();
+        Rpc.create()
+                .onException(IllegalStateException.class, (call, e) -> {
+                    throw new IllegalArgumentException("handler bug");
+                })
+                .onException(UnsupportedOperationException.class, (call, e) -> null)
+                .on("throws", call -> {
+                    throw new IllegalStateException("details");
+                })
+                .on("null", call -> {
+                    throw new UnsupportedOperationException("details");
+                })
+                .onError((call, error) -> reported.add(error))
+                .attach(page.window);
+        for (long id = 1; id <= 2; id++) {
+            String method = id == 1 ? "throws" : "null";
+            page.send("s", id, method, "{}");
+            Map<?, ?> e = error(page.next());
+            assertEquals(RpcException.INTERNAL, e.get("code"));
+            assertEquals("The call to " + method + " failed", e.get("message"));
+        }
+        assertTrue(reported.poll(5, TimeUnit.SECONDS) instanceof IllegalStateException, "the original exception is reported, not the handler's");
+        assertTrue(reported.poll(5, TimeUnit.SECONDS) instanceof UnsupportedOperationException);
+    }
+
+    @Test
+    void anRpcExceptionIsNeverGivenToAnExceptionHandler() throws Exception {
+        FakeWindow page = new FakeWindow();
+        AtomicReference<Throwable> handled = new AtomicReference<>();
+        Rpc rpc = Rpc.create().onException(Throwable.class, (call, error) -> {
+                    handled.set(error);
+                    return new RpcException("other", "x");
+                })
+                .on("get", call -> {
+                    throw new RpcException("not_found", "No note 7");
+                })
+                .attach(page.window);
+        page.send("s", 1, "get", "{}");
+        assertEquals("not_found", error(page.next()).get("code"));
+        assertNull(handled.get());
+        assertThrows(IllegalArgumentException.class, () -> rpc.onException(RpcException.class, (call, e) -> e));
+    }
+
+    @Test
+    void aCancelledCallDoesNotReachAnExceptionHandler() throws Exception {
+        FakeWindow page = new FakeWindow();
+        CountDownLatch started = new CountDownLatch(1);
+        CompletableFuture<Boolean> interrupted = new CompletableFuture<>();
+        AtomicReference<Throwable> handled = new AtomicReference<>();
+        Rpc.create().onException(Throwable.class, (call, error) -> {
+            handled.set(error);
+            return new RpcException("failed", "x");
+        }).on("slow", c -> {
+            started.countDown();
+            try {
+                Thread.sleep(30_000);
+            } catch (InterruptedException e) {
+                interrupted.complete(true);
+                throw e;
+            }
+            return "too late";
+        }).attach(page.window);
+        page.send("s", 1, "slow", "{}");
+        assertTrue(started.await(5, TimeUnit.SECONDS));
+        page.cancel("s", 1);
+        assertTrue(interrupted.get(5, TimeUnit.SECONDS));
+        page.assertNothingSent(200);
+        assertNull(handled.get());
+    }
+
+    @Test
+    void aVirtualMachineErrorIsAnsweredButNoHandlerRunsForIt() throws Exception {
+        FakeWindow page = new FakeWindow();
+        AtomicReference<Throwable> handled = new AtomicReference<>();
+        Rpc.create().onException(Throwable.class, (call, error) -> {
+            handled.set(error);
+            return new RpcException("failed", "x");
+        }).on("broken", call -> {
+            throw new InternalError("the JVM is unwell");
+        }).attach(page.window);
+        page.send("s", 1, "broken", "{}");
+        Map<?, ?> e = error(page.next());
+        assertEquals(RpcException.INTERNAL, e.get("code"));
+        assertEquals("The call to broken failed", e.get("message"));
+        assertNull(handled.get());
+    }
+
+    @Test
+    void aLongMessageIsCutAndDataTheCodecCannotWriteIsLeftOut() throws Exception {
+        FakeWindow page = new FakeWindow();
+        Rpc.create().onException(IllegalArgumentException.class, (call, e) -> new RpcException("long", "x".repeat(10_000), new Object()))
+                .on("long", call -> {
+                    throw new IllegalArgumentException();
+                })
+                .attach(page.window);
+        page.send("s", 1, "long", "{}");
+        Map<?, ?> e = error(page.next());
+        assertEquals("long", e.get("code"));
+        assertEquals(RpcException.MAX_MESSAGE_CHARS + 1, ((String) e.get("message")).length());
+        assertTrue(((String) e.get("message")).endsWith("…"));
+        assertNull(e.get("data"));
     }
 
     @Test

@@ -52,8 +52,10 @@ import java.util.function.BiConsumer;
  * <p><b>JSON.</b> Parameters are read and results written by the {@link JsonCodec} in {@link RpcOptions#codec()}: the built-in
  * {@link JsonCodec#basic()} (records, enums, collections, maps), or Gson, Jackson or any other library you plug in.
  *
- * <p><b>Errors.</b> An {@link RpcException} reaches the page with its code, message and data; any other exception only as
- * {@link RpcException#INTERNAL} with a generic message, and it is logged and given to {@link #onError}.
+ * <p><b>Errors.</b> An {@link RpcException} reaches the page with its code, message and data. Any other exception reaches it only as
+ * {@link RpcException#INTERNAL} with a generic message, and is logged and given to {@link #onError}, because it is a bug. An app whose
+ * messages are meant for the user (a database client shows the database's complaint) says which exception types are expected, and what
+ * the page is told about each, with {@link #onException}; those are not logged as warnings.
  *
  * <p><b>Security.</b> Only pages whose origin the window's {@link SecurityPolicy} trusts can call, whatever
  * {@link SecurityPolicy#restrictMessages()} says, and only from the top-level document. A window takes at most
@@ -74,6 +76,7 @@ public final class Rpc {
     private final Executor executor;
     private final Map<String, RpcHandler> handlers = new ConcurrentHashMap<>();
     private final Map<WebWindow, Peer> peers = new IdentityHashMap<>();
+    private final Map<Class<? extends Throwable>, RpcExceptionHandler<?>> exceptionHandlers = new ConcurrentHashMap<>();
     private volatile BiConsumer<RpcCall, Throwable> errorListener;
 
     private Rpc(RpcOptions options) {
@@ -128,8 +131,57 @@ public final class Rpc {
     }
 
     /**
-     * Called with every unexpected exception a handler throws (not {@link RpcException}s, not cancellations), on the handler's thread,
-     * for example to report it. Such exceptions are logged in any case. {@code null} removes the listener.
+     * Says what the page is told when a handler throws an exception of {@code type} (or a subclass), replacing any earlier handler for
+     * the same type. When several types match, the most specific one wins, as with {@code catch} clauses and Spring's
+     * {@code @ExceptionHandler}; {@code Throwable.class} catches everything the others do not.
+     *
+     * <pre>{@code
+     * rpc.onException(SQLException.class, (call, e) -> new RpcException("sql", e.getMessage()))
+     *    .onException(IllegalArgumentException.class, (call, e) -> RpcException.badParams(e.getMessage()));
+     * }</pre>
+     * An exception with a handler is an expected failure: it is logged only at {@code DEBUG} and is not given to {@link #onError},
+     * unless the handler answers with {@link RpcException#INTERNAL} (as {@link RpcException#exposing} does). An exception without one
+     * reaches the page as a generic {@code internal} error and is logged as a warning.
+     *
+     * <p>The handler runs on the call's thread, after the exception was thrown. It gets the exception unwrapped from
+     * {@code ExecutionException} / {@code CompletionException}, and may be an {@link Error} such as a {@code LinkageError}. It is never
+     * asked about an {@link RpcException} (that already says what the page is told), a cancelled call, or a {@link VirtualMachineError}.
+     * If it throws or returns {@code null}, that is logged and the exception is treated as if it had no handler. The message the page
+     * gets is cut to {@value RpcException#MAX_MESSAGE_CHARS} characters.
+     *
+     * <p>Handlers can be added and replaced at any time.
+     *
+     * @throws IllegalArgumentException if {@code type} is {@link RpcException} or a subclass
+     */
+    public <E extends Throwable> Rpc onException(Class<E> type, RpcExceptionHandler<? super E> handler) {
+        Objects.requireNonNull(type, "type");
+        Objects.requireNonNull(handler, "handler");
+        if (RpcException.class.isAssignableFrom(type)) {
+            throw new IllegalArgumentException("an RpcException already says what the page is told; there is no handler for " + type.getName());
+        }
+        exceptionHandlers.put(type, handler);
+        return this;
+    }
+
+    /** The handler of the most specific superclass of {@code error} (itself included) that has one, or {@code null}. */
+    @SuppressWarnings("unchecked")
+    private RpcExceptionHandler<Throwable> exceptionHandlerFor(Throwable error) {
+        if (exceptionHandlers.isEmpty()) {
+            return null;
+        }
+        for (Class<?> type = error.getClass(); type != null; type = type.getSuperclass()) {
+            RpcExceptionHandler<?> handler = exceptionHandlers.get(type);
+            if (handler != null) {
+                return (RpcExceptionHandler<Throwable>) handler;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Called with every unexpected exception a handler throws, on the handler's thread, for example to report it: one that has no
+     * {@link #onException} handler, or whose handler answers {@link RpcException#INTERNAL}. Not {@link RpcException}s, not cancellations,
+     * and not the failures the app handles on purpose. Such exceptions are logged in any case. {@code null} removes the listener.
      */
     public Rpc onError(BiConsumer<RpcCall, Throwable> listener) {
         this.errorListener = listener;
@@ -448,32 +500,87 @@ public final class Rpc {
                 return; // the page gave up; how the handler ended does not matter
             }
             if (error instanceof RpcException rpc) {
-                String data = null;
-                if (rpc.data() != null) {
-                    try {
-                        data = encode(rpc.data());
-                    } catch (IllegalArgumentException e) {
-                        LOG.log(System.Logger.Level.WARNING, method + ": the data of an RpcException could not be written", e);
-                    }
-                }
-                finish(RpcProtocol.error(session, id, rpc.code(), rpc.getMessage(), data));
+                finish(answer(rpc));
                 return;
             }
-            LOG.log(System.Logger.Level.WARNING, "RPC method " + method + " failed", error);
-            BiConsumer<RpcCall, Throwable> listener = errorListener;
-            if (listener != null) {
+            // What the page is told is decided first: an exception the app handles on purpose is expected, one it does not is a bug.
+            VirtualMachineError fatal = isFatal(error) ? (VirtualMachineError) error : null;
+            RpcException answer = null;
+            if (!(error instanceof VirtualMachineError)) {
                 try {
-                    listener.accept(this, error);
-                } catch (RuntimeException e) {
-                    LOG.log(System.Logger.Level.ERROR, "the Rpc onError listener failed", e);
+                    answer = handled(error);
+                } catch (VirtualMachineError vm) {
+                    fatal = isFatal(vm) ? vm : fatal;
                 }
             }
-            String message = options.exposeErrorMessages()
-                    ? (error.getMessage() != null ? error.getClass().getSimpleName() + ": " + error.getMessage() : error.toString())
-                    : "The call to " + method + " failed";
-            finish(RpcProtocol.error(session, id, RpcException.INTERNAL, message, null));
-            if (error instanceof VirtualMachineError vm && !(vm instanceof StackOverflowError)) {
-                throw vm; // out of memory or worse: answered, but not swallowed
+            if (answer != null && !RpcException.INTERNAL.equals(answer.code())) {
+                LOG.log(System.Logger.Level.DEBUG, "RPC method " + method + " failed with " + answer.code(), error);
+            } else {
+                LOG.log(System.Logger.Level.WARNING, "RPC method " + method + " failed", error);
+                BiConsumer<RpcCall, Throwable> listener = errorListener;
+                if (listener != null) {
+                    try {
+                        listener.accept(this, error);
+                    } catch (RuntimeException e) {
+                        LOG.log(System.Logger.Level.ERROR, "the Rpc onError listener failed", e);
+                    }
+                }
+            }
+            finish(answer != null ? answer(answer)
+                    : RpcProtocol.error(session, id, RpcException.INTERNAL, "The call to " + method + " failed", null));
+            if (fatal != null) {
+                throw fatal; // out of memory or worse: answered, but not swallowed
+            }
+        }
+
+        /** Out of memory and the like: not something to run app code after. A stack overflow is the exception, it unwinds on its own. */
+        private static boolean isFatal(Throwable error) {
+            return error instanceof VirtualMachineError && !(error instanceof StackOverflowError);
+        }
+
+        /** What the {@link #onException} handler for {@code error} says, or {@code null} if there is none or it failed. */
+        private RpcException handled(Throwable error) {
+            RpcExceptionHandler<Throwable> handler = exceptionHandlerFor(error);
+            if (handler == null) {
+                return null;
+            }
+            try {
+                RpcException answer = handler.handle(this, error);
+                if (answer == null) {
+                    LOG.log(System.Logger.Level.ERROR, "the onException handler for " + error.getClass().getName() + " returned null for " + method);
+                }
+                return answer;
+            } catch (VirtualMachineError vm) {
+                throw vm;
+            } catch (Throwable t) {
+                LOG.log(System.Logger.Level.ERROR, "the onException handler for " + error.getClass().getName() + " failed for " + method, t);
+                return null;
+            }
+        }
+
+        /** The protocol message for an {@link RpcException}: its message cut to {@link RpcException#MAX_MESSAGE_CHARS}. */
+        private String answer(RpcException rpc) {
+            String message = rpc.getMessage();
+            if (message != null && message.length() > RpcException.MAX_MESSAGE_CHARS) {
+                int cut = RpcException.MAX_MESSAGE_CHARS;
+                if (Character.isHighSurrogate(message.charAt(cut - 1))) {
+                    cut--; // not in the middle of a pair
+                }
+                message = message.substring(0, cut) + "…";
+            }
+            return RpcProtocol.error(session, id, rpc.code(), message, errorData(rpc));
+        }
+
+        /** The data of an {@link RpcException} as JSON, or {@code null} if there is none or the codec cannot write it. */
+        private String errorData(RpcException rpc) {
+            if (rpc.data() == null) {
+                return null;
+            }
+            try {
+                return encode(rpc.data());
+            } catch (IllegalArgumentException e) {
+                LOG.log(System.Logger.Level.WARNING, method + ": the data of an RpcException could not be written", e);
+                return null;
             }
         }
 
@@ -522,10 +629,8 @@ public final class Rpc {
             } catch (Exception e) {
                 LOG.log(System.Logger.Level.INFO, "RPC method " + method + ": the parameters could not be read as " + type.getTypeName()
                         + ": " + e.getMessage());
-                String message = options.exposeErrorMessages() && e.getMessage() != null
-                        ? "Invalid parameters for " + method + ": " + e.getMessage()
-                        : "Invalid parameters for " + method;
-                throw new RpcException(RpcException.BAD_PARAMS, message, null, e);
+                // the codec's message (which may name classes or fields of the app) stays in the log and in the cause
+                throw new RpcException(RpcException.BAD_PARAMS, "Invalid parameters for " + method, null, e);
             }
         }
 
