@@ -38,6 +38,15 @@ public interface RpcCall {
     void progress(Object data);
 
     /**
+     * Turns this call into a stream of items for the page's {@code jolt.stream}, and returns where to put them. See {@link RpcStream}.
+     * A handler may instead return a {@link java.util.concurrent.Flow.Publisher}.
+     *
+     * @throws RpcException          {@link RpcException#STREAM_REQUIRED} if the page called with {@code jolt.call}, not {@code jolt.stream}
+     * @throws IllegalStateException if this was already called for this call
+     */
+    <T> RpcStream<T> stream();
+
+    /**
      * Whether the page gave up on this call: it aborted it (an {@code AbortSignal}), its timeout passed, the page reloaded or
      * navigated away, the window closed, or the window was detached. The handler's thread is also interrupted then, so blocking
      * calls end with {@link InterruptedException}; a handler in a long loop of its own should check this. Its result is thrown away.

@@ -21,7 +21,7 @@ import java.util.regex.Pattern;
  * <p>The message is cut to {@value #MAX_MESSAGE_CHARS} characters on its way to the page.
  *
  * <p>Jolt itself uses these codes: {@link #UNKNOWN_METHOD}, {@link #BAD_PARAMS}, {@link #INTERNAL}, {@link #TOO_MANY_CALLS},
- * {@link #TOO_LARGE}, {@link #UNAVAILABLE}; and in the page only, {@code "timeout"}, {@code "not_enabled"} and
+ * {@link #TOO_LARGE}, {@link #UNAVAILABLE}, {@link #STREAM_REQUIRED}; and in the page only, {@code "timeout"}, {@code "not_enabled"} and
  * {@code "bad_request"}.
  */
 public class RpcException extends RuntimeException {
@@ -41,6 +41,9 @@ public class RpcException extends RuntimeException {
 
     /** The longest message the page is sent; a longer one is cut. */
     public static final int MAX_MESSAGE_CHARS = 4096;
+
+    /** The method answers with a stream (a {@code Publisher} or {@link RpcCall#stream()}), but the page used {@code jolt.call}, not {@code jolt.stream}. */
+    public static final String STREAM_REQUIRED = "stream_required";
 
     private static final Pattern CODE = Pattern.compile("[A-Za-z0-9_.\\-]{1,64}");
 

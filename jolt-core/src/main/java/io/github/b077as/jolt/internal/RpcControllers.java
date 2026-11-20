@@ -29,8 +29,12 @@ public final class RpcControllers {
     /** Names under this prefix belong to Jolt (such as {@code jolt.window.show}). */
     public static final String RESERVED_PREFIX = "jolt.";
 
-    /** What a scan found: the handlers by the name the page calls, and the exception handlers by the exception type. */
-    public record Scan(Map<String, RpcHandler> methods, Map<Class<? extends Throwable>, RpcExceptionHandler<Throwable>> exceptionHandlers) {
+    /** A {@link JoltRpc} method ready to register: the handler and the types it takes and returns (for the TypeScript declarations). */
+    public record Route(RpcHandler handler, Type params, Type result) {
+    }
+
+    /** What a scan found: the methods by the name the page calls, and the exception handlers by the exception type. */
+    public record Scan(Map<String, Route> methods, Map<Class<? extends Throwable>, RpcExceptionHandler<Throwable>> exceptionHandlers) {
     }
 
     private RpcControllers() {
@@ -53,7 +57,7 @@ public final class RpcControllers {
         Set<String> signatures = new HashSet<>();
         Map<String, Method> byName = new LinkedHashMap<>();
         Map<Class<? extends Throwable>, Method> byType = new LinkedHashMap<>();
-        Map<String, RpcHandler> methods = new LinkedHashMap<>();
+        Map<String, Route> methods = new LinkedHashMap<>();
         Map<Class<? extends Throwable>, RpcExceptionHandler<Throwable>> exceptionHandlers = new LinkedHashMap<>();
         for (Class<?> c = type; c != null && c != Object.class; c = c.getSuperclass()) {
             for (Method method : c.getDeclaredMethods()) {
@@ -74,7 +78,7 @@ public final class RpcControllers {
                     if (earlier != null) {
                         throw new IllegalStateException("Two @JoltRpc methods are called '" + name + "': " + describe(earlier) + " and " + where);
                     }
-                    methods.put(name, handler(controller, method, method, where));
+                    methods.put(name, new Route(handler(controller, method, method, where), paramsType(method), resultType(method)));
                 }
                 if (handler != null) {
                     @SuppressWarnings("unchecked")
@@ -110,6 +114,21 @@ public final class RpcControllers {
             throw new IllegalStateException("@JoltRpc name '" + name + "' on " + where + " starts with '" + RESERVED_PREFIX
                     + "', which is reserved for Jolt");
         }
+    }
+
+    /** The type the page's parameters are read as: the one parameter that is not an {@code RpcCall} or the window, or {@code void.class} for none. */
+    public static Type paramsType(Method declared) {
+        for (Parameter parameter : declared.getParameters()) {
+            if (parameter.getType() != RpcCall.class && parameter.getType() != WebWindow.class) {
+                return parameter.getParameterizedType();
+            }
+        }
+        return void.class;
+    }
+
+    /** What the method returns, as declared (generics included). */
+    public static Type resultType(Method declared) {
+        return declared.getGenericReturnType();
     }
 
     /**

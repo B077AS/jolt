@@ -65,6 +65,17 @@ class RpcTest {
                     + BasicJson.quote(method) + ",\"p\":" + paramsJson + "}", APP);
         }
 
+        /** A call the way {@code jolt.stream} makes it. */
+        void sendStream(String session, long id, String method, String paramsJson) {
+            PageRpc.deliver(window, RpcProtocol.PREFIX + "{\"t\":\"call\",\"s\":\"" + session + "\",\"id\":" + id + ",\"st\":true,\"m\":"
+                    + BasicJson.quote(method) + ",\"p\":" + paramsJson + "}", APP);
+        }
+
+        /** The page consumed {@code n} items of stream {@code id}. */
+        void more(String session, long id, int n) {
+            PageRpc.deliver(window, RpcProtocol.PREFIX + "{\"t\":\"more\",\"s\":\"" + session + "\",\"id\":" + id + ",\"n\":" + n + "}", APP);
+        }
+
         void cancel(String session, long id) {
             PageRpc.deliver(window, RpcProtocol.PREFIX + "{\"t\":\"cancel\",\"s\":\"" + session + "\",\"id\":" + id + "}", APP);
         }

@@ -48,7 +48,8 @@ public class JoltAutoConfiguration {
         return RpcOptions.defaults()
                 .withCodec(codec)
                 .withMaxConcurrentCalls(rpc.getMaxConcurrentCalls())
-                .withMaxMessageChars(rpc.getMaxMessageChars());
+                .withMaxMessageChars(rpc.getMaxMessageChars())
+                .withStreamWindow(rpc.getStreamWindow());
     }
 
     /** With {@code jolt.rpc.expose-error-messages=true}, a catch-all handler that shows the page every exception (the app's own handlers replace it). */

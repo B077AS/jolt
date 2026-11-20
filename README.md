@@ -183,6 +183,9 @@ const stop = jolt.onEvent('notes.changed', (count) => (badge.textContent = count
   and a handled exception is an expected failure (not logged as a warning, not given to `onError`). While you develop,
   `rpc.onException(Throwable.class, (call, e) -> RpcException.exposing(e))` shows every message. Jolt's own codes: `unknown_method`,
   `bad_params`, `too_many_calls`, `too_large`, `unavailable`, and in the page `timeout` and `not_enabled`.
+- **Interceptors:** `rpc.before(call -> ...)` runs before every call (throw an `RpcException` to refuse: a sign-in check), and
+  `rpc.around((call, next) -> ...)` wraps it (time it, log it, answer from a cache). They run in the order registered, the first
+  one outermost, and see the value a `CompletionStage` resolves to, not the stage.
 - **Cancellation:** an aborted `signal`, a passed `timeout`, a reload or navigation, closing the window or `rpc.detach(window)`
   cancels the call. Java interrupts the handler's thread and drops its answer.
 - **Limits and security:** only pages whose origin the `SecurityPolicy` trusts can call, and only from the top-level
@@ -191,7 +194,54 @@ const stop = jolt.onEvent('notes.changed', (count) => (badge.textContent = count
 - One `Rpc` can serve several windows (`RpcCall.window()` says which one called). RPC traffic never reaches
   `window.onMessage` or `jolt.onMessage`, so they stay free for your own messages.
 
-For TypeScript:
+#### Streaming results
+
+A method that has many answers over time, not one, returns a `Flow.Publisher` or fills a stream; the page reads it with
+`jolt.stream`, an async iterator:
+
+```java
+rpc.on("tail", call -> {
+    RpcStream<String> out = call.stream();
+    try (BufferedReader log = Files.newBufferedReader(path)) {
+        for (String line; (line = log.readLine()) != null; ) {
+            out.send(line);                       // waits while the page is behind; throws if it gave up
+        }
+    }
+    return null;                                  // the stream ends when the handler returns
+});
+rpc.on("rows", call -> database.rowsPublisher());   // a Flow.Publisher is forwarded item by item
+```
+
+```js
+for await (const line of jolt.stream('tail', { file: 'app.log' }, { signal })) append(line);   // break (or abort) stops Java
+```
+
+The page asks for more items as it consumes them, so a fast producer cannot flood a slow page: at most
+`RpcOptions.streamWindow` (64) items are on their way, `send` waits, and a `Publisher` is asked for no more than that. An error
+ends the stream with a `JoltRpcError` after the items already sent. A stream counts as a running call until it ends, so
+`maxConcurrentCalls` applies. A handler can also return its `RpcStream` so that another thread goes on filling it, and calls
+`complete()` or `fail(error)` later. Calling a streaming method with `jolt.call` is answered with `stream_required`; reading a method
+that returns a plain value with `jolt.stream` gives a stream of one item.
+
+#### TypeScript types
+
+`rpc.writeTypeScript(Path.of("frontend/src/jolt-api.d.ts"))` writes declarations for every registered method: an interface per
+record, a type per enum, and a typed `window.jolt`, so a wrong method name, parameter or result is a compile error:
+
+```ts
+const notes = await window.jolt.call('notes.list');          // Note[]
+await window.jolt.call('notes.add', { txt: 'x' });           // error: no property 'txt'
+for await (const note of window.jolt.stream('notes.watch')) { ... }   // Note
+```
+
+The types come from the declarations of methods registered with `rpc.register(controller)` (parameter and return type; a
+`CompletionStage` is unwrapped; a `Flow.Publisher<T>` or `RpcStream<T>` result is a stream). A method registered with a plain
+lambda is typed `unknown`, unless you say what it takes and returns: `rpc.on(name, NewNote.class, Note.class, handler)`.
+The shapes are those of `JsonCodec.basic()`: a JSON library that renames properties or writes dates differently needs
+declarations of its own. A record component that can be null is written `name?: T | null`, unless it is primitive or
+annotated `@NonNull` (any annotation with that name). This is one more reason to prefer annotated controllers for big APIs.
+Call it at startup while developing; the file is only rewritten when its text changes. Use the generated file instead of
+declaring `Window.jolt` yourself. By hand, if you prefer:
 
 ```ts
 declare global {
@@ -199,6 +249,7 @@ declare global {
     jolt: {
       call<T = unknown>(method: string, params?: unknown,
                         options?: { signal?: AbortSignal; timeout?: number; onProgress?: (data: unknown) => void }): Promise<T>;
+      stream<T = unknown>(method: string, params?: unknown, options?: { signal?: AbortSignal }): AsyncIterableIterator<T>;
       onEvent<T = unknown>(name: string, callback: (data: T) => void): () => void;
       postMessage(message: string): void;
       onMessage(callback: (message: string) => void): () => void;
@@ -435,10 +486,15 @@ Router router = Router.create()
     .group("/admin", admin -> admin
         .before(request -> loggedIn(request) ? null : AppResponse.redirect("/login"))
         .get("/users", request -> AppResponse.html(pages.users())))
-    .onError((request, error) -> AppResponse.html(pages.error(error)).withStatus(500));
+    .onException(NotFoundException.class, (request, error) -> AppResponse.html(pages.notFound()).withStatus(404))
+    .onException(Exception.class, (request, error) -> AppResponse.html(pages.error(error)).withStatus(500));
 window.loadResources(AppResources.classpath("ui"), router);
 ```
 
+- Errors work as in `Rpc`: `router.onException(Type.class, (request, error) -> response)` says what is sent for an exception of that
+  type (the most specific type wins, `Exception.class` catches the rest). A handled exception is an expected failure: nothing is
+  logged and `router.onError(...)` (a listener, as in `Rpc`) is not told, unless the response is a 5xx; an unhandled one gets a
+  bare 500 and is logged.
 - Patterns: `{id}` captures one segment, `{*rest}` the rest. A plain segment beats `{id}`, which beats `{*rest}`.
 - A request no route matches falls through to your files. A wrong method on a known path gets 405 with `Allow`.
 - Handlers run on worker threads. An exception becomes a bare 500 and the details go to the log, never to the page.
@@ -804,7 +860,9 @@ reaches the page with its code, anything else only as `internal` unless a `@Jolt
 `jolt.rpc.expose-error-messages=true` shows every message while you develop). The JSON library is the application's own: its Jackson 3 `ObjectMapper`
 (Spring Boot 4's default), a Jackson 2 or Gson bean, or else `JsonCodec.basic()`. A `JsonCodec`, `RpcOptions` or `Rpc` bean of your
 own replaces the starter's. Inject `Rpc` to push events with `rpc.emit(...)`. Two methods with one name, or a name starting with `jolt.`,
-stop the application at startup.
+stop the application at startup. Beans can also join the `Rpc`: an `RpcInterceptor` bean wraps every call (`@Order` sets the order),
+and an `RpcExceptionHandler<SomeException>` bean (or `@JoltRpcExceptionHandler` methods) says what the page is told for that
+exception. `jolt.rpc.typescript=frontend/src/jolt-api.d.ts` writes TypeScript declarations of the `@JoltRpc` methods at startup.
 
 **web mode** (Spring MVC): the window shows the application's own server, so existing controllers, templates (Thymeleaf, JTE), htmx and
 static files work unchanged, and `jolt.call` works there too. The server listens on `127.0.0.1` on a free port, and only the window can
@@ -827,7 +885,7 @@ Closing the window closes the Spring context, and closing the context (`SpringAp
 tell a [jpack](#installs-that-update-themselves-jpack) launcher.
 
 Settings (`application.properties`): `jolt.app-id`, `jolt.mode`, `jolt.ui`, `jolt.window.{title,width,height,min-width,min-height,maximized,frameless,resizable,dev-tools,show,show-after}`,
-`jolt.web.start-path`, `jolt.rpc.{expose-error-messages,max-concurrent-calls,max-message-chars}`. The window settings are read before
+`jolt.web.start-path`, `jolt.rpc.{expose-error-messages,max-concurrent-calls,max-message-chars,stream-window,typescript}`. The window settings are read before
 the beans exist, so they come from the environment; for anything else use the builder:
 
 ```java

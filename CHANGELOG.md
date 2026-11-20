@@ -9,6 +9,28 @@ The latest version is the one on [Maven Central](https://central.sonatype.com/ar
 ## Unreleased
 
 ### Added
+- **RPC: server streaming.** A handler returns a `Flow.Publisher` or calls `call.stream()` for an `RpcStream` (`send` / `complete` /
+  `fail`), and the page reads it with `jolt.stream(method, params, { signal })`, an async iterator (`for await`, `break` stops the
+  producer in Java). The page asks for more items as it consumes them (new `more` message), so at most `RpcOptions.streamWindow`
+  (default 64) are on their way: `send` waits, a `Publisher` is asked for no more, and a page cannot grant more than the window. A
+  stream counts as a running call until it ends, ends with an error after the items already sent if the handler throws (exception
+  handlers apply), and is cancelled by the page (a `break`, an abort, a reload) like any call. A handler may return its
+  `RpcStream` to let another thread finish it. A plain value for `jolt.stream` is a stream of one; a streaming method called with
+  `jolt.call` is answered with the new code `stream_required`. Wire: `"st":true` on the call, `more`, `item`, `end`. Tested:
+  `RpcStreamTest` (13) and the contract test `rpcStreamsReachThePageAsAsyncIterators...` (real web view: 200 items through a
+  window of 8, early stop, error, abort).
+- **RPC: interceptors.** `rpc.before(call -> ...)` and `rpc.around((call, next) -> ...)` (`RpcInterceptor`) run around every call to a
+  method that exists, in registration order, first outermost. They see the value of a `CompletionStage`, not the stage; what they
+  throw goes through the exception handlers. Tested: `RpcInterceptorTest` (7).
+- **RPC: TypeScript declarations.** `rpc.typeScript()` / `rpc.writeTypeScript(path)` write an interface per record, a type per enum
+  and a typed `window.jolt` (`call`, `stream`) from the declared types of `register`ed methods (a `CompletionStage` is unwrapped,
+  a `Publisher<T>` / `RpcStream<T>` result is a stream); `rpc.on(name, paramsType, resultType, handler)` tells the generator about a
+  lambda. Shapes follow `JsonCodec.basic()`; nullable record components are `name?: T | null` unless primitive or `@NonNull`.
+  Checked with the real TypeScript compiler (strict) by `RpcTypeScriptTest` when `JOLT_TSC` points at `tsc`.
+- **Spring starter:** `RpcInterceptor` beans (ordered), `RpcExceptionHandler<E>` beans (the exception type comes from the declared
+  generic), `jolt.rpc.stream-window`, and `jolt.rpc.typescript=<file>` to write the declarations at startup. `@JoltRpc` methods are
+  registered with their types, so they appear typed in the generated file.
+- `RpcOptions.streamWindow`, `RpcStream`, `RpcCall.stream()`, `RpcException.STREAM_REQUIRED`, `Rpc.around/before/typeScript/writeTypeScript`.
 - **RPC: `Rpc.register(Object controller)`, with `@JoltRpc` and `@JoltRpcExceptionHandler` in core.** Registers the annotated
   methods of an object (a class-level `@JoltRpc("notes")` is the prefix; superclasses are scanned; an annotated override is
   registered once) and the exception handlers. Documented as the alternative to `rpc.on(...)`, not the preferred way: it is
@@ -37,6 +59,14 @@ The latest version is the one on [Maven Central](https://central.sonatype.com/ar
   checked at startup (one exception parameter, returns `RpcException`, no two handlers for one type).
 
 ### Changed
+- **Breaking: `Router` handles errors like `Rpc`.** `Router.onError(ErrorHandler)` (one catch-all handler returning a response, or `null`)
+  is gone. `router.onException(Type.class, (request, error) -> response)` is type-routed, the most specific type wins, and a handled
+  exception is an expected failure (logged at `DEBUG` only, not given to the listener), unless the response is a 5xx. An unhandled one
+  still gets a bare 500 and is logged. `router.onError(BiConsumer<AppRequest, Throwable>)` is now what it is in `Rpc`: a listener for the
+  unexpected ones (unhandled, or handled with a 5xx). A handler that throws or returns `null` is logged and the exception is treated
+  as unhandled (it used to be rethrown with the handler's own failure on top). The routing rule is shared with `Rpc.onException`
+  (`internal/TypeRouted`). Old `onError((r, e) -> response)` becomes `onException(Exception.class, (r, e) -> response)`.
+- **Breaking (unreleased API):** `RpcOptions` is now `(codec, maxMessageChars, maxConcurrentCalls, streamWindow, executor)`.
 - **Spring starter:** `@JoltRpc` and `@JoltRpcExceptionHandler` moved from `io.github.b077as.jolt.spring` to `io.github.b077as.jolt` (core). Unreleased, so
   only the import changes. Beans are still found by the starter (through proxies, with composed annotations).
 - **Breaking (unreleased API, so no deprecation):** `RpcOptions` lost `exposeErrorMessages` and `withExposeErrorMessages`; it is now

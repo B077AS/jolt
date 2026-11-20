@@ -279,7 +279,7 @@ class RouterTest {
     }
 
     @Test
-    void anErrorHandlerTurnsExceptionsFromRoutesAndFiltersIntoResponses() throws Exception {
+    void anExceptionHandlerTurnsExceptionsFromRoutesAndFiltersIntoResponses() throws Exception {
         Router router = Router.create()
                 .before(r -> {
                     if (r.path().equals("/filter")) {
@@ -291,7 +291,7 @@ class RouterTest {
                     throw new IllegalStateException("route failed");
                 })
                 .get("/filter", r -> AppResponse.text("never"))
-                .onError((r, e) -> AppResponse.html("<p>" + e.getMessage() + "</p>").withStatus(500));
+                .onException(Exception.class, (r, e) -> AppResponse.html("<p>" + e.getMessage() + "</p>").withStatus(500));
         AppResponse route = router.handle(request("GET", "/boom"));
         assertEquals(500, route.status());
         assertEquals("<p>route failed</p>", text(route));
@@ -299,32 +299,68 @@ class RouterTest {
     }
 
     @Test
-    void anErrorHandlerThatReturnsNullLeavesTheOriginalException() {
+    void theMostSpecificExceptionHandlerWinsAndAnUnhandledOneGoesOn() throws Exception {
         Router router = Router.create()
-                .get("/boom", r -> {
-                    throw new IllegalStateException("original");
+                .get("/number", r -> AppResponse.text(String.valueOf(Integer.parseInt("x"))))   // NumberFormatException, an IllegalArgumentException
+                .get("/state", r -> {
+                    throw new IllegalStateException("state");                // a RuntimeException only
                 })
-                .onError((r, e) -> null);
-        assertEquals("original", assertThrows(IllegalStateException.class, () -> router.handle(request("GET", "/boom"))).getMessage());
+                .get("/io", r -> {
+                    throw new IOException("io");                             // no handler for this
+                })
+                .onException(RuntimeException.class, (r, e) -> AppResponse.text("runtime").withStatus(500))
+                .onException(IllegalArgumentException.class, (r, e) -> AppResponse.text("argument").withStatus(400));
+        assertEquals("argument", text(router.handle(request("GET", "/number"))));
+        assertEquals(400, router.handle(request("GET", "/number")).status());
+        assertEquals("runtime", text(router.handle(request("GET", "/state"))));
+        assertEquals("io", assertThrows(IOException.class, () -> router.handle(request("GET", "/io"))).getMessage());
     }
 
     @Test
-    void anErrorHandlerThatThrowsKeepsBothFailures() {
+    void aHandledExceptionIsExpectedAndOnlyAFiveHundredIsReported() throws Exception {
+        List<Throwable> reported = new ArrayList<>();
         Router router = Router.create()
-                .get("/boom", r -> {
+                .get("/missing", r -> {
+                    throw new IllegalArgumentException("no such note");
+                })
+                .get("/bug", r -> {
+                    throw new IllegalStateException("bug");
+                })
+                .get("/unhandled", r -> {
+                    throw new IOException("unhandled");
+                })
+                .onException(IllegalArgumentException.class, (r, e) -> AppResponse.text(e.getMessage()).withStatus(404))
+                .onException(IllegalStateException.class, (r, e) -> AppResponse.text("oops").withStatus(500))
+                .onError((r, e) -> reported.add(e));
+        router.handle(request("GET", "/missing"));
+        assertTrue(reported.isEmpty(), "an expected failure is not reported");
+        assertEquals(500, router.handle(request("GET", "/bug")).status());
+        assertEquals(1, reported.size());
+        assertThrows(IOException.class, () -> router.handle(request("GET", "/unhandled")));
+        assertEquals(2, reported.size(), "no handler: reported, and the exception goes on");
+        assertTrue(reported.get(1) instanceof IOException);
+    }
+
+    @Test
+    void aHandlerThatReturnsNullOrThrowsLeavesTheOriginalException() {
+        Router router = Router.create()
+                .get("/null", r -> {
                     throw new IllegalStateException("original");
                 })
-                .onError((r, e) -> {
-                    throw new IOException("handler failed");
+                .get("/throws", r -> {
+                    throw new IllegalArgumentException("original too");
+                })
+                .onException(IllegalStateException.class, (r, e) -> null)
+                .onException(IllegalArgumentException.class, (r, e) -> {
+                    throw new UnsupportedOperationException("handler failed");
                 });
-        IOException thrown = assertThrows(IOException.class, () -> router.handle(request("GET", "/boom")));
-        assertEquals("handler failed", thrown.getMessage());
-        assertEquals("original", thrown.getSuppressed()[0].getMessage());
+        assertEquals("original", assertThrows(IllegalStateException.class, () -> router.handle(request("GET", "/null"))).getMessage());
+        assertEquals("original too", assertThrows(IllegalArgumentException.class, () -> router.handle(request("GET", "/throws"))).getMessage());
     }
 
     @Test
     void unmatchedRequestsAreNotErrors() throws Exception {
-        Router router = Router.create().onError((r, e) -> AppResponse.text("error"));
+        Router router = Router.create().onException(Exception.class, (r, e) -> AppResponse.text("error"));
         assertNull(router.handle(request("GET", "/anything")));
     }
 

@@ -7,6 +7,9 @@ import io.github.b077as.jolt.JsonCodec;
 import io.github.b077as.jolt.Rpc;
 import io.github.b077as.jolt.RpcCall;
 import io.github.b077as.jolt.RpcException;
+import io.github.b077as.jolt.RpcExceptionHandler;
+import io.github.b077as.jolt.RpcHandler;
+import io.github.b077as.jolt.RpcInterceptor;
 import io.github.b077as.jolt.WebWindow;
 import io.github.b077as.jolt.spring.internal.LoopbackGuard;
 import org.junit.jupiter.api.Test;
@@ -253,6 +256,113 @@ class JoltAutoConfigurationTest {
                 assertTrue(context.getStartupFailure().getMessage().contains("@JoltRpcExceptionHandler"), context.getStartupFailure().getMessage());
             });
         }
+    }
+
+    static class Audit implements RpcInterceptor {
+        final List<String> seen = new java.util.concurrent.CopyOnWriteArrayList<>();
+        final String name;
+
+        Audit(String name) {
+            this.name = name;
+        }
+
+        @Override
+        public Object intercept(RpcCall call, RpcHandler next) throws Exception {
+            seen.add(name + " " + call.method());
+            return next.handle(call);
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    static class Interceptors {
+        @Bean
+        @org.springframework.core.annotation.Order(2)
+        Audit second() {
+            return new Audit("second");
+        }
+
+        @Bean
+        @org.springframework.core.annotation.Order(1)
+        Audit first() {
+            return new Audit("first");
+        }
+
+        @Bean
+        RpcInterceptor refuseBroken() {
+            return (call, next) -> {
+                if (call.method().equals("notes.refuse")) {
+                    throw new RpcException("blocked", "by an interceptor bean");
+                }
+                return next.handle(call);
+            };
+        }
+    }
+
+    @Test
+    void rpcInterceptorBeansWrapEveryCallInTheirOrder() {
+        runner.withUserConfiguration(Notes.class, Interceptors.class).run(context -> {
+            FakePage page = new FakePage();
+            context.getBean(Rpc.class).attach(page.window);
+            assertEquals("hello", page.result("notes.hello", "{}"));
+            Audit first = context.getBean("first", Audit.class);
+            Audit second = context.getBean("second", Audit.class);
+            assertEquals(List.of("first notes.hello"), first.seen);
+            assertEquals(List.of("second notes.hello"), second.seen);
+            assertEquals("blocked", page.error("notes.refuse", "{}").get("code"));
+        });
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    static class ExceptionHandlerBeans {
+        @Bean
+        RpcExceptionHandler<IllegalStateException> state() {
+            return (call, e) -> new RpcException("state", "handled by a bean: " + e.getMessage());
+        }
+    }
+
+    static class IllegalArgumentHandler implements RpcExceptionHandler<IllegalArgumentException> {
+        @Override
+        public RpcException handle(RpcCall call, IllegalArgumentException error) {
+            return new RpcException("argument", error.getMessage());
+        }
+    }
+
+    @Test
+    void rpcExceptionHandlerBeansHandleTheTypeTheyDeclare() {
+        runner.withUserConfiguration(Notes.class, ExceptionHandlerBeans.class).withBean(IllegalArgumentHandler.class).run(context -> {
+            FakePage page = new FakePage();
+            context.getBean(Rpc.class).attach(page.window);
+            Map<?, ?> broken = page.error("notes.broken", "{}");
+            assertEquals("state", broken.get("code"));
+            assertEquals("handled by a bean: secret detail", broken.get("message"));
+            assertEquals(2, context.getBeansOfType(RpcExceptionHandler.class).size());
+        });
+    }
+
+    @Test
+    void anExceptionHandledByABeanAndByAnAnnotatedMethodStopsTheApplication() {
+        runner.withUserConfiguration(NotesWithErrors.class, ExceptionHandlerBeans.class).run(context -> {
+            assertNotNull(context.getStartupFailure());
+            assertTrue(context.getStartupFailure().getMessage().contains("handled twice"), context.getStartupFailure().getMessage());
+        });
+    }
+
+    @Test
+    void theTypeScriptPropertyWritesTheDeclarationsOfTheMethodsAtStartup(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+        java.nio.file.Path file = dir.resolve("jolt-api.d.ts");
+        runner.withUserConfiguration(Notes.class).withPropertyValues("jolt.rpc.typescript=" + file.toString().replace('\\', '/')).run(context -> {
+            assertNotNull(context.getBean(Rpc.class));
+            String ts = java.nio.file.Files.readString(file);
+            assertTrue(ts.contains("\"notes.add\": { params: Note; result: Note };"), ts);
+            assertTrue(ts.contains("\"notes.later\": { params: void; result: string };"), ts);
+            assertTrue(ts.contains("export interface Note {"), ts);
+            assertTrue(!ts.contains("jolt.window"), ts);
+        });
+    }
+
+    @Test
+    void theStreamWindowPropertyReachesTheOptions() {
+        runner.withPropertyValues("jolt.rpc.stream-window=7").run(context -> assertEquals(7, context.getBean(Rpc.class).options().streamWindow()));
     }
 
     @JoltRpc

@@ -3,6 +3,9 @@ package io.github.b077as.jolt.spring.internal;
 import io.github.b077as.jolt.JoltRpc;
 import io.github.b077as.jolt.JoltRpcExceptionHandler;
 import io.github.b077as.jolt.Rpc;
+import io.github.b077as.jolt.RpcExceptionHandler;
+import io.github.b077as.jolt.RpcInterceptor;
+import io.github.b077as.jolt.spring.JoltProperties;
 import io.github.b077as.jolt.internal.RpcControllers;
 import org.springframework.aop.support.AopUtils;
 import org.springframework.beans.BeansException;
@@ -10,10 +13,14 @@ import org.springframework.beans.factory.BeanFactory;
 import org.springframework.beans.factory.BeanFactoryAware;
 import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.beans.factory.config.BeanPostProcessor;
+import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
+import org.springframework.core.GenericTypeResolver;
+import org.springframework.core.ResolvableType;
 import org.springframework.core.MethodIntrospector;
 import org.springframework.core.annotation.AnnotatedElementUtils;
 
 import java.lang.reflect.Method;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -90,9 +97,6 @@ public final class RpcMethodRegistrar implements BeanPostProcessor, SmartInitial
             exceptionHandlers = List.copyOf(foundHandlers);
             foundHandlers.clear();
         }
-        if (all.isEmpty() && exceptionHandlers.isEmpty()) {
-            return;
-        }
         Map<String, Found> byName = new LinkedHashMap<>();
         for (Found method : all) {
             Found earlier = byName.putIfAbsent(method.name(), method);
@@ -111,9 +115,11 @@ public final class RpcMethodRegistrar implements BeanPostProcessor, SmartInitial
             }
         }
         Rpc rpc = beanFactory.getBean(Rpc.class);
+        beanFactory.getBeanProvider(RpcInterceptor.class).orderedStream().forEach(rpc::around);
         for (Found method : byName.values()) {
             String where = describe(method.beanName(), method.method());
-            rpc.on(method.name(), RpcControllers.handler(method.bean(), method.method(), invocable(method.method(), method.bean()), where));
+            rpc.on(method.name(), RpcControllers.paramsType(method.method()), RpcControllers.resultType(method.method()),
+                    RpcControllers.handler(method.bean(), method.method(), invocable(method.method(), method.bean()), where));
         }
         for (Map.Entry<Class<?>, FoundHandler> entry : byType.entrySet()) {
             FoundHandler handler = entry.getValue();
@@ -121,6 +127,39 @@ public final class RpcMethodRegistrar implements BeanPostProcessor, SmartInitial
             @SuppressWarnings("unchecked")
             Class<Throwable> type = (Class<Throwable>) entry.getKey();
             rpc.onException(type, RpcControllers.exceptionHandler(handler.bean(), handler.method(), invocable(handler.method(), handler.bean()), where));
+        }
+        registerExceptionHandlerBeans(rpc, byType.keySet());
+        String typeScript = beanFactory.getBean(JoltProperties.class).getRpc().getTypescript();
+        if (typeScript != null && !typeScript.isBlank()) {
+            rpc.writeTypeScript(Path.of(typeScript.strip()));
+        }
+    }
+
+    /**
+     * Beans that are an {@link RpcExceptionHandler} (a {@code @Bean} method returning {@code RpcExceptionHandler<SQLException>}, or a
+     * class implementing it) handle the exception type they declare, as {@code @JoltRpcExceptionHandler} methods do.
+     */
+    @SuppressWarnings("unchecked")
+    private void registerExceptionHandlerBeans(Rpc rpc, java.util.Set<Class<?>> annotated) {
+        if (!(beanFactory instanceof ConfigurableListableBeanFactory factory)) {
+            return;
+        }
+        java.util.Set<Class<?>> seen = new java.util.HashSet<>(annotated);
+        for (String name : factory.getBeanNamesForType(RpcExceptionHandler.class)) {
+            Class<?> type = ResolvableType.forType(factory.getMergedBeanDefinition(name).getResolvableType().getType())
+                    .as(RpcExceptionHandler.class).resolveGeneric(0);
+            if (type == null) {
+                type = GenericTypeResolver.resolveTypeArgument(factory.getType(name), RpcExceptionHandler.class);
+            }
+            if (type == null || !Throwable.class.isAssignableFrom(type)) {
+                throw new IllegalStateException("The RpcExceptionHandler bean '" + name + "' does not say which exception it handles: declare it as "
+                        + "RpcExceptionHandler<SomeException> (the return type of the @Bean method, or the class's own type argument)");
+            }
+            if (!seen.add(type)) {
+                throw new IllegalStateException("The exception " + type.getName() + " is handled twice (the RpcExceptionHandler bean '" + name
+                        + "' and another handler)");
+            }
+            rpc.onException((Class<Throwable>) type, (RpcExceptionHandler<Throwable>) factory.getBean(name));
         }
     }
 
