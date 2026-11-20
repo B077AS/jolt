@@ -190,6 +190,84 @@ public abstract class WebWindowContract {
     }
 
     @Test
+    public void rpcStreamsReachThePageAsAsyncIteratorsWithBackPressureEarlyStopAndErrors() throws Exception {
+        CompletableFuture<Boolean> producerStopped = new CompletableFuture<>();
+        CompletableFuture<String> got = new CompletableFuture<>();
+        runApp(30, app -> {
+            WebWindow window = app.createWindow(WindowOptions.defaults().withSize(400, 300));
+            Rpc.create(io.github.b077as.jolt.RpcOptions.defaults().withStreamWindow(8))
+                    .on("count", call -> {
+                        int to = ((Number) call.params(Map.class).get("to")).intValue();
+                        io.github.b077as.jolt.RpcStream<Integer> out = call.stream();
+                        for (int i = 1; i <= to; i++) {
+                            out.send(i);
+                        }
+                        return null;
+                    })
+                    .on("endless", call -> {
+                        io.github.b077as.jolt.RpcStream<Integer> out = call.stream();
+                        try {
+                            for (int i = 1; ; i++) {
+                                out.send(i);
+                            }
+                        } catch (java.util.concurrent.CancellationException e) {
+                            producerStopped.complete(true);
+                            throw e;
+                        }
+                    })
+                    .on("half", call -> {
+                        io.github.b077as.jolt.RpcStream<String> out = call.stream();
+                        out.send("first");
+                        throw new RpcException("broke", "then it broke");
+                    })
+                    .attach(window);
+            window.onMessage(message -> {
+                got.complete(message);
+                window.close();
+            });
+            window.loadHtml("""
+                    <script>
+                    (async () => {
+                      const out = {};
+                      const all = [];
+                      for await (const n of jolt.stream('count', { to: 200 })) all.push(n);
+                      out.count = all.length;
+                      out.ordered = all.every((v, i) => v === i + 1);
+                      const first = [];
+                      for await (const n of jolt.stream('endless')) { first.push(n); if (first.length === 3) break; }
+                      out.first = first;
+                      const seen = [];
+                      try { for await (const x of jolt.stream('half')) seen.push(x); } catch (e) { out.error = { name: e.name, code: e.code, seen }; }
+                      try { await jolt.call('count', { to: 1 }); } catch (e) { out.streamRequired = e.code; }
+                      const controller = new AbortController();
+                      const aborted = [];
+                      try {
+                        for await (const n of jolt.stream('endless', {}, { signal: controller.signal })) {
+                          aborted.push(n);
+                          if (aborted.length === 2) controller.abort();
+                        }
+                      } catch (e) { out.abort = e.name; }
+                      out.unknown = await jolt.stream('missing')[Symbol.asyncIterator]().next().then(() => 'no error', (e) => e.code);
+                      jolt.postMessage(JSON.stringify(out));
+                    })().catch((e) => jolt.postMessage('failed: ' + e));
+                    </script>
+                    """);
+        });
+        Map<?, ?> out = report(got.get(5, TimeUnit.SECONDS));
+        assertEquals(new java.math.BigDecimal(200), out.get("count"));
+        assertEquals(true, out.get("ordered"), "every item arrived, in order, through a window of 8");
+        assertEquals(List.of(new java.math.BigDecimal(1), new java.math.BigDecimal(2), new java.math.BigDecimal(3)), out.get("first"));
+        Map<?, ?> error = (Map<?, ?>) out.get("error");
+        assertEquals("JoltRpcError", error.get("name"));
+        assertEquals("broke", error.get("code"));
+        assertEquals(List.of("first"), error.get("seen"), "the items before the failure still came");
+        assertEquals(RpcException.STREAM_REQUIRED, out.get("streamRequired"));
+        assertEquals("AbortError", out.get("abort"));
+        assertEquals(RpcException.UNKNOWN_METHOD, out.get("unknown"));
+        assertEquals(true, producerStopped.get(5, TimeUnit.SECONDS), "breaking out of the loop stopped the producer in Java");
+    }
+
+    @Test
     public void anAbortedOrTimedOutRpcCallInterruptsItsHandler() throws Exception {
         java.util.concurrent.CountDownLatch interrupted = new java.util.concurrent.CountDownLatch(2);
         CompletableFuture<String> got = new CompletableFuture<>();

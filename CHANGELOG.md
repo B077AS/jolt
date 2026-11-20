@@ -6,6 +6,81 @@ this file says when they do.
 
 The latest version is the one on [Maven Central](https://central.sonatype.com/artifact/io.github.b077as/jolt-core).
 
+## 0.5.0 - 2026-11-20
+
+### Added
+- **RPC: server streaming.** A handler returns a `Flow.Publisher` or calls `call.stream()` for an `RpcStream` (`send` / `complete` /
+  `fail`), and the page reads it with `jolt.stream(method, params, { signal })`, an async iterator (`for await`, `break` stops the
+  producer in Java). The page asks for more items as it consumes them (new `more` message), so at most `RpcOptions.streamWindow`
+  (default 64) are on their way: `send` waits, a `Publisher` is asked for no more, and a page cannot grant more than the window. A
+  stream counts as a running call until it ends, ends with an error after the items already sent if the handler throws (exception
+  handlers apply), and is cancelled by the page (a `break`, an abort, a reload) like any call. A handler may return its
+  `RpcStream` to let another thread finish it. A plain value for `jolt.stream` is a stream of one; a streaming method called with
+  `jolt.call` is answered with the new code `stream_required`. Wire: `"st":true` on the call, `more`, `item`, `end`. Tested:
+  `RpcStreamTest` (13) and the contract test `rpcStreamsReachThePageAsAsyncIterators...` (real web view: 200 items through a
+  window of 8, early stop, error, abort).
+- **RPC: interceptors.** `rpc.before(call -> ...)` and `rpc.around((call, next) -> ...)` (`RpcInterceptor`) run around every call to a
+  method that exists, in registration order, first outermost. They see the value of a `CompletionStage`, not the stage; what they
+  throw goes through the exception handlers. Tested: `RpcInterceptorTest` (7).
+- **RPC: TypeScript declarations.** `rpc.typeScript()` / `rpc.writeTypeScript(path)` write an interface per record, a type per enum
+  and a typed `window.jolt` (`call`, `stream`) from the declared types of `register`ed methods (a `CompletionStage` is unwrapped,
+  a `Publisher<T>` / `RpcStream<T>` result is a stream); `rpc.on(name, paramsType, resultType, handler)` tells the generator about a
+  lambda. Shapes follow `JsonCodec.basic()`; nullable record components are `name?: T | null` unless primitive or `@NonNull`.
+  Checked with the real TypeScript compiler (strict) by `RpcTypeScriptTest` when `JOLT_TSC` points at `tsc`.
+- **Spring starter:** `RpcInterceptor` beans (ordered), `RpcExceptionHandler<E>` beans (the exception type comes from the declared
+  generic), `jolt.rpc.stream-window`, and `jolt.rpc.typescript=<file>` to write the declarations at startup. `@JoltRpc` methods are
+  registered with their types, so they appear typed in the generated file.
+- `RpcOptions.streamWindow`, `RpcStream`, `RpcCall.stream()`, `RpcException.STREAM_REQUIRED`, `Rpc.around/before/typeScript/writeTypeScript`.
+- **RPC: `Rpc.register(Object controller)`, with `@JoltRpc` and `@JoltRpcExceptionHandler` in core.** Registers the annotated
+  methods of an object (a class-level `@JoltRpc("notes")` is the prefix; superclasses are scanned; an annotated override is
+  registered once) and the exception handlers. Documented as the alternative to `rpc.on(...)`, not the preferred way: it is
+  reflection, so mistakes show up when `register` is called instead of at compile time, native images and `jlink`-trimmed module
+  sets need configuration, and names are strings. For apps with very many methods. A name that already has a handler, a
+  controller without annotated methods, a static method, a `jolt.` name or a method of the wrong shape is an
+  `IllegalStateException`, and nothing of the controller is registered. Tested: `RpcRegisterTest` (6).
+- The binding logic (which argument gets the parameters, the `RpcCall`, the window) and the shape checks moved to
+  `internal/RpcControllers`, used by both `Rpc.register` and the Spring starter, so they behave alike.
+- **RPC: `Rpc.onException(Class<E>, RpcExceptionHandler<E>)`.** Chooses what the page is told when a handler throws something that
+  is not an `RpcException`, per exception type. Until now the page got a generic `internal` error for everything, or, with
+  `RpcOptions.withExposeErrorMessages(true)`, every exception as `ClassName: message`. An app whose messages are meant for the user
+  (a database client shows the database's complaint, a form shows "name is required") now registers
+  `rpc.onException(SQLException.class, (call, e) -> new RpcException("sql", e.getMessage()))`. The most specific type wins (as `catch`
+  clauses and Spring's `@ExceptionHandler` do), `Throwable.class` catches the rest, the handler gets the call and the exception
+  (unwrapped from `ExecutionException` / `CompletionException`; also an `Error` such as a `LinkageError`) and always answers with an
+  `RpcException`. Anything without a handler stays a generic `internal` error.
+- **An exception with a handler is an expected failure: it is logged at `DEBUG`, not as a warning, and is not given to `onError`.**
+  One that falls through to the default, or whose handler answers `internal`, is a bug and is logged and reported as before. A handler
+  that throws or returns `null` is logged and the exception is treated as unhandled. Handlers never see `RpcException`s, cancelled
+  calls or a `VirtualMachineError` (answered as `internal` and rethrown, as before).
+- `RpcException.exposing(error)`: `internal` with the real class and message, for development:
+  `rpc.onException(Throwable.class, (call, e) -> RpcException.exposing(e))`.
+- The message the page receives in an error is cut to `RpcException.MAX_MESSAGE_CHARS` (4096) characters.
+- Spring Boot starter: `@JoltRpcExceptionHandler` methods on beans (`RpcException sql(SQLException e)`, optionally also an `RpcCall`),
+  checked at startup (one exception parameter, returns `RpcException`, no two handlers for one type).
+
+### Changed
+- **Breaking: `Router` handles errors like `Rpc`.** `Router.onError(ErrorHandler)` (one catch-all handler returning a response, or `null`)
+  is gone. `router.onException(Type.class, (request, error) -> response)` is type-routed, the most specific type wins, and a handled
+  exception is an expected failure (logged at `DEBUG` only, not given to the listener), unless the response is a 5xx. An unhandled one
+  still gets a bare 500 and is logged. `router.onError(BiConsumer<AppRequest, Throwable>)` is now what it is in `Rpc`: a listener for the
+  unexpected ones (unhandled, or handled with a 5xx). A handler that throws or returns `null` is logged and the exception is treated
+  as unhandled (it used to be rethrown with the handler's own failure on top). The routing rule is shared with `Rpc.onException`
+  (`internal/TypeRouted`). Old `onError((r, e) -> response)` becomes `onException(Exception.class, (r, e) -> response)`.
+- **Breaking (unreleased API):** `RpcOptions` is now `(codec, maxMessageChars, maxConcurrentCalls, streamWindow, executor)`.
+- **Spring starter:** `@JoltRpc` and `@JoltRpcExceptionHandler` moved from `io.github.b077as.jolt.spring` to `io.github.b077as.jolt` (core). Unreleased, so
+  only the import changes. Beans are still found by the starter (through proxies, with composed annotations).
+- **Breaking (unreleased API, so no deprecation):** `RpcOptions` lost `exposeErrorMessages` and `withExposeErrorMessages`; it is now
+  `RpcOptions(codec, maxMessageChars, maxConcurrentCalls, executor)`. Use `RpcException.exposing` as above, or in the Spring starter
+  the unchanged property `jolt.rpc.expose-error-messages=true`, which now registers that catch-all handler (an app's own handler for
+  `Throwable` replaces it).
+- A `bad_params` answer no longer carries the codec's message, even in development (it can name the app's classes and fields); it is
+  in the log and in the `RpcException`'s cause.
+
+### Verified
+- The RPC changes (streaming, interceptors, `register`, exception handlers, TypeScript declarations), the `Router` error handling and the
+  Spring starter changes pass their tests on Windows 11 and on Linux, on X11 and on Wayland. The TypeScript output is also compiled with the
+  real TypeScript compiler (strict) by a test that runs when `JOLT_TSC` points at `tsc`.
+
 ## 0.4.2 - 2026-11-19
 
 ### Added

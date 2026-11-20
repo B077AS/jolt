@@ -204,11 +204,34 @@ public class JoltProperties {
         }
     }
 
-    /** {@code jolt.rpc.*}: see {@link io.github.b077as.jolt.RpcOptions}. */
+    /** {@code jolt.rpc.*}: see {@link io.github.b077as.jolt.RpcOptions}; {@code expose-error-messages} registers a catch-all {@link io.github.b077as.jolt.Rpc#onException}. */
     public static class Rpc {
         private boolean exposeErrorMessages;
         private int maxConcurrentCalls = 64;
         private int maxMessageChars = 8 * 1024 * 1024;
+        private int streamWindow = 64;
+        private String typescript;
+
+        /** How many items of one stream may be on their way to the page at a time ({@code RpcOptions.streamWindow}). */
+        public int getStreamWindow() {
+            return streamWindow;
+        }
+
+        public void setStreamWindow(int streamWindow) {
+            this.streamWindow = streamWindow;
+        }
+
+        /**
+         * A file to write TypeScript declarations of the page-callable methods to at startup ({@code Rpc.writeTypeScript}), for example
+         * {@code frontend/src/jolt-api.d.ts}. Empty (the default): nothing is written. Meant for development.
+         */
+        public String getTypescript() {
+            return typescript;
+        }
+
+        public void setTypescript(String typescript) {
+            this.typescript = typescript;
+        }
 
         /** Send the class and message of unexpected exceptions to the page (off: the page only learns that the call failed). */
         public boolean isExposeErrorMessages() {

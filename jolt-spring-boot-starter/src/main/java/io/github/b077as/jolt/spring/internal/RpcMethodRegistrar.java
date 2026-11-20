@@ -1,44 +1,50 @@
 package io.github.b077as.jolt.spring.internal;
 
+import io.github.b077as.jolt.JoltRpc;
+import io.github.b077as.jolt.JoltRpcExceptionHandler;
 import io.github.b077as.jolt.Rpc;
-import io.github.b077as.jolt.RpcCall;
-import io.github.b077as.jolt.RpcHandler;
-import io.github.b077as.jolt.WebWindow;
-import io.github.b077as.jolt.spring.JoltRpc;
+import io.github.b077as.jolt.RpcExceptionHandler;
+import io.github.b077as.jolt.RpcInterceptor;
+import io.github.b077as.jolt.spring.JoltProperties;
+import io.github.b077as.jolt.internal.RpcControllers;
 import org.springframework.aop.support.AopUtils;
 import org.springframework.beans.BeansException;
 import org.springframework.beans.factory.BeanFactory;
 import org.springframework.beans.factory.BeanFactoryAware;
 import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.beans.factory.config.BeanPostProcessor;
+import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
+import org.springframework.core.GenericTypeResolver;
+import org.springframework.core.ResolvableType;
 import org.springframework.core.MethodIntrospector;
 import org.springframework.core.annotation.AnnotatedElementUtils;
-import org.springframework.util.ReflectionUtils;
 
-import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
-import java.lang.reflect.Parameter;
-import java.lang.reflect.Type;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * Finds {@link JoltRpc} methods on beans as they are created and, once every singleton exists, registers them with the
- * application's {@link Rpc}. Registering at the end (not while beans are being created) keeps the {@code Rpc} bean, and the
- * JSON mapper it uses, out of the bean post-processing phase.
+ * Finds {@link JoltRpc} and {@link JoltRpcExceptionHandler} methods on beans as they are created (seeing through proxies and composed
+ * annotations, which Spring knows how to do) and, once every singleton exists, registers them with the application's {@link Rpc}. What a
+ * method may take, and the checks of its shape, are {@link RpcControllers}', the same as for {@code Rpc.register}. Registering at the end
+ * (not while beans are being created) keeps the {@code Rpc} bean, and the JSON mapper it uses, out of the bean post-processing phase.
  */
 public final class RpcMethodRegistrar implements BeanPostProcessor, SmartInitializingSingleton, BeanFactoryAware {
 
     /** Names under this prefix belong to Jolt (such as {@code jolt.window.show}). */
-    public static final String RESERVED_PREFIX = "jolt.";
+    public static final String RESERVED_PREFIX = RpcControllers.RESERVED_PREFIX;
 
     private record Found(String name, Object bean, String beanName, Method method) {
     }
 
+    private record FoundHandler(Object bean, String beanName, Method method) {
+    }
+
     private final List<Found> found = new ArrayList<>();
+    private final List<FoundHandler> foundHandlers = new ArrayList<>();
     private BeanFactory beanFactory;
 
     @Override
@@ -54,20 +60,26 @@ public final class RpcMethodRegistrar implements BeanPostProcessor, SmartInitial
         }
         Map<Method, JoltRpc> methods = MethodIntrospector.selectMethods(type,
                 (MethodIntrospector.MetadataLookup<JoltRpc>) method -> AnnotatedElementUtils.findMergedAnnotation(method, JoltRpc.class));
-        if (methods.isEmpty()) {
+        Map<Method, JoltRpcExceptionHandler> handlers = MethodIntrospector.selectMethods(type,
+                (MethodIntrospector.MetadataLookup<JoltRpcExceptionHandler>) method ->
+                        AnnotatedElementUtils.findMergedAnnotation(method, JoltRpcExceptionHandler.class));
+        if (methods.isEmpty() && handlers.isEmpty()) {
             return bean;
+        }
+        synchronized (foundHandlers) {
+            for (Method method : handlers.keySet()) {
+                foundHandlers.add(new FoundHandler(bean, beanName, method));
+            }
         }
         JoltRpc onClass = AnnotatedElementUtils.findMergedAnnotation(type, JoltRpc.class);
         String prefix = onClass == null ? "" : onClass.value().strip();
         synchronized (found) {
             for (Map.Entry<Method, JoltRpc> entry : methods.entrySet()) {
                 Method method = entry.getKey();
-                if (Modifier.isStatic(method.getModifiers())) {
-                    throw new IllegalStateException("@JoltRpc method " + describe(beanName, method) + " is static; it must be an instance method");
-                }
-                String own = entry.getValue().value().strip();
-                String name = own.isEmpty() ? method.getName() : own;
-                found.add(new Found(prefix.isEmpty() ? name : prefix + "." + name, bean, beanName, method));
+                String name = RpcControllers.nameOf(entry.getValue().value().strip(), method);
+                String full = prefix.isEmpty() ? name : prefix + "." + name;
+                RpcControllers.checkMethod(full, method, describe(beanName, method));
+                found.add(new Found(full, bean, beanName, method));
             }
         }
         return bean;
@@ -80,69 +92,80 @@ public final class RpcMethodRegistrar implements BeanPostProcessor, SmartInitial
             all = List.copyOf(found);
             found.clear();
         }
-        if (all.isEmpty()) {
-            return;
+        List<FoundHandler> exceptionHandlers;
+        synchronized (foundHandlers) {
+            exceptionHandlers = List.copyOf(foundHandlers);
+            foundHandlers.clear();
         }
         Map<String, Found> byName = new LinkedHashMap<>();
         for (Found method : all) {
-            if (method.name().startsWith(RESERVED_PREFIX)) {
-                throw new IllegalStateException("@JoltRpc name '" + method.name() + "' on " + describe(method.beanName(), method.method())
-                        + " starts with '" + RESERVED_PREFIX + "', which is reserved for Jolt");
-            }
             Found earlier = byName.putIfAbsent(method.name(), method);
             if (earlier != null) {
                 throw new IllegalStateException("Two @JoltRpc methods are called '" + method.name() + "': "
                         + describe(earlier.beanName(), earlier.method()) + " and " + describe(method.beanName(), method.method()));
             }
         }
+        Map<Class<?>, FoundHandler> byType = new LinkedHashMap<>();
+        for (FoundHandler handler : exceptionHandlers) {
+            Class<?> type = RpcControllers.exceptionType(handler.method(), describe(handler.beanName(), handler.method()));
+            FoundHandler earlier = byType.putIfAbsent(type, handler);
+            if (earlier != null) {
+                throw new IllegalStateException("Two @JoltRpcExceptionHandler methods handle " + type.getName() + ": "
+                        + describe(earlier.beanName(), earlier.method()) + " and " + describe(handler.beanName(), handler.method()));
+            }
+        }
         Rpc rpc = beanFactory.getBean(Rpc.class);
+        beanFactory.getBeanProvider(RpcInterceptor.class).orderedStream().forEach(rpc::around);
         for (Found method : byName.values()) {
-            rpc.on(method.name(), handler(method));
+            String where = describe(method.beanName(), method.method());
+            rpc.on(method.name(), RpcControllers.paramsType(method.method()), RpcControllers.resultType(method.method()),
+                    RpcControllers.handler(method.bean(), method.method(), invocable(method.method(), method.bean()), where));
+        }
+        for (Map.Entry<Class<?>, FoundHandler> entry : byType.entrySet()) {
+            FoundHandler handler = entry.getValue();
+            String where = describe(handler.beanName(), handler.method());
+            @SuppressWarnings("unchecked")
+            Class<Throwable> type = (Class<Throwable>) entry.getKey();
+            rpc.onException(type, RpcControllers.exceptionHandler(handler.bean(), handler.method(), invocable(handler.method(), handler.bean()), where));
+        }
+        registerExceptionHandlerBeans(rpc, byType.keySet());
+        String typeScript = beanFactory.getBean(JoltProperties.class).getRpc().getTypescript();
+        if (typeScript != null && !typeScript.isBlank()) {
+            rpc.writeTypeScript(Path.of(typeScript.strip()));
         }
     }
 
-    /** Builds the handler once: which argument goes where is worked out here, not on every call. */
-    static RpcHandler handler(Found found) {
-        Method target = AopUtils.selectInvocableMethod(found.method(), found.bean().getClass());
-        ReflectionUtils.makeAccessible(target);
-        Parameter[] parameters = found.method().getParameters();
-        Type paramsType = null;
-        int paramsIndex = -1;
-        for (int i = 0; i < parameters.length; i++) {
-            Class<?> type = parameters[i].getType();
-            if (type != RpcCall.class && type != WebWindow.class) {
-                if (paramsIndex >= 0) {
-                    throw new IllegalStateException("@JoltRpc method " + describe(found.beanName(), found.method())
-                            + " has more than one parameter for what the page sends; put them in one record");
-                }
-                paramsIndex = i;
-                paramsType = parameters[i].getParameterizedType();
-            }
+    /**
+     * Beans that are an {@link RpcExceptionHandler} (a {@code @Bean} method returning {@code RpcExceptionHandler<SQLException>}, or a
+     * class implementing it) handle the exception type they declare, as {@code @JoltRpcExceptionHandler} methods do.
+     */
+    @SuppressWarnings("unchecked")
+    private void registerExceptionHandlerBeans(Rpc rpc, java.util.Set<Class<?>> annotated) {
+        if (!(beanFactory instanceof ConfigurableListableBeanFactory factory)) {
+            return;
         }
-        int index = paramsIndex;
-        Type type = paramsType;
-        Object bean = found.bean();
-        return call -> {
-            Object[] arguments = new Object[parameters.length];
-            for (int i = 0; i < parameters.length; i++) {
-                Class<?> parameter = parameters[i].getType();
-                arguments[i] = i == index ? call.params(type)
-                        : parameter == RpcCall.class ? call
-                        : call.window();
+        java.util.Set<Class<?>> seen = new java.util.HashSet<>(annotated);
+        for (String name : factory.getBeanNamesForType(RpcExceptionHandler.class)) {
+            Class<?> type = ResolvableType.forType(factory.getMergedBeanDefinition(name).getResolvableType().getType())
+                    .as(RpcExceptionHandler.class).resolveGeneric(0);
+            if (type == null) {
+                type = GenericTypeResolver.resolveTypeArgument(factory.getType(name), RpcExceptionHandler.class);
             }
-            try {
-                return target.invoke(bean, arguments);
-            } catch (InvocationTargetException e) {
-                Throwable cause = e.getCause();
-                if (cause instanceof Exception exception) {
-                    throw exception;
-                }
-                if (cause instanceof Error error) {
-                    throw error;
-                }
-                throw e;
+            if (type == null || !Throwable.class.isAssignableFrom(type)) {
+                throw new IllegalStateException("The RpcExceptionHandler bean '" + name + "' does not say which exception it handles: declare it as "
+                        + "RpcExceptionHandler<SomeException> (the return type of the @Bean method, or the class's own type argument)");
             }
-        };
+            if (!seen.add(type)) {
+                throw new IllegalStateException("The exception " + type.getName() + " is handled twice (the RpcExceptionHandler bean '" + name
+                        + "' and another handler)");
+            }
+            rpc.onException((Class<Throwable>) type, (RpcExceptionHandler<Throwable>) factory.getBean(name));
+        }
+    }
+
+    /** The method to call on the bean: on a proxy, the one the proxy's class has (an interface method for a JDK proxy). */
+    private static Method invocable(Method method, Object bean) {
+        return AopUtils.selectInvocableMethod(method, bean.getClass());
     }
 
     private static String describe(String beanName, Method method) {

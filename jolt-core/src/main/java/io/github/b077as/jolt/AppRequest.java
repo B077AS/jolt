@@ -91,7 +91,7 @@ public record AppRequest(String method, String path, String query, Map<String, S
      * {@link ResourceOptions#maxRequestBytes()} for the size limit).
      *
      * @throws IllegalArgumentException if this is not a multipart request or its body is malformed; a handler can let it
-     *                                  propagate to {@link Router#onError} to answer 400
+     *                                  propagate to {@link Router#onException} to answer 400
      */
     public List<Part> parts() {
         String boundary = io.github.b077as.jolt.internal.MultipartParser.boundary(header("content-type"));

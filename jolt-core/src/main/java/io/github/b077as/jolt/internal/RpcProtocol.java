@@ -9,8 +9,9 @@ import java.util.Map;
  * to {@link PageRpc} before their own listeners), as JSON:
  * <pre>
  * {"t":"hello","s":session}                                    a document started (its session is new)
- * {"t":"call","s":session,"id":n,"m":"method","p":params}      call a method
+ * {"t":"call","s":session,"id":n,"m":"method","p":params}      call a method ("st":true after "id": read it as a stream)
  * {"t":"cancel","s":session,"id":n}                            the page gave up on call n
+ * {"t":"more","s":session,"id":n,"n":k}                          the page consumed k items of stream n: send k more
  * </pre>
  * Java to page is a script that hands one JSON text to {@code window.__joltRpc.receive}, so it does not reach the page's
  * {@code jolt.onMessage} listeners either:
@@ -18,6 +19,8 @@ import java.util.Map;
  * {"t":"result","s":session,"id":n,"r":value}
  * {"t":"error","s":session,"id":n,"e":{"code":..,"message":..,"data":..}}
  * {"t":"progress","s":session,"id":n,"d":value}
+ * {"t":"item","s":session,"id":n,"d":value}                        one item of stream n
+ * {"t":"end","s":session,"id":n}                                    stream n is over (an error ends it too)
  * {"t":"event","n":"name","d":value}
  * </pre>
  * The session is a random id each document picks, so answers meant for an earlier document (before a reload) are ignored by the
@@ -36,7 +39,11 @@ public final class RpcProtocol {
     static final long MAX_ID = 9_007_199_254_740_991L;
 
     /** One message from the page. {@code id} is 0 and {@code method}/{@code params} are {@code null} where the kind has none. */
-    public record Request(String type, String session, long id, String method, String params) {}
+    public record Request(String type, String session, long id, String method, String params, boolean stream, int count) {
+        public Request(String type, String session, long id, String method, String params) {
+            this(type, session, id, method, params, false, 0);
+        }
+    }
 
     public static boolean isRpcMessage(String message) {
         return message.startsWith(PREFIX);
@@ -62,6 +69,14 @@ public final class RpcProtocol {
                     long id = id(m.get("id"));
                     return id > 0 ? new Request(type, session, id, null, null) : null;
                 }
+                case "more" -> {
+                    long id = id(m.get("id"));
+                    String n = m.get("n");
+                    if (id <= 0 || n == null || n.isEmpty() || n.length() > 6 || !n.chars().allMatch(Character::isDigit)) {
+                        return null;
+                    }
+                    return new Request(type, session, id, null, null, false, Integer.parseInt(n));
+                }
                 case "call" -> {
                     long id = id(m.get("id"));
                     String method = text(m.get("m"), MAX_METHOD_CHARS);
@@ -69,7 +84,7 @@ public final class RpcProtocol {
                         return null;
                     }
                     String params = m.get("p");
-                    return new Request(type, session, id, method, params == null ? "{}" : params);
+                    return new Request(type, session, id, method, params == null ? "{}" : params, "true".equals(m.get("st")), 0);
                 }
                 default -> {
                     return null;
@@ -126,6 +141,14 @@ public final class RpcProtocol {
 
     public static String progress(String session, long id, String json) {
         return "{\"t\":\"progress\",\"s\":" + BasicJson.quote(session) + ",\"id\":" + id + ",\"d\":" + json + "}";
+    }
+
+    public static String item(String session, long id, String json) {
+        return "{\"t\":\"item\",\"s\":" + BasicJson.quote(session) + ",\"id\":" + id + ",\"d\":" + json + "}";
+    }
+
+    public static String end(String session, long id) {
+        return "{\"t\":\"end\",\"s\":" + BasicJson.quote(session) + ",\"id\":" + id + "}";
     }
 
     public static String event(String name, String json) {
@@ -215,6 +238,90 @@ public final class RpcProtocol {
                       reject(e);
                     }
                   });
+                  // An async iterator over the items of a streaming method. It starts when first read, and asks Java for more items as it
+                  // consumes them (Java sends only that many ahead). Breaking out of a for-await loop, or aborting the signal, stops it.
+                  const stream = (method, params, options) => {
+                    if (typeof method !== 'string' || method === '') {
+                      throw new JoltRpcError('bad_request', 'jolt.stream needs a method name');
+                    }
+                    options = options || {};
+                    const signal = options.signal;
+                    let json = JSON.stringify(params === undefined ? {} : params);
+                    if (json === undefined) json = 'null';
+                    const queue = [];
+                    const waiters = [];
+                    let id = 0;
+                    let started = false;
+                    let finished = false;
+                    let failure = null;
+                    let consumed = 0;
+                    let onAbort = null;
+                    const ack = () => {
+                      if (started && !finished && consumed > 0 && (queue.length === 0 || consumed >= 16)) {
+                        const n = consumed;
+                        consumed = 0;
+                        try { post('{"t":"more","s":' + S + ',"id":' + id + ',"n":' + n + '}'); } catch (e) { /* the call is ending anyway */ }
+                      }
+                    };
+                    const wake = () => {
+                      while (waiters.length) {
+                        const w = waiters[0];
+                        if (queue.length) { waiters.shift(); consumed++; w.resolve({ value: queue.shift(), done: false }); }
+                        else if (failure) { waiters.shift(); const f = failure; failure = null; w.reject(f); }
+                        else if (finished) { waiters.shift(); w.resolve({ value: undefined, done: true }); }
+                        else break;
+                      }
+                      ack();
+                    };
+                    const stop = (error) => {
+                      if (started && take(id)) {
+                        try { post('{"t":"cancel","s":' + S + ',"id":' + id + '}'); } catch (e) { /* nothing to tell */ }
+                      }
+                      finished = true;
+                      queue.length = 0;
+                      if (error !== undefined) failure = error;
+                      wake();
+                    };
+                    const entry = {
+                      resolve: () => {},
+                      reject: (error) => { failure = error; finished = true; wake(); },
+                      push: (item) => { queue.push(item); wake(); },
+                      end: () => { finished = true; wake(); },
+                      onProgress: null,
+                      cleanup: () => { if (onAbort) signal.removeEventListener('abort', onAbort); },
+                    };
+                    const reasonOf = () => signal.reason !== undefined ? signal.reason : new DOMException('The stream was aborted', 'AbortError');
+                    if (signal && signal.aborted) { finished = true; failure = reasonOf(); }
+                    const start = () => {
+                      if (started || finished) return;
+                      started = true;
+                      id = nextId++;
+                      pending.set(id, entry);
+                      if (signal) {
+                        onAbort = () => stop(reasonOf());
+                        signal.addEventListener('abort', onAbort, { once: true });
+                      }
+                      try {
+                        post('{"t":"call","s":' + S + ',"id":' + id + ',"st":true,"m":' + JSON.stringify(method) + ',"p":' + json + '}');
+                      } catch (e) {
+                        take(id);
+                        finished = true;
+                        failure = e;
+                      }
+                    };
+                    const iterator = {
+                      next() {
+                        start();
+                        return new Promise((resolve, reject) => { waiters.push({ resolve, reject }); wake(); });
+                      },
+                      return() {
+                        stop();
+                        return Promise.resolve({ value: undefined, done: true });
+                      },
+                      [Symbol.asyncIterator]() { return iterator; },
+                    };
+                    return iterator;
+                  };
                   const onEvent = (name, callback) => {
                     if (typeof callback !== 'function') throw new TypeError('jolt.onEvent needs a callback');
                     name = String(name);
@@ -239,12 +346,22 @@ public final class RpcProtocol {
                       if (p && p.onProgress) { try { p.onProgress(m.d); } catch (e) { console.error(e); } }
                       return;
                     }
+                    if (m.t === 'item') {
+                      const p = pending.get(m.id);
+                      if (p && p.push) p.push(m.d);
+                      return;
+                    }
+                    if (m.t === 'end') {
+                      const p = take(m.id);
+                      if (p && p.end) p.end();
+                      return;
+                    }
                     const p = take(m.id);
                     if (!p) return;
                     if (m.t === 'result') p.resolve(m.r);
                     else { const e = m.e || {}; p.reject(new JoltRpcError(String(e.code || 'internal'), String(e.message || 'the call failed'), e.data)); }
                   };
-                  Object.defineProperty(window, '__joltRpc', { value: Object.freeze({ call, onEvent, receive }) });
+                  Object.defineProperty(window, '__joltRpc', { value: Object.freeze({ call, stream, onEvent, receive }) });
                   try { post('{"t":"hello","s":' + S + '}'); } catch (e) { /* the first call says it again */ }
                 })();
                 """;

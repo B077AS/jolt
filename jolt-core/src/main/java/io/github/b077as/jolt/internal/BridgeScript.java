@@ -76,6 +76,15 @@ public final class BridgeScript {
                         e.data = null;
                         return Promise.reject(e);
                       },
+                      stream: (method, params, options) => {
+                        const r = window.__joltRpc;
+                        if (r) return r.stream(method, params, options);
+                        const e = new Error("jolt.stream is not enabled: attach an Rpc to the Java window (Rpc.create().attach(window))");
+                        e.name = 'JoltRpcError';
+                        e.code = 'not_enabled';
+                        e.data = null;
+                        throw e;
+                      },
                       onEvent: (name, callback) => {
                         const r = window.__joltRpc;
                         if (!r) throw new Error("jolt.onEvent is not enabled: attach an Rpc to the Java window (Rpc.create().attach(window))");

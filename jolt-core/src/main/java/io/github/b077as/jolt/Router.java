@@ -1,5 +1,7 @@
 package io.github.b077as.jolt;
 
+import io.github.b077as.jolt.internal.TypeRouted;
+
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -7,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeSet;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.regex.Pattern;
 
@@ -44,7 +47,9 @@ import java.util.regex.Pattern;
  */
 public final class Router implements RequestHandler {
 
-    /** Code that answers a request. May throw; see {@link #onError}. */
+    private static final System.Logger LOG = System.getLogger("io.github.b077as.jolt.router");
+
+    /** Code that answers a request. May throw; see {@link #onException}. */
     @FunctionalInterface
     public interface Route {
         AppResponse handle(AppRequest request) throws Exception;
@@ -59,10 +64,16 @@ public final class Router implements RequestHandler {
         AppResponse before(AppRequest request) throws Exception;
     }
 
-    /** Turns an exception from a filter or route into a response, for example an error page. */
+    /**
+     * Says what is sent when a filter or route throws an exception of a given type; register it with {@link #onException}. The
+     * counterpart of {@link RpcExceptionHandler}.
+     *
+     * @param <E> the exception type
+     */
     @FunctionalInterface
-    public interface ErrorHandler {
-        AppResponse handle(AppRequest request, Exception error) throws Exception;
+    public interface ExceptionHandler<E extends Throwable> {
+        /** @return the response to send, never {@code null}; for example an error page or a 400 */
+        AppResponse handle(AppRequest request, E error);
     }
 
     private static final Pattern NAME = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
@@ -117,7 +128,8 @@ public final class Router implements RequestHandler {
 
     private final List<Entry> entries = new CopyOnWriteArrayList<>();
     private final List<Filter> filters = new CopyOnWriteArrayList<>();
-    private volatile ErrorHandler errorHandler;
+    private final TypeRouted<ExceptionHandler<?>> exceptionHandlers = new TypeRouted<>();
+    private volatile BiConsumer<AppRequest, Throwable> errorListener;
 
     private Router() {}
 
@@ -203,11 +215,36 @@ public final class Router implements RequestHandler {
     }
 
     /**
-     * Handles exceptions thrown by filters and routes, for example to render an error page. If it returns {@code null} or throws,
-     * the original exception goes on and Jolt answers with a bare 500, logging the cause.
+     * Says what is sent when a filter or route throws an exception of {@code type} (or a subclass), replacing any earlier handler for
+     * the same type. When several types match, the most specific one wins, as with {@code catch} clauses and
+     * {@link Rpc#onException}; {@code Exception.class} catches everything the others do not.
+     *
+     * <pre>{@code
+     * router.onException(NotFoundException.class, (request, e) -> AppResponse.html(pages.notFound()).withStatus(404))
+     *       .onException(IllegalArgumentException.class, (request, e) -> AppResponse.text(e.getMessage()).withStatus(400));
+     * }</pre>
+     * An exception with a handler is an expected failure: nothing is logged and {@link #onError} is not told, unless the handler
+     * answers with a 5xx status (a failure the app turned into an error page is still a bug). An exception without a handler goes on
+     * and Jolt answers with a bare 500, logging the cause. If a handler throws or returns {@code null}, that is logged and the
+     * exception is treated as unhandled.
+     *
+     * <p>Handlers can be added and replaced at any time.
      */
-    public Router onError(ErrorHandler handler) {
-        this.errorHandler = handler;
+    public <E extends Throwable> Router onException(Class<E> type, ExceptionHandler<? super E> handler) {
+        if (type == null || handler == null) {
+            throw new IllegalArgumentException("type and handler are required");
+        }
+        exceptionHandlers.put(type, handler);
+        return this;
+    }
+
+    /**
+     * Called with every unexpected exception of a filter or route, on the request's thread, for example to report it: one that has no
+     * {@link #onException} handler, or whose handler answers with a 5xx status. {@code null} removes the listener. The counterpart of
+     * {@link Rpc#onError}.
+     */
+    public Router onError(BiConsumer<AppRequest, Throwable> listener) {
+        this.errorListener = listener;
         return this;
     }
 
@@ -216,22 +253,46 @@ public final class Router implements RequestHandler {
         try {
             return dispatch(request);
         } catch (Exception e) {
-            ErrorHandler handler = errorHandler;
-            if (handler == null) {
-                throw e;
-            }
-            AppResponse response;
+            return failed(request, e);
+        }
+    }
+
+    /** The answer the app's {@link #onException} handler gives for {@code error}, or {@code error} is rethrown. */
+    @SuppressWarnings("unchecked")
+    private AppResponse failed(AppRequest request, Exception error) throws Exception {
+        AppResponse response = null;
+        ExceptionHandler<Throwable> handler = (ExceptionHandler<Throwable>) exceptionHandlers.find(error);
+        if (handler != null) {
             try {
-                response = handler.handle(request, e);
+                response = handler.handle(request, error);
+                if (response == null) {
+                    LOG.log(System.Logger.Level.ERROR, "the Router onException handler for " + error.getClass().getName() + " returned null for "
+                            + request.method() + " " + request.path());
+                }
             } catch (Exception inner) {
-                inner.addSuppressed(e);
-                throw inner;
+                LOG.log(System.Logger.Level.ERROR, "the Router onException handler for " + error.getClass().getName() + " failed for "
+                        + request.method() + " " + request.path(), inner);
             }
-            if (response == null) {
-                throw e;
-            }
+        }
+        if (response != null && response.status() < 500) {
+            LOG.log(System.Logger.Level.DEBUG, request.method() + " " + request.path() + " failed with " + response.status(), error);
             return response;
         }
+        if (response != null) {
+            LOG.log(System.Logger.Level.WARNING, request.method() + " " + request.path() + " failed", error);
+        }
+        BiConsumer<AppRequest, Throwable> listener = errorListener;
+        if (listener != null) {
+            try {
+                listener.accept(request, error);
+            } catch (RuntimeException e) {
+                LOG.log(System.Logger.Level.ERROR, "the Router onError listener failed", e);
+            }
+        }
+        if (response != null) {
+            return response;
+        }
+        throw error; // no handler: the caller logs it and answers 500
     }
 
     private AppResponse dispatch(AppRequest request) throws Exception {

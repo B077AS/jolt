@@ -1,5 +1,6 @@
 package io.github.b077as.jolt.spring;
 
+import io.github.b077as.jolt.JoltRpc;
 import io.github.b077as.jolt.RpcException;
 import io.github.b077as.jolt.WebWindow;
 import org.junit.jupiter.api.AfterEach;
