@@ -30,6 +30,10 @@ import java.lang.annotation.Annotation;
  *
  * <p>A reference-type record component may be null, so it is written {@code name?: T | null}; a primitive, or a component annotated
  * with an annotation named {@code NonNull}, {@code Nonnull} or {@code NotNull} (whichever library it comes from), is required.
+ * Annotations are matched by simple name, so Jolt needs no dependency on the library that has them, and they must be kept at run
+ * time (Lombok's {@code @NonNull} is not, so it has no effect here). To avoid annotating every component, mark the record, a class
+ * around it, its package or its module {@code @NullMarked} (JSpecify): then every component is required unless it is
+ * {@code @Nullable}; the closest {@code @NullMarked} or {@code @NullUnmarked} wins. {@code @Nullable} always wins on a component.
  */
 public final class TypeScript {
 
@@ -47,6 +51,9 @@ public final class TypeScript {
     }
 
     private static final Set<String> NON_NULL = Set.of("NonNull", "Nonnull", "NotNull");
+    private static final Set<String> NULLABLE = Set.of("Nullable");
+    private static final Set<String> NULL_MARKED = Set.of("NullMarked");
+    private static final Set<String> NULL_UNMARKED = Set.of("NullUnmarked");
 
     private final Map<Class<?>, String> names = new HashMap<>();
     private final Set<String> taken = new HashSet<>();
@@ -274,7 +281,7 @@ public final class TypeScript {
         body.append(" {\n");
         for (RecordComponent component : c.getRecordComponents()) {
             Ts type = type(component.getGenericType(), scope);
-            boolean nullable = type.nullable() || (!component.getType().isPrimitive() && !nonNull(component));
+            boolean nullable = type.nullable() || (!component.getType().isPrimitive() && !required(c, component));
             body.append("  ").append(component.getName()).append(nullable ? "?" : "").append(": ").append(type.text())
                     .append(nullable && !type.nullable() ? " | null" : "").append(";\n");
         }
@@ -282,14 +289,55 @@ public final class TypeScript {
         return name;
     }
 
-    private static boolean nonNull(RecordComponent component) {
-        for (Annotation annotation : component.getAnnotations()) {
-            if (NON_NULL.contains(annotation.annotationType().getSimpleName())) {
+    /** Whether a reference-type component is always present: {@code @Nullable} says no, {@code @NonNull} says yes, else the surrounding {@code @NullMarked} decides. */
+    private static boolean required(Class<?> record, RecordComponent component) {
+        if (hasAnyOf(component.getAnnotations(), component.getAnnotatedType().getAnnotations(), NULLABLE)) {
+            return false;
+        }
+        if (hasAnyOf(component.getAnnotations(), component.getAnnotatedType().getAnnotations(), NON_NULL)) {
+            return true;
+        }
+        return nullMarked(record);
+    }
+
+    /** The closest {@code @NullMarked} / {@code @NullUnmarked} around the record: its classes from the inside out, then its package, then its module. */
+    private static boolean nullMarked(Class<?> record) {
+        for (Class<?> c = record; c != null; c = c.getEnclosingClass()) {
+            Boolean decided = marker(c.getAnnotations());
+            if (decided != null) {
+                return decided;
+            }
+        }
+        Package pkg = record.getPackage();
+        Boolean decided = pkg == null ? null : marker(pkg.getAnnotations());
+        if (decided == null) {
+            decided = marker(record.getModule().getAnnotations());
+        }
+        return decided != null && decided;
+    }
+
+    /** {@code true} for a {@code NullMarked} among these annotations, {@code false} for {@code NullUnmarked}, {@code null} for neither. */
+    private static Boolean marker(Annotation[] annotations) {
+        for (Annotation annotation : annotations) {
+            String name = annotation.annotationType().getSimpleName();
+            if (NULL_MARKED.contains(name)) {
+                return true;
+            }
+            if (NULL_UNMARKED.contains(name)) {
+                return false;
+            }
+        }
+        return null;
+    }
+
+    private static boolean hasAnyOf(Annotation[] onComponent, Annotation[] onType, Set<String> names) {
+        for (Annotation annotation : onComponent) {
+            if (names.contains(annotation.annotationType().getSimpleName())) {
                 return true;
             }
         }
-        for (Annotation annotation : component.getAnnotatedType().getAnnotations()) {
-            if (NON_NULL.contains(annotation.annotationType().getSimpleName())) {
+        for (Annotation annotation : onType) {
+            if (names.contains(annotation.annotationType().getSimpleName())) {
                 return true;
             }
         }

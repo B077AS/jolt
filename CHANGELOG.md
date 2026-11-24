@@ -6,6 +6,15 @@ this file says when they do.
 
 The latest version is the one on [Maven Central](https://central.sonatype.com/artifact/io.github.b077as/jolt-core).
 
+## Unreleased
+
+### Added
+- **TypeScript declarations: null-marking.** A record component can now be required without an annotation on every one: mark the record,
+  a class around it, its package or its module `@NullMarked` (JSpecify), and only the `@Nullable` components stay `name?: T | null`.
+  `@NullUnmarked` cancels it (the closest marker wins). Annotations are still matched by simple name, so there is no new dependency,
+  and a type-use `@Nullable` / `@NonNull` (JSpecify's) is read too. Documented in `docs/rpc.md`, including that Lombok's `@NonNull` has
+  no effect (it is not kept at run time). Tested: `NullMarkedTypeScriptTest` (4).
+
 ## 0.5.0 - 2026-11-20
 
 ### Added
