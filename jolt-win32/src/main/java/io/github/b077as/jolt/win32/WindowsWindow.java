@@ -1641,6 +1641,17 @@ public CompletableFuture<String> eval(String script) {
                         Com.release(settings3);
                     }
                 }
+                // No browser suggestions: saved addresses, emails, card data and password save prompts are
+                // browser features, not part of an app (ICoreWebView2Settings4, older runtimes lack it: ignore).
+                MemorySegment settings4 = Com.queryInterface(settings, IID_SETTINGS4);
+                if (settings4 != null && !settings4.equals(MemorySegment.NULL)) {
+                    try {
+                        Com.call(settings4, SETTINGS4_PUT_IS_PASSWORD_AUTOSAVE_ENABLED, Com.HR_INT, 0);
+                        Com.call(settings4, SETTINGS4_PUT_IS_GENERAL_AUTOFILL_ENABLED, Com.HR_INT, 0);
+                    } finally {
+                        Com.release(settings4);
+                    }
+                }
             } finally {
                 Com.release(settings);
             }
@@ -1650,6 +1661,11 @@ public CompletableFuture<String> eval(String script) {
     /** {@code ICoreWebView2Settings3} (WebView2.h): Settings 0-20, Settings2 UserAgent 21-22, then 23 get / 24 put. */
     private static final String IID_SETTINGS3 = "fdb5ab74-af33-4854-84f0-0a631deb5eba";
     private static final int SETTINGS3_PUT_ARE_BROWSER_ACCELERATOR_KEYS_ENABLED = 24;
+
+    /** {@code ICoreWebView2Settings4}: slots 25/26 PasswordAutosave get/put, 27/28 GeneralAutofill get/put. */
+    private static final String IID_SETTINGS4 = "cb56846c-4168-4d53-b04f-03b6d6796ff2";
+    private static final int SETTINGS4_PUT_IS_PASSWORD_AUTOSAVE_ENABLED = 26;
+    private static final int SETTINGS4_PUT_IS_GENERAL_AUTOFILL_ENABLED = 28;
 
     private void addEvent(int addSlot, ComHandler handler) {
         handlers.add(handler);

@@ -15,6 +15,12 @@ The latest version is the one on [Maven Central](https://central.sonatype.com/ar
   and a type-use `@Nullable` / `@NonNull` (JSpecify's) is read too. Documented in `docs/rpc.md`, including that Lombok's `@NonNull` has
   no effect (it is not kept at run time). Tested: `NullMarkedTypeScriptTest` (4).
 
+### Changed
+- **No autofill suggestions on Windows.** The web view no longer offers saved addresses, emails or card data in form fields and no longer
+  offers to save passwords (WebView2 `IsGeneralAutofillEnabled` and `IsPasswordAutosaveEnabled` are off). WebKitGTK has no such feature,
+  so Linux is unchanged. Runtimes older than the setting keep their default. Not covered by a test (the suggestion pop-up is a separate OS
+  window); only that every window still opens and renders.
+
 ## 0.5.0 - 2026-11-20
 
 ### Added
