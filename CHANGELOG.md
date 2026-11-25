@@ -15,6 +15,11 @@ The latest version is the one on [Maven Central](https://central.sonatype.com/ar
   and a type-use `@Nullable` / `@NonNull` (JSpecify's) is read too. Documented in `docs/rpc.md`, including that Lombok's `@NonNull` has
   no effect (it is not kept at run time). Tested: `NullMarkedTypeScriptTest` (4).
 
+### Fixed
+- **Windows: the window opens in front.** If you clicked into another application while an app was starting, Windows refused to
+  give the new window the foreground, so it opened behind everything and only its taskbar button flashed. The window now forces itself to
+  the front when it first appears (and on `focus()`).
+
 ### Changed
 - **No autofill suggestions on Windows.** The web view no longer offers saved addresses, emails or card data in form fields and no longer
   offers to save passwords (WebView2 `IsGeneralAutofillEnabled` and `IsPasswordAutosaveEnabled` are off). WebKitGTK has no such feature,

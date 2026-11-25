@@ -581,6 +581,44 @@ final class Win32 {
         }
     }
 
+    private static final MethodHandle GET_WINDOW_THREAD_PROCESS_ID = Native.downcall(USER32, "GetWindowThreadProcessId",
+            FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+    private static final MethodHandle ATTACH_THREAD_INPUT = Native.downcall(USER32, "AttachThreadInput",
+            FunctionDescriptor.of(JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT));
+
+    /**
+     * Brings the window to the front even if the user clicked into another application while it was starting up (Windows
+     * then refuses plain {@code SetForegroundWindow} and the window would open behind, with only its taskbar button
+     * flashing). Attaching to the input queue of the current foreground window's thread lifts that restriction; if the
+     * system still refuses, the window is at least raised above the others without being activated.
+     */
+    static void bringToFront(MemorySegment hwnd) {
+        try {
+            MemorySegment foreground = (MemorySegment) GET_FOREGROUND_WINDOW.invokeExact();
+            int foregroundThread = foreground.address() == 0 ? 0
+                    : (int) GET_WINDOW_THREAD_PROCESS_ID.invokeExact(foreground, MemorySegment.NULL);
+            int current = currentThreadId();
+            boolean attached = foregroundThread != 0 && foregroundThread != current
+                    && (int) ATTACH_THREAD_INPUT.invokeExact(current, foregroundThread, 1) != 0;
+            try {
+                int ignored = (int) SET_FOREGROUND_WINDOW.invokeExact(hwnd);
+            } finally {
+                if (attached) {
+                    int ignored = (int) ATTACH_THREAD_INPUT.invokeExact(current, foregroundThread, 0);
+                }
+            }
+            if (!isForeground(hwnd)) {
+                int flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
+                int ignored = (int) SET_WINDOW_POS_AFTER.invokeExact(hwnd, MemorySegment.ofAddress(-1) /* HWND_TOPMOST */,
+                        0, 0, 0, 0, flags);
+                ignored = (int) SET_WINDOW_POS_AFTER.invokeExact(hwnd, MemorySegment.ofAddress(-2) /* HWND_NOTOPMOST */,
+                        0, 0, 0, 0, flags);
+            }
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
     static boolean isWindowVisible(MemorySegment hwnd) {
         try {
             return (int) IS_WINDOW_VISIBLE.invokeExact(hwnd) != 0;

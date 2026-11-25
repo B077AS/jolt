@@ -630,7 +630,7 @@ public CompletableFuture<String> eval(String script) {
             } else if (Win32.isIconic(hwnd)) {
                 Win32.showWindow(hwnd, Win32.SW_RESTORE);
             }
-            Win32.setForegroundWindow(hwnd);
+            Win32.bringToFront(hwnd);
         });
     }
 
@@ -1273,6 +1273,7 @@ public CompletableFuture<String> eval(String script) {
         int command = maximizeOnFirstShow ? Win32.SW_SHOWMAXIMIZED : Win32.SW_SHOW;
         maximizeOnFirstShow = false;
         Win32.showWindow(hwnd, command);
+        Win32.bringToFront(hwnd); // otherwise a click elsewhere during startup leaves the window hidden behind others
         Win32.updateWindow(hwnd);
         // WM_SHOWWINDOW arrives before the window has its final position and size (maximizing changes both), so tell the web
         // view again now that they are settled.
