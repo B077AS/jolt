@@ -22,7 +22,8 @@ public final class FrameProtocol {
 
         void toggleMaximize();
 
-        void close();
+        /** The page's close button: the same as the user closing the window ({@code WebWindow.requestClose}). */
+        void requestClose();
 
         /** Starts moving the window with the pointer, which is down. */
         void beginMove();
@@ -70,7 +71,7 @@ public final class FrameProtocol {
         switch (command) {
             case "minimize" -> host.minimize();
             case "maximize" -> host.toggleMaximize();
-            case "close" -> host.close();
+            case "close" -> host.requestClose();
             case "move" -> host.beginMove();
             case "state" -> host.reportState();
             case "menu" -> host.showWindowMenu();

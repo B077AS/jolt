@@ -338,6 +338,7 @@ public abstract class WebWindowContract {
                     window.close();
                 }));
             });
+            allowInlineScripts(window);
             window.loadResources(path -> path.endsWith("index.html") ? page : null);
         });
         assertTrue(interruptedBeforeClose.get(), "the old page's call was cancelled when the new page spoke, not when the window closed");
@@ -364,6 +365,7 @@ public abstract class WebWindowContract {
      */
     private static void loadChannelPage(WebWindow window, String script) {
         byte[] page = ("<script>" + script + "</script>").getBytes(StandardCharsets.UTF_8);
+        allowInlineScripts(window);
         window.loadResources(path -> path.endsWith("index.html") ? page : null);
     }
 
@@ -1306,6 +1308,15 @@ public abstract class WebWindowContract {
 
     // ---- loadResources: every test runs over the in-process transport and over the loopback fallback ----
 
+    /**
+     * The test pages served as app files are written with inline scripts, which the default policy of app files refuses.
+     * These tests are about other things, so they get the rest of the policy and inline scripts; LifecycleContract tests
+     * the policy itself.
+     */
+    public static void allowInlineScripts(WebWindow window) {
+        window.setSecurity(window.security().withAppContentSecurityPolicy(SecurityPolicy.DEFAULT_HTML_CSP));
+    }
+
     protected static String resourceApp(java.util.Map<String, String> files, io.github.b077as.jolt.RequestHandler handler, boolean loopback) {
         return resourceApp(files, handler, loopback, io.github.b077as.jolt.ResourceOptions.defaults());
     }
@@ -1321,6 +1332,7 @@ public abstract class WebWindowContract {
             });
             io.github.b077as.jolt.AppResources resources =
                     path -> files.containsKey(path) ? files.get(path).getBytes(StandardCharsets.UTF_8) : null;
+            allowInlineScripts(window);
             if (loopback) {
                 window.loadResourcesOverLoopback(resources, handler, options, 0);
             } else {
@@ -2185,6 +2197,7 @@ public abstract class WebWindowContract {
     private static void showApp(WebWindow window, RequestHandler handler, boolean loopback, String startPath) {
         ResourceOptions options = ResourceOptions.defaults().withStartPath(startPath);
         AppResources noFiles = path -> null;
+        allowInlineScripts(window);
         if (loopback) {
             window.loadResourcesOverLoopback(noFiles, handler, options, 0);
         } else {

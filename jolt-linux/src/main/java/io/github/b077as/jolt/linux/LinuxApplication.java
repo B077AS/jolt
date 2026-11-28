@@ -9,6 +9,7 @@ import io.github.b077as.jolt.JumpList;
 import io.github.b077as.jolt.Tray;
 import io.github.b077as.jolt.WebWindow;
 import io.github.b077as.jolt.WindowOptions;
+import io.github.b077as.jolt.internal.SessionEnds;
 
 import java.io.IOException;
 import java.lang.foreign.MemorySegment;
@@ -53,6 +54,7 @@ final class LinuxApplication implements Application {
     private volatile Thread uiThread;
     private volatile boolean loopReady;
     private boolean started;
+    private final SessionEnds sessionEnds = new SessionEnds(this::dispatch, this::quit);
 
     LinuxApplication(AppOptions options) {
         this.options = options;
@@ -180,6 +182,8 @@ final class LinuxApplication implements Application {
             }
             loopReady = true;
             webContext = createWebContext();
+            Gtk.connect(webContext, "download-started", Callbacks.DOWNLOAD_STARTED, MemorySegment.ofAddress(id));
+            sessionEnds.started(uiThread);
             try {
                 onStart.run();
             } catch (Throwable t) {
@@ -197,7 +201,11 @@ final class LinuxApplication implements Application {
                 }
             }
         } finally {
-            shutdown();
+            try {
+                shutdown();
+            } finally {
+                sessionEnds.stopped(); // after the cleanup: a terminating process waits for this
+            }
         }
         if (startFailure instanceof RuntimeException r) {
             throw r;
@@ -225,6 +233,11 @@ final class LinuxApplication implements Application {
         if (mainLoopRunning) {
             Gtk.mainQuit();
         }
+    }
+
+    @Override
+    public void onSessionEnd(java.util.function.Consumer<io.github.b077as.jolt.SessionEndReason> listener) {
+        sessionEnds.add(listener);
     }
 
     @Override
@@ -391,6 +404,18 @@ final class LinuxApplication implements Application {
             }
         }
         GtkResources.respond(request, 404, io.github.b077as.jolt.internal.ResourceService.baseHeaders(), new byte[0]);
+    }
+
+    /** A download began in one of the web views: the window that owns it is asked where it goes. */
+    void onDownloadStarted(MemorySegment download) {
+        long webView = GtkPageEvents.webViewOf(download);
+        for (Map.Entry<Long, LinuxWindow> entry : windows.entrySet()) {
+            if (webView != 0 && entry.getValue().nativeWebView().address() == webView) {
+                Gtk.connect(download, "decide-destination", Callbacks.DECIDE_DESTINATION, MemorySegment.ofAddress(entry.getKey()));
+                return;
+            }
+        }
+        GtkPageEvents.cancel(download); // not one of ours: left alone, it would be saved without asking anyone
     }
 
     long registerEval(CompletableFuture<String> future) {

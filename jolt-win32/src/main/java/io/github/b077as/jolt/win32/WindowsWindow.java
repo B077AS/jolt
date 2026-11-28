@@ -2,6 +2,12 @@ package io.github.b077as.jolt.win32;
 
 import io.github.b077as.jolt.BlockedEvent;
 import io.github.b077as.jolt.CloseBehavior;
+import io.github.b077as.jolt.CloseDecision;
+import io.github.b077as.jolt.CrashEvent;
+import io.github.b077as.jolt.DownloadDecision;
+import io.github.b077as.jolt.DownloadRequest;
+import io.github.b077as.jolt.LoadFailure;
+import io.github.b077as.jolt.PageLoad;
 import io.github.b077as.jolt.ColorScheme;
 import io.github.b077as.jolt.ContextMenuInfo;
 import io.github.b077as.jolt.ContextMenuProvider;
@@ -28,6 +34,7 @@ import io.github.b077as.jolt.internal.PageRpc;
 import io.github.b077as.jolt.internal.PageFileDrop;
 import io.github.b077as.jolt.internal.ResourceService;
 import io.github.b077as.jolt.internal.SecurityGuard;
+import io.github.b077as.jolt.internal.WindowEvents;
 import io.github.b077as.jolt.internal.ffi.Native;
 
 import java.lang.foreign.Arena;
@@ -42,6 +49,8 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
+import java.util.function.Function;
+import java.util.function.Supplier;
 
 import static java.lang.foreign.ValueLayout.ADDRESS;
 import static java.lang.foreign.ValueLayout.JAVA_INT;
@@ -75,6 +84,8 @@ final class WindowsWindow implements WebWindow, NativeResourceHost, NativeDialog
     private final int style;
     private volatile CloseBehavior closeBehavior = CloseBehavior.CLOSE;
     private final SecurityGuard guard;
+    private final WindowEvents events;
+    private final WindowsPageEvents pageEvents;
     private final MemorySegment hwnd;
     private final WindowsTaskbarButtons taskbarButtons;
     private final CompletableFuture<Void> ready = new CompletableFuture<>();
@@ -89,6 +100,8 @@ final class WindowsWindow implements WebWindow, NativeResourceHost, NativeDialog
     private MemorySegment webView = MemorySegment.NULL;
     private MemorySegment environment = MemorySegment.NULL; // borrowed from the application, which outlives the window
     private final Map<String, byte[]> served = new HashMap<>();
+    /** The Content-Security-Policy of the document in {@link #served}: the one in force when it was loaded. */
+    private String servedPolicy;
     private boolean resourceInterceptionInstalled;
     private ResourceService resourceService;
     private long documentCounter;
@@ -134,6 +147,8 @@ final class WindowsWindow implements WebWindow, NativeResourceHost, NativeDialog
         this.style = options.resizable() ? baseStyle
                 : baseStyle & ~(options.frameless() ? Win32.WS_MAXIMIZEBOX : Win32.WS_MAXIMIZEBOX | Win32.WS_THICKFRAME);
         this.guard = new SecurityGuard(options.security(), app::dispatch);
+        this.events = new WindowEvents(app::dispatch, guard);
+        this.pageEvents = new WindowsPageEvents(events, app::dispatch);
 
         // An owner (not a parent: the style is not WS_CHILD) keeps this window in front of it, minimizes with it and takes it
         // down when it is destroyed. A closed owner, or one from another application, is ignored.
@@ -1122,7 +1137,107 @@ public CompletableFuture<String> eval(String script) {
         app.dispatch(this::destroyNow);
     }
 
+    @Override
+    public void onCloseRequest(Supplier<CloseDecision> handler) {
+        events.onCloseRequest(handler);
+    }
+
+    @Override
+    public void requestClose() {
+        app.dispatch(() -> {
+            if (!destroyed) {
+                closeRequested();
+            }
+        });
+    }
+
+    @Override
+    public void onLoad(Consumer<PageLoad> listener) {
+        events.onLoad(listener);
+    }
+
+    @Override
+    public void onLoadFailed(Consumer<LoadFailure> listener) {
+        events.onLoadFailed(listener);
+    }
+
+    @Override
+    public void reload() {
+        whenReady(this::reloadNow);
+    }
+
+    @Override
+    public void onCrash(Consumer<CrashEvent> listener) {
+        events.onCrash(listener);
+    }
+
+    @Override
+    public void setReloadOnCrash(boolean reload) {
+        events.setReloadOnCrash(reload);
+    }
+
+    @Override
+    public void onDownload(Function<DownloadRequest, DownloadDecision> handler) {
+        events.onDownload(handler);
+    }
+
     // ---- UI thread ----
+
+    /** The user, or the page, asks for the window to be closed. */
+    private void closeRequested() {
+        if (closeBehavior == CloseBehavior.HIDE && !closing) {
+            Win32.showWindow(hwnd, Win32.SW_HIDE); // the application lives on, for example in the tray
+        } else if (closing || !events.interceptClose(this::destroyNow)) {
+            destroyNow();
+        }
+    }
+
+    private void reloadNow() {
+        Com.callChecked("Reload", webView, WebView2Abi.ICoreWebView2.RELOAD, Com.HR_VOID);
+    }
+
+    private void onNavigationCompleted(MemorySegment sender, MemorySegment args) {
+        pageEvents.navigationCompleted(args);
+    }
+
+    private void onDownloadStarting(MemorySegment sender, MemorySegment args) {
+        pageEvents.downloadStarting(args);
+    }
+
+    private void onProcessFailed(MemorySegment sender, MemorySegment args) {
+        WindowsPageEvents.AfterCrash after = pageEvents.processFailed(args);
+        if (after == WindowsPageEvents.AfterCrash.NOTHING) {
+            return;
+        }
+        JoltException gone = new JoltException("the web page process ended");
+        for (CompletableFuture<?> future : new ArrayList<>(inflight)) {
+            future.completeExceptionally(gone);
+        }
+        if (after == WindowsPageEvents.AfterCrash.RELOAD) {
+            app.dispatch(() -> { // not inside the event
+                if (!destroyed) {
+                    reloadNow();
+                }
+            });
+        } else if (after == WindowsPageEvents.AfterCrash.WEB_VIEW_LOST) {
+            app.environmentLost(environment);
+        }
+    }
+
+    /** Ends the page's process the way a crash would. For tests. */
+    void crashPageProcess() {
+        whenReady(() -> {
+            ComHandler[] handler = new ComHandler[1];
+            handler[0] = ComHandler.hrPtr(WebView2Abi.ICoreWebView2CallDevToolsProtocolMethodCompletedHandler.IID,
+                    (hr, json) -> handler[0].release(), app::deferFree);
+            try (Arena arena = Arena.ofConfined()) {
+                if (Com.call(webView, WebView2Abi.ICoreWebView2.CALL_DEV_TOOLS_PROTOCOL_METHOD, Com.HR_PTR_PTR_PTR,
+                        Native.allocWide(arena, "Page.crash"), Native.allocWide(arena, "{}"), handler[0].object) < 0) {
+                    handler[0].release();
+                }
+            }
+        });
+    }
 
     /** Destroys the native window now; used by the application on shutdown. */
     void destroyNow() {
@@ -1251,11 +1366,7 @@ public CompletableFuture<String> eval(String script) {
                 return taskbarButtons.onCommand(wParam) ? 0L : null;
             }
             case Win32.WM_CLOSE -> {
-                if (closeBehavior == CloseBehavior.HIDE && !closing) {
-                    Win32.showWindow(hwnd, Win32.SW_HIDE); // the application lives on, for example in the tray
-                } else {
-                    Win32.destroyWindow(hwnd);
-                }
+                closeRequested();
                 return 0L;
             }
             case Win32.WM_DESTROY -> {
@@ -1573,11 +1684,16 @@ public CompletableFuture<String> eval(String script) {
             addEvent(WebView2Abi.ICoreWebView2.ADD_WEB_MESSAGE_RECEIVED, ComHandler.ptrPtr(
                     WebView2Abi.ICoreWebView2WebMessageReceivedEventHandler.IID, this::onWebMessage, app::deferFree));
             addEvent(WebView2Abi.ICoreWebView2.ADD_WINDOW_CLOSE_REQUESTED, ComHandler.ptrPtr(
-                    WebView2Abi.ICoreWebView2WindowCloseRequestedEventHandler.IID, (sender, args) -> close(), app::deferFree));
+                    WebView2Abi.ICoreWebView2WindowCloseRequestedEventHandler.IID, (sender, args) -> requestClose(), app::deferFree));
             addEvent(WebView2Abi.ICoreWebView2.ADD_NAVIGATION_STARTING, ComHandler.ptrPtr(
-                    WebView2Abi.ICoreWebView2NavigationStartingEventHandler.IID, this::onNavigationStarting, app::deferFree));
+                    WebView2Abi.ICoreWebView2NavigationStartingEventHandler.IID, this::onTopNavigationStarting, app::deferFree));
             addEvent(WebView2Abi.ICoreWebView2.ADD_FRAME_NAVIGATION_STARTING, ComHandler.ptrPtr(
-                    WebView2Abi.ICoreWebView2NavigationStartingEventHandler.IID, this::onNavigationStarting, app::deferFree));
+                    WebView2Abi.ICoreWebView2NavigationStartingEventHandler.IID, this::onFrameNavigationStarting, app::deferFree));
+            addEvent(WebView2Abi.ICoreWebView2.ADD_NAVIGATION_COMPLETED, ComHandler.ptrPtr(
+                    WebView2Abi.ICoreWebView2NavigationCompletedEventHandler.IID, this::onNavigationCompleted, app::deferFree));
+            addEvent(WebView2Abi.ICoreWebView2.ADD_PROCESS_FAILED, ComHandler.ptrPtr(
+                    WebView2Abi.ICoreWebView2ProcessFailedEventHandler.IID, this::onProcessFailed, app::deferFree));
+            addDownloadEvent();
             addEvent(WebView2Abi.ICoreWebView2.ADD_NEW_WINDOW_REQUESTED, ComHandler.ptrPtr(
                     WebView2Abi.ICoreWebView2NewWindowRequestedEventHandler.IID, this::onNewWindowRequested, app::deferFree));
             addEvent(WebView2Abi.ICoreWebView2.ADD_PERMISSION_REQUESTED, ComHandler.ptrPtr(
@@ -1676,12 +1792,40 @@ public CompletableFuture<String> eval(String script) {
         }
     }
 
-    /** Top-level and frame navigations; also covers redirects and links. Cancelled unless the policy allows the target. */
-    private void onNavigationStarting(MemorySegment sender, MemorySegment args) {
-        String uri = readUri(args, WebView2Abi.ICoreWebView2NavigationStartingEventArgs.GET_URI);
-        if (!guard.allowNavigation(uri)) {
-            Com.call(args, WebView2Abi.ICoreWebView2NavigationStartingEventArgs.PUT_CANCEL, Com.HR_INT, 1);
+    /** Downloads arrived with {@code ICoreWebView2_4} (runtimes since 2020). */
+    private void addDownloadEvent() {
+        MemorySegment webView4 = Com.queryInterface(webView, WebView2Abi.ICoreWebView2_4.IID);
+        if (webView4.equals(MemorySegment.NULL)) {
+            LOG.log(System.Logger.Level.WARNING, "this WebView2 runtime is too old for Jolt to control downloads");
+            return;
         }
+        try (Arena arena = Arena.ofConfined()) {
+            ComHandler handler = ComHandler.ptrPtr(WebView2Abi.ICoreWebView2DownloadStartingEventHandler.IID,
+                    this::onDownloadStarting, app::deferFree);
+            handlers.add(handler);
+            Com.callChecked("add_DownloadStarting", webView4, WebView2Abi.ICoreWebView2_4.ADD_DOWNLOAD_STARTING,
+                    Com.HR_PTR_PTR, handler.object, arena.allocate(JAVA_LONG));
+        } finally {
+            Com.release(webView4);
+        }
+    }
+
+    private void onTopNavigationStarting(MemorySegment sender, MemorySegment args) {
+        String uri = readUri(args, WebView2Abi.ICoreWebView2NavigationStartingEventArgs.GET_URI);
+        pageEvents.navigationStarting(args, uri, allowNavigation(args, uri));
+    }
+
+    private void onFrameNavigationStarting(MemorySegment sender, MemorySegment args) {
+        allowNavigation(args, readUri(args, WebView2Abi.ICoreWebView2NavigationStartingEventArgs.GET_URI));
+    }
+
+    /** Top-level and frame navigations; also covers redirects and links. Cancelled unless the policy allows the target. */
+    private boolean allowNavigation(MemorySegment args, String uri) {
+        if (guard.allowNavigation(uri)) {
+            return true;
+        }
+        Com.call(args, WebView2Abi.ICoreWebView2NavigationStartingEventArgs.PUT_CANCEL, Com.HR_INT, 1);
+        return false;
     }
 
     private void onNewWindowRequested(MemorySegment sender, MemorySegment args) {
@@ -1935,6 +2079,7 @@ public CompletableFuture<String> eval(String script) {
         String path = "/doc/" + (++documentCounter) + ".html";
         served.clear();
         served.put(path, html.getBytes(StandardCharsets.UTF_8));
+        servedPolicy = guard.policy().htmlContentSecurityPolicy();
         installResourceInterception();
         navigate(WebView2Abi.ICoreWebView2.NAVIGATE, VIRTUAL_ORIGIN + path);
     }
@@ -1968,8 +2113,13 @@ public CompletableFuture<String> eval(String script) {
         }
         byte[] document = served.get(path);
         if (document != null) {
-            ResourceRequests.respond(environment, args, 200,
-                    Map.of("Content-Type", "text/html; charset=utf-8", "Cache-Control", "no-store"), document);
+            Map<String, String> headers = new HashMap<>();
+            headers.put("Content-Type", "text/html; charset=utf-8");
+            headers.put("Cache-Control", "no-store");
+            if (servedPolicy != null) {
+                headers.put("Content-Security-Policy", servedPolicy);
+            }
+            ResourceRequests.respond(environment, args, 200, headers, document);
         } else if (resourceService != null && request != null && uri.startsWith(VIRTUAL_ORIGIN)) {
             serveResource(args, request);
         } else {
@@ -2097,6 +2247,7 @@ public CompletableFuture<String> eval(String script) {
         ready.completeExceptionally(closed); // no-op if already completed
 
         if (!controller.equals(MemorySegment.NULL)) {
+            pageEvents.windowClosing();
             Com.call(controller, WebView2Abi.ICoreWebView2Controller.CLOSE, Com.HR_VOID);
             Com.release(webView);
             Com.release(controller);

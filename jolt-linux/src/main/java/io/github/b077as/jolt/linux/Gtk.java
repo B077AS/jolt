@@ -27,6 +27,7 @@ final class Gtk {
     static final int USER_CONTENT_INJECT_TOP_FRAME = 1;
     static final int POLICY_DECISION_NAVIGATION_ACTION = 0; // WEBKIT_POLICY_DECISION_TYPE_NAVIGATION_ACTION
     static final int POLICY_DECISION_NEW_WINDOW_ACTION = 1;
+    static final int POLICY_DECISION_RESPONSE = 2;
     static final int USER_SCRIPT_INJECT_AT_DOCUMENT_START = 0;
 
     private static final Arena LIBS = Arena.global();

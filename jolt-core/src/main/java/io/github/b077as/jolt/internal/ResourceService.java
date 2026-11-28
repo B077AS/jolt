@@ -11,13 +11,18 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Supplier;
 
 /**
  * What a window serves with {@code loadResources}, independent of how requests reach it: the app's files plus the optional
@@ -58,11 +63,13 @@ public final class ResourceService {
             Map.entry("wasm", "application/wasm"), Map.entry("webmanifest", "application/manifest+json"));
 
     private static final System.Logger LOG = System.getLogger("io.github.b077as.jolt");
+    private static final String POLICY_HEADER = "Content-Security-Policy";
 
     private final AppResources resources;
     private final RequestHandler handler;
     private final int maxBody;
     private final String startPath;
+    private volatile Supplier<String> contentSecurityPolicy = () -> null;
 
     /** @param handler answers requests before the files do; may be {@code null} for a read-only file server */
     public ResourceService(AppResources resources, RequestHandler handler) {
@@ -74,6 +81,14 @@ public final class ResourceService {
         this.handler = handler;
         this.maxBody = options.maxRequestBytes();
         this.startPath = options.startPath();
+    }
+
+    /**
+     * Where the {@code Content-Security-Policy} of the answers comes from, asked for each one; it may give {@code null} for
+     * none. An answer that carries its own such header keeps it.
+     */
+    public void contentSecurityPolicy(Supplier<String> policy) {
+        contentSecurityPolicy = Objects.requireNonNull(policy, "policy");
     }
 
     /** The address inside the app the window opens on, always starting with one {@code /}. */
@@ -137,7 +152,7 @@ public final class ResourceService {
                 String query = uri.getRawQuery();
                 AppResponse response = handler.handle(new AppRequest(method, path, query == null ? "" : query, Map.copyOf(headers), body));
                 if (response != null) {
-                    return finish(response);
+                    return withPolicy(finish(response));
                 }
             } catch (Exception e) {
                 LOG.log(System.Logger.Level.WARNING, "request handler failed for " + method + " " + path, e);
@@ -158,7 +173,18 @@ public final class ResourceService {
         if (file == null) {
             return finish(AppResponse.status(404));
         }
-        return finish(new AppResponse(200, Map.of("Content-Type", contentType(resource)), file));
+        return withPolicy(finish(new AppResponse(200, Map.of("Content-Type", contentType(resource)), file)));
+    }
+
+    /** {@code response} with the Content-Security-Policy added, unless it chose its own. */
+    private AppResponse withPolicy(AppResponse response) {
+        String policy = contentSecurityPolicy.get();
+        if (policy == null || response.headers().keySet().stream().anyMatch(POLICY_HEADER::equalsIgnoreCase)) {
+            return response;
+        }
+        Map<String, String> headers = new LinkedHashMap<>(response.headers());
+        headers.put(POLICY_HEADER, policy);
+        return new AppResponse(response.status(), headers, response.body());
     }
 
     /** Runs {@link #serve} on a virtual thread, so a slow handler never blocks the caller (usually the UI thread). */
@@ -237,10 +263,20 @@ private static boolean sameOrigin(URI a, URI b) {
             && a.getRawAuthority() != null && a.getRawAuthority().equalsIgnoreCase(b.getRawAuthority());
 }
 
+/** Moves to {@code target}. It has a policy of its own that allows exactly its one script, whatever the app's policy says. */
 private static AppResponse redirectPage(String target) {
     String attribute = target.replace("&", "&amp;").replace("\"", "&quot;").replace("<", "&lt;");
+    String script = "location.replace(" + JsLiteral.quote(target) + ")";
+    String hash;
+    try {
+        hash = Base64.getEncoder().encodeToString(
+                MessageDigest.getInstance("SHA-256").digest(script.getBytes(StandardCharsets.UTF_8)));
+    } catch (NoSuchAlgorithmException e) {
+        throw new AssertionError(e);
+    }
     return AppResponse.html("<!doctype html><meta charset=\"utf-8\"><meta http-equiv=\"refresh\" content=\"0;url=" + attribute
-            + "\"><script>location.replace(" + JsLiteral.quote(target) + ")</script>");
+                    + "\"><script>" + script + "</script>")
+            .withHeader(POLICY_HEADER, "default-src 'none'; script-src 'sha256-" + hash + "'");
 }
 
 /** {@code response} plus the security headers (and {@code Cache-Control: no-cache} unless it chose its own). */

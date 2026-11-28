@@ -3,6 +3,12 @@ package io.github.b077as.jolt.linux;
 import io.github.b077as.jolt.Permission;
 import io.github.b077as.jolt.BlockedEvent;
 import io.github.b077as.jolt.CloseBehavior;
+import io.github.b077as.jolt.CloseDecision;
+import io.github.b077as.jolt.CrashEvent;
+import io.github.b077as.jolt.DownloadDecision;
+import io.github.b077as.jolt.DownloadRequest;
+import io.github.b077as.jolt.LoadFailure;
+import io.github.b077as.jolt.PageLoad;
 import io.github.b077as.jolt.ColorScheme;
 import io.github.b077as.jolt.ContextMenuInfo;
 import io.github.b077as.jolt.ContextMenuProvider;
@@ -29,6 +35,8 @@ import io.github.b077as.jolt.internal.PageFileDrop;
 import io.github.b077as.jolt.internal.NativeResourceHost;
 import io.github.b077as.jolt.internal.ResourceService;
 import io.github.b077as.jolt.internal.SecurityGuard;
+import io.github.b077as.jolt.internal.HtmlPolicy;
+import io.github.b077as.jolt.internal.WindowEvents;
 
 import java.lang.foreign.MemorySegment;
 import java.nio.charset.StandardCharsets;
@@ -40,6 +48,8 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
+import java.util.function.Function;
+import java.util.function.Supplier;
 
 /**
  * A GTK 3 top-level window containing a WebKitGTK web view.
@@ -56,6 +66,10 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
     private final LinuxApplication app;
     private final WindowOptions options;
     private final SecurityGuard guard;
+    private final WindowEvents events;
+    private final GtkPageEvents pageEvents;
+    /** What {@code loadHtml} last showed, so that it can be shown again; null once something else was loaded. UI thread. */
+    private String loadedHtml;
     private final CompletableFuture<Void> ready = new CompletableFuture<>();
     private final CopyOnWriteArrayList<Consumer<String>> messageListeners = new CopyOnWriteArrayList<>();
     private final CopyOnWriteArrayList<Runnable> closedListeners = new CopyOnWriteArrayList<>();
@@ -99,6 +113,8 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
         this.app = app;
         this.options = options;
         this.guard = new SecurityGuard(options.security(), app::dispatch);
+        this.events = new WindowEvents(app::dispatch, guard);
+        this.pageEvents = new GtkPageEvents(events);
 
         window = Gtk.windowNew();
         Gtk.windowSetTitle(window, options.title());
@@ -139,6 +155,9 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
         Gtk.connect(webView, "close", Callbacks.WEB_VIEW_CLOSE, key);
         Gtk.connect(webView, "decide-policy", Callbacks.DECIDE_POLICY, key);
         Gtk.connect(webView, "permission-request", Callbacks.PERMISSION_REQUEST, key);
+        Gtk.connect(webView, "load-changed", Callbacks.LOAD_CHANGED, key);
+        Gtk.connect(webView, "load-failed", Callbacks.LOAD_FAILED, key);
+        Gtk.connect(webView, "web-process-terminated", Callbacks.PROCESS_TERMINATED, key);
         Gtk.connect(webView, "drag-data-received", Callbacks.DRAG_DATA_RECEIVED, key);
         Gtk.connect(webView, "drag-drop", Callbacks.DRAG_DROP, key);
         Gtk.connect(webView, "drag-data-get", Callbacks.DRAG_DATA_GET, key);
@@ -192,6 +211,8 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
     public void loadUrl(String url) {
         app.dispatch(() -> {
             if (!destroyed) {
+                loadedHtml = null;
+                pageEvents.applicationLoads();
                 Gtk.loadUri(webView, url);
             }
         });
@@ -201,7 +222,126 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
     public void loadHtml(String html) {
         app.dispatch(() -> {
             if (!destroyed) {
-                Gtk.loadHtml(webView, html, SecurityPolicy.APP_ORIGIN + "/"); // a real origin the policy can recognise
+                // load_html has no response headers, so the Content-Security-Policy goes into the document
+                loadedHtml = HtmlPolicy.inject(html, guard.policy().htmlContentSecurityPolicy());
+                showLoadedHtml();
+            }
+        });
+    }
+
+    private void showLoadedHtml() {
+        pageEvents.applicationLoads();
+        Gtk.loadHtml(webView, loadedHtml, SecurityPolicy.APP_ORIGIN + "/"); // a real origin the policy can recognise
+    }
+
+    @Override
+    public void reload() {
+        app.dispatch(() -> {
+            if (!destroyed) {
+                reloadNow();
+            }
+        });
+    }
+
+    private void reloadNow() {
+        String uri = Gtk.webViewUri(webView);
+        boolean forgotten = uri == null || uri.isEmpty(); // so it is after the web process ended
+        String page = forgotten ? pageEvents.committedUri() : uri;
+        // WebKit would reload a load_html document by fetching its made-up address, so it is handed the document again
+        if (loadedHtml != null && (SecurityPolicy.APP_ORIGIN + "/").equals(page)) {
+            showLoadedHtml();
+            return;
+        }
+        pageEvents.applicationLoads();
+        if (forgotten && page != null) {
+            Gtk.loadUri(webView, page);
+        } else {
+            GtkPageEvents.reload(webView);
+        }
+    }
+
+    @Override
+    public void onLoad(Consumer<PageLoad> listener) {
+        events.onLoad(listener);
+    }
+
+    @Override
+    public void onLoadFailed(Consumer<LoadFailure> listener) {
+        events.onLoadFailed(listener);
+    }
+
+    @Override
+    public void onCrash(Consumer<CrashEvent> listener) {
+        events.onCrash(listener);
+    }
+
+    @Override
+    public void setReloadOnCrash(boolean reload) {
+        events.setReloadOnCrash(reload);
+    }
+
+    @Override
+    public void onDownload(Function<DownloadRequest, DownloadDecision> handler) {
+        events.onDownload(handler);
+    }
+
+    @Override
+    public void onCloseRequest(Supplier<CloseDecision> handler) {
+        events.onCloseRequest(handler);
+    }
+
+    @Override
+    public void requestClose() {
+        app.dispatch(() -> {
+            if (!destroyed && !onDeleteEvent()) {
+                destroyNow();
+            }
+        });
+    }
+
+    void onLoadChanged(int event) {
+        if (!destroyed) {
+            pageEvents.loadChanged(webView, event);
+        }
+    }
+
+    void onLoadFailed(String uri, MemorySegment error) {
+        if (!destroyed) {
+            pageEvents.loadFailed(uri, error);
+        }
+    }
+
+    void onProcessTerminated(int reason) {
+        if (destroyed) {
+            return;
+        }
+        boolean again = pageEvents.processTerminated(reason);
+        JoltException gone = new JoltException("the web page process ended");
+        for (CompletableFuture<?> future : new ArrayList<>(inflight)) {
+            future.completeExceptionally(gone);
+        }
+        if (again) {
+            app.dispatch(() -> { // not inside the signal
+                if (!destroyed) {
+                    reloadNow();
+                }
+            });
+        }
+    }
+
+    boolean onDecideDestination(MemorySegment download, String suggestedName) {
+        if (destroyed) {
+            GtkPageEvents.cancel(download);
+            return true;
+        }
+        return pageEvents.decideDestination(download, suggestedName);
+    }
+
+    /** Ends the page's process the way a crash would. For tests. */
+    void crashPageProcess() {
+        app.dispatch(() -> {
+            if (!destroyed) {
+                GtkPageEvents.terminateWebProcess(webView);
             }
         });
     }
@@ -224,6 +364,8 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
             // WebKitGTK aborts the process on a request body that holds a Blob; the script sends bytes instead (see BlobBodyShim)
             Gtk.addUserScript(contentManager, BlobBodyShim.script(GtkResources.ORIGIN));
             guard.set(guard.policy().withTrustedOrigins(GtkResources.ORIGIN));
+            loadedHtml = null;
+            pageEvents.applicationLoads();
             Gtk.loadUri(webView, GtkResources.ORIGIN + service.startPath());
         });
         return true;
@@ -536,14 +678,17 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
         }
     }
 
-    /** The close button was pressed. Returns true to keep the window (it is only hidden). */
+    /**
+     * The user, or the page, asks for the window to be closed. Returns true to keep the window for now: it is only hidden,
+     * or the close handler decides (and destroys it later if it allows).
+     */
     boolean onDeleteEvent() {
         if (closeBehavior == CloseBehavior.HIDE && !closing) {
             Gtk.widgetHide(window);
             visible = false;
             return true;
         }
-        return false;
+        return !closing && events.interceptClose(this::destroyNow);
     }
 
     void onMaximizedChanged(boolean nowMaximized) {
@@ -754,8 +899,11 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
      * new window without the application's help, so allowing one is simply leaving the default.
      */
     boolean onDecidePolicy(MemorySegment decision, int type) {
+        if (type == Gtk.POLICY_DECISION_RESPONSE) {
+            return GtkPageEvents.downloadInstead(decision);
+        }
         if (type != Gtk.POLICY_DECISION_NAVIGATION_ACTION && type != Gtk.POLICY_DECISION_NEW_WINDOW_ACTION) {
-            return false; // responses and the like are not ours to decide
+            return false; // not ours to decide
         }
         String uri = Gtk.decisionUri(decision);
         boolean allowed = type == Gtk.POLICY_DECISION_NEW_WINDOW_ACTION ? guard.allowNewWindow(uri) : guard.allowNavigation(uri);
@@ -967,6 +1115,7 @@ final class LinuxWindow implements WebWindow, NativeResourceHost, NativeDialogHo
             return;
         }
         destroyed = true;
+        pageEvents.windowClosing();
         finishDragOut(false); // a drag out that never got to end
         if (progressShown) {
             app.launcherProgress().set(io.github.b077as.jolt.TaskbarProgress.none()); // a bar left by a window that is gone

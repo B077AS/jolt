@@ -7,6 +7,7 @@ import io.github.b077as.jolt.Application;
 import io.github.b077as.jolt.JoltException;
 import io.github.b077as.jolt.WebWindow;
 import io.github.b077as.jolt.WindowOptions;
+import io.github.b077as.jolt.internal.SessionEnds;
 import io.github.b077as.jolt.internal.ffi.Native;
 
 import java.io.IOException;
@@ -60,6 +61,12 @@ final class WindowsApplication implements Application {
 
     private volatile Thread uiThread;
     private volatile MemorySegment dispatchWindow;
+    /**
+     * A top-level window nobody sees, only to hear about the end of the user's session: Windows tells top-level windows
+     * (message-only ones, like the dispatch window, are left out), and an application may have no other.
+     */
+    private MemorySegment sessionWindow = MemorySegment.NULL;
+    private final SessionEnds sessionEnds = new SessionEnds(this::dispatch, this::quit);
     private MemorySegment hInstance = MemorySegment.NULL;
     private MemorySegment className = MemorySegment.NULL;
     private boolean started;
@@ -103,12 +110,14 @@ final class WindowsApplication implements Application {
             comInitialized = true;
             registerWindowClass();
             createDispatchWindow();
+            createSessionWindow();
             try (Arena local = Arena.ofConfined()) {
                 // A quit left on this thread by something earlier must not end this loop. Done before onStart so a
                 // quit that onStart itself requests is kept.
                 Win32.discardPendingQuit(local.allocate(Win32.MSG_SIZE, 8));
             }
             loopRunning = true; // from here on quit requests are honoured, even ones made before the pump starts
+            sessionEnds.started(uiThread);
 
             try {
                 onStart.run();
@@ -120,7 +129,11 @@ final class WindowsApplication implements Application {
                 pump();
             }
         } finally {
-            shutdown(comInitialized);
+            try {
+                shutdown(comInitialized);
+            } finally {
+                sessionEnds.stopped(); // after the cleanup: a terminating process waits for this
+            }
             uiThread = null; // the calling thread is no longer the UI thread once the loop has ended
         }
         if (startFailure instanceof RuntimeException r) {
@@ -152,6 +165,11 @@ final class WindowsApplication implements Application {
         if (loopRunning) {
             Win32.postQuitMessage(0);
         }
+    }
+
+    @Override
+    public void onSessionEnd(java.util.function.Consumer<io.github.b077as.jolt.SessionEndReason> listener) {
+        sessionEnds.add(listener);
     }
 
     @Override
@@ -360,7 +378,31 @@ final class WindowsApplication implements Application {
         return result;
     }
 
+    /**
+     * The browser process behind {@code lost} is gone, so that environment can make no more windows: the next one starts a
+     * new one. The old reference is not released: windows made from it still exist.
+     */
+    void environmentLost(MemorySegment lost) {
+        if (environment != null && environment.isDone() && !environment.isCompletedExceptionally()
+                && environment.join().equals(lost)) {
+            environment = null;
+        }
+    }
+
+    /** The window that hears about the end of the session. For tests. */
+    MemorySegment sessionWindow() {
+        return sessionWindow;
+    }
+
     // ---- internals ----
+
+    private void createSessionWindow() {
+        int[] error = new int[1];
+        sessionWindow = Win32.createWindow(0, className, className, 0, 0, 0, 0, 0, MemorySegment.NULL, hInstance, error);
+        if (sessionWindow.equals(MemorySegment.NULL)) {
+            LOG.log(System.Logger.Level.WARNING, "Windows sign-out and shutdown will not be reported: Win32 error " + error[0]);
+        }
+    }
 
     private void registerWindowClass() {
         hInstance = Win32.getModuleHandle();
@@ -463,6 +505,10 @@ final class WindowsApplication implements Application {
             runFrees();
             queue.clear(); // tasks still queued when the loop ended are dropped
             hotkeys.releaseAll();
+            if (!sessionWindow.equals(MemorySegment.NULL)) {
+                Win32.destroyWindow(sessionWindow);
+                sessionWindow = MemorySegment.NULL;
+            }
             MemorySegment target = dispatchWindow;
             dispatchWindow = null;
             if (target != null) {
@@ -509,6 +555,16 @@ final class WindowsApplication implements Application {
                 hotkeys.fire((int) wParam);
                 return 0;
             }
+        }
+        if ((msg == Win32.WM_QUERYENDSESSION || msg == Win32.WM_ENDSESSION) && sessionWindow.address() == hwnd.address()) {
+            if (msg == Win32.WM_QUERYENDSESSION) {
+                return 1; // never in the way of a sign-out; the listeners run once it is certain
+            }
+            if (wParam != 0) {
+                // Windows may end the process as soon as this returns, so the listeners run now
+                sessionEnds.fire(io.github.b077as.jolt.SessionEndReason.SIGN_OUT_OR_SHUTDOWN);
+            }
+            return 0;
         }
         for (WindowsTray tray : trays) {
             if (tray.owns(hwnd)) {

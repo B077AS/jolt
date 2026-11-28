@@ -79,6 +79,7 @@ class LinuxDialogsTest {
             window.ready().thenRun(() -> {
                 byte[] page = ("<script>const report = (t) => jolt.postMessage(String(t));"
                         + "(async () => {" + script + "})().catch(e => report('error: ' + e.message));</script>").getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                WebWindowContract.allowInlineScripts(window);
                 window.loadResources(path -> path.endsWith("index.html") ? page : null);
                 interact.accept(app, window);
             });

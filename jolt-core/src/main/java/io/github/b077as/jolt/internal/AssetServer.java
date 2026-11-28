@@ -85,6 +85,11 @@ public final class AssetServer implements AutoCloseable {
         server.start();
     }
 
+    /** The {@code Content-Security-Policy} of the answers, see {@link ResourceService#contentSecurityPolicy}. */
+    public void contentSecurityPolicy(java.util.function.Supplier<String> policy) {
+        service.contentSecurityPolicy(policy);
+    }
+
     /** {@code http://127.0.0.1:port}, without a trailing slash. */
     public String origin() {
         return origin;

@@ -2,6 +2,8 @@ package io.github.b077as.jolt;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
+import java.util.function.Function;
+import java.util.function.Supplier;
 
 /**
  * A native window hosting a web view. All methods are safe to call from any thread; calls made before the web
@@ -54,6 +56,7 @@ public interface WebWindow {
     default void loadResources(AppResources resources, RequestHandler handler, ResourceOptions options) {
         io.github.b077as.jolt.internal.ResourceService service =
                 new io.github.b077as.jolt.internal.ResourceService(resources, handler, options);
+        service.contentSecurityPolicy(() -> security().appContentSecurityPolicy());
         if (this instanceof io.github.b077as.jolt.internal.NativeResourceHost host && host.loadResources(service)) {
             return;
         }
@@ -91,6 +94,7 @@ public interface WebWindow {
             throw new JoltException("cannot serve the app's files on port " + port, e);
         }
         onClosed(server::close);
+        server.contentSecurityPolicy(() -> security().appContentSecurityPolicy());
         if (handler != null) {
             addInitScript(server.initScript());
         }
@@ -98,7 +102,11 @@ public interface WebWindow {
         loadUrl(server.origin() + options.startPath());
     }
 
-    /** Navigates to a document built from {@code html}. The page gets the origin {@link SecurityPolicy#APP_ORIGIN}, which is always trusted. */
+    /**
+     * Navigates to a document built from {@code html}. The page gets the origin {@link SecurityPolicy#APP_ORIGIN}, which is
+     * always trusted, and the {@link SecurityPolicy#htmlContentSecurityPolicy()}: by default inline scripts and styles run,
+     * but nothing is loaded from other hosts.
+     */
     void loadHtml(String html);
 
     /**
@@ -515,6 +523,65 @@ public interface WebWindow {
     /** Registers a callback that runs once after the window has been destroyed. */
     void onClosed(Runnable listener);
 
-    /** Closes the window. */
+    /**
+     * Decides what happens when the user tries to close the window (the close button, Alt+F4, the window menu, a frameless
+     * title bar's close button), or the page calls {@code window.close()}, or the application calls {@link #requestClose}.
+     * The handler runs on the UI thread and answers with a {@link CloseDecision}, now or later:
+     *
+     * <pre>{@code
+     * window.onCloseRequest(() -> document.isSaved() ? CloseDecision.allow() : CloseDecision.cancel());
+     * }</pre>
+     *
+     * <p>It is only asked when the window would actually be destroyed: with {@link CloseBehavior#HIDE} the window is simply
+     * hidden. {@link #close()} and {@link Application#quit()} are the application's own decision and do not ask, so an
+     * application with a "Quit" command checks for unsaved work there itself. A handler that throws, returns {@code null}
+     * or whose decision fails keeps the window open. There is one handler per window; {@code null} removes it.
+     */
+    void onCloseRequest(Supplier<CloseDecision> handler);
+
+    /**
+     * Asks the window to close as if the user had clicked its close button: it is hidden with {@link CloseBehavior#HIDE},
+     * and otherwise the {@link #onCloseRequest} handler decides.
+     */
+    void requestClose();
+
+    /**
+     * Registers a listener called when the top-level page has finished loading. Frames inside it and moves within a
+     * document ({@code #anchors}, {@code history.pushState}) are not reported. Register it before loading. Runs on the UI
+     * thread.
+     */
+    void onLoad(Consumer<PageLoad> listener);
+
+    /**
+     * Registers a listener called when the top-level page could not be loaded, including answers with an HTTP status of 400
+     * or more. Register it before loading. Runs on the UI thread.
+     */
+    void onLoadFailed(Consumer<LoadFailure> listener);
+
+    /** Loads the current page again. */
+    void reload();
+
+    /**
+     * Registers a listener called when the process running the page crashes or stops responding; see {@link CrashEvent}.
+     * Pending {@link #eval} results fail when it ends. Runs on the UI thread.
+     */
+    void onCrash(Consumer<CrashEvent> listener);
+
+    /**
+     * Whether the page is loaded again by itself after its process ends. Off by default. A page that keeps crashing is
+     * reloaded at most three times a minute. Only the document is loaded again: whatever the page held in memory is gone.
+     */
+    void setReloadOnCrash(boolean reload);
+
+    /**
+     * Decides about files the page wants to download (a link with {@code download}, a {@code blob:} the page made, an
+     * answer sent as an attachment). The handler runs on the UI thread and returns a {@link DownloadDecision}. Without a
+     * handler downloads are refused and reported to {@link #onBlocked}, unless
+     * {@link SecurityPolicy#blockDownloads()} is off. With a handler, the handler alone decides, for every page. There is
+     * one handler per window; {@code null} removes it.
+     */
+    void onDownload(Function<DownloadRequest, DownloadDecision> handler);
+
+    /** Closes the window, without asking the {@link #onCloseRequest} handler. */
     void close();
 }

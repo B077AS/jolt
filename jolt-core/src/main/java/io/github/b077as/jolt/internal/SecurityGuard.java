@@ -101,6 +101,19 @@ public final class SecurityGuard {
         return false;
     }
 
+    /**
+     * Whether the web view may go ahead with a download from {@code url} for which the application has no handler. A
+     * window with a handler does not ask: the handler decides.
+     */
+    public boolean allowDownload(String url) {
+        if (!policy.blockDownloads()) {
+            return true;
+        }
+        blocked(BlockedEvent.Kind.DOWNLOAD, url, "Download of " + url + " blocked. Handle it with WebWindow.onDownload(...) "
+                + "or turn off blockDownloads.");
+        return false;
+    }
+
     private static boolean isAbout(String url) {
         return url != null && url.regionMatches(true, 0, "about:", 0, 6);
     }

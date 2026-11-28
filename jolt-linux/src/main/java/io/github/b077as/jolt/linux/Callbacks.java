@@ -42,6 +42,16 @@ final class Callbacks {
     static final MemorySegment DECIDE_POLICY;
     /** {@code permission-request} on the web view: returns TRUE if handled. user_data is the window id. */
     static final MemorySegment PERMISSION_REQUEST;
+    /** {@code load-changed} on the web view: user_data is the window id. */
+    static final MemorySegment LOAD_CHANGED;
+    /** {@code load-failed} on the web view: returns FALSE, so WebKit shows its error page; user_data is the window id. */
+    static final MemorySegment LOAD_FAILED;
+    /** {@code web-process-terminated} on the web view: user_data is the window id. */
+    static final MemorySegment PROCESS_TERMINATED;
+    /** {@code download-started} on the web context: user_data is the application id. */
+    static final MemorySegment DOWNLOAD_STARTED;
+    /** {@code decide-destination} on a download: returns TRUE if taken care of; user_data is the window id. */
+    static final MemorySegment DECIDE_DESTINATION;
     /** {@code WebKitURISchemeRequestCallback} for the app's own scheme: user_data is the application id. */
     static final MemorySegment URI_SCHEME_REQUEST;
     /** {@code GAsyncReadyCallback} for {@code webkit_web_view_evaluate_javascript}: user_data is the eval id. */
@@ -99,6 +109,21 @@ final class Callbacks {
         PERMISSION_REQUEST = stub(lookup, forever, "onPermissionRequest", MethodType.methodType(int.class, MemorySegment.class,
                         MemorySegment.class, MemorySegment.class),
                 FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS), 0);
+        LOAD_CHANGED = stub(lookup, forever, "onLoadChanged",
+                MethodType.methodType(void.class, MemorySegment.class, int.class, MemorySegment.class),
+                FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT, ADDRESS), 0);
+        LOAD_FAILED = stub(lookup, forever, "onLoadFailed", MethodType.methodType(int.class, MemorySegment.class, int.class,
+                        MemorySegment.class, MemorySegment.class, MemorySegment.class),
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT, ADDRESS, ADDRESS, ADDRESS), 0);
+        PROCESS_TERMINATED = stub(lookup, forever, "onProcessTerminated",
+                MethodType.methodType(void.class, MemorySegment.class, int.class, MemorySegment.class),
+                FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT, ADDRESS), 0);
+        DOWNLOAD_STARTED = stub(lookup, forever, "onDownloadStarted",
+                MethodType.methodType(void.class, MemorySegment.class, MemorySegment.class, MemorySegment.class),
+                FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, ADDRESS), 0);
+        DECIDE_DESTINATION = stub(lookup, forever, "onDecideDestination",
+                MethodType.methodType(int.class, MemorySegment.class, MemorySegment.class, MemorySegment.class),
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS), 1);
         URI_SCHEME_REQUEST = stub(lookup, forever, "onUriSchemeRequest",
                 MethodType.methodType(void.class, MemorySegment.class, MemorySegment.class),
                 FunctionDescriptor.ofVoid(ADDRESS, ADDRESS), 0);
@@ -247,7 +272,7 @@ final class Callbacks {
     private static void onWebViewClose(MemorySegment webView, MemorySegment data) {
         LinuxWindow window = Registry.get(data.address(), LinuxWindow.class);
         if (window != null) {
-            window.close();
+            window.requestClose();
         }
     }
 
@@ -265,6 +290,44 @@ final class Callbacks {
     private static int onPermissionRequest(MemorySegment webView, MemorySegment request, MemorySegment data) {
         LinuxWindow window = Registry.get(data.address(), LinuxWindow.class);
         return window != null && window.onPermissionRequest(request) ? 1 : 0;
+    }
+
+    private static void onLoadChanged(MemorySegment webView, int event, MemorySegment data) {
+        LinuxWindow window = Registry.get(data.address(), LinuxWindow.class);
+        if (window != null) {
+            window.onLoadChanged(event);
+        }
+    }
+
+    private static int onLoadFailed(MemorySegment webView, int event, MemorySegment uri, MemorySegment error, MemorySegment data) {
+        LinuxWindow window = Registry.get(data.address(), LinuxWindow.class);
+        if (window != null) {
+            window.onLoadFailed(Gtk.readUtf8(uri), error);
+        }
+        return 0;
+    }
+
+    private static void onProcessTerminated(MemorySegment webView, int reason, MemorySegment data) {
+        LinuxWindow window = Registry.get(data.address(), LinuxWindow.class);
+        if (window != null) {
+            window.onProcessTerminated(reason);
+        }
+    }
+
+    private static void onDownloadStarted(MemorySegment context, MemorySegment download, MemorySegment data) {
+        LinuxApplication app = Registry.get(data.address(), LinuxApplication.class);
+        if (app != null) {
+            app.onDownloadStarted(download);
+        }
+    }
+
+    private static int onDecideDestination(MemorySegment download, MemorySegment suggestedName, MemorySegment data) {
+        LinuxWindow window = Registry.get(data.address(), LinuxWindow.class);
+        if (window == null) {
+            GtkPageEvents.cancel(download); // its window is gone, and nobody else may choose a file for it
+            return 1;
+        }
+        return window.onDecideDestination(download, Gtk.readUtf8(suggestedName)) ? 1 : 0;
     }
 
     private static void onUriSchemeRequest(MemorySegment request, MemorySegment data) {

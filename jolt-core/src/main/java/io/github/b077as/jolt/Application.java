@@ -40,6 +40,19 @@ public interface Application extends AutoCloseable {
     /** Asks the event loop to stop. Safe from any thread. */
     void quit();
 
+    /**
+     * Registers a listener called when the application is about to be ended from outside: the user signs out or shuts the
+     * computer down (Windows), or the process is terminated ({@code SIGTERM}, Ctrl+C, a closing console). It is called at
+     * most once, on the UI thread, and the process may end as soon as it returns: save what must be saved right there, in
+     * a few seconds at the most, without waiting for other threads, the page or the user. It cannot stop the ending. After
+     * a termination Jolt quits the application, so {@link #run} returns, but code after it may not get to finish.
+     *
+     * <p>Not called when the application ends by itself ({@link #quit}, the last window closing), when
+     * {@code System.exit} is called on the UI thread, or when the process is killed ({@code SIGKILL}, Task Manager). On
+     * Linux a desktop sign-out is only seen if it terminates the process with a signal. Safe from any thread.
+     */
+    void onSessionEnd(java.util.function.Consumer<SessionEndReason> listener);
+
     /** Runs {@code task} on the UI thread, in submission order. Safe from any thread. */
     void dispatch(Runnable task);
 

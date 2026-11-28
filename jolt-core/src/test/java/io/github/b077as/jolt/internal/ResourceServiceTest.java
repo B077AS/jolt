@@ -128,6 +128,30 @@ class ResourceServiceTest {
     }
 
     @Test
+    void answersCarryThePolicyOfTheMomentUnlessTheyHaveTheirOwn() {
+        ResourceService service = service(request -> request.path().equals("/own")
+                ? AppResponse.text("x").withHeader("content-security-policy", "default-src 'none'") : null);
+        assertEquals(null, header(service.serve("GET", ORIGIN + "/", Map.of(), new byte[0]), "Content-Security-Policy"));
+        String[] policy = {"default-src 'self'"};
+        service.contentSecurityPolicy(() -> policy[0]);
+        assertEquals("default-src 'self'", header(service.serve("GET", ORIGIN + "/", Map.of(), new byte[0]), "Content-Security-Policy"));
+        assertEquals("default-src 'none'", header(service.serve("GET", ORIGIN + "/own", Map.of(), new byte[0]), "Content-Security-Policy"));
+        policy[0] = null;
+        assertEquals(null, header(service.serve("GET", ORIGIN + "/", Map.of(), new byte[0]), "Content-Security-Policy"));
+    }
+
+    @Test
+    void theRedirectPageAllowsItsOwnScriptAndNothingElse() throws Exception {
+        ResourceService service = redirecting();
+        service.contentSecurityPolicy(() -> "default-src 'self'");
+        AppResponse response = service.serveFollowingRedirects("GET", ORIGIN + "/go", Map.of("accept", "text/html"), new byte[0]);
+        String script = text(response).substring(text(response).indexOf("<script>") + 8, text(response).indexOf("</script>"));
+        String hash = java.util.Base64.getEncoder().encodeToString(
+                java.security.MessageDigest.getInstance("SHA-256").digest(script.getBytes(StandardCharsets.UTF_8)));
+        assertEquals("default-src 'none'; script-src 'sha256-" + hash + "'", header(response, "Content-Security-Policy"));
+    }
+
+    @Test
     void reasonPhrasesCoverTheUsualStatuses() {
         assertEquals("Not Found", ResourceService.reasonPhrase(404));
         assertEquals("No Content", ResourceService.reasonPhrase(204));

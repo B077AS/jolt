@@ -5,8 +5,8 @@ package io.github.b077as.jolt;
  * opening a blocked link in the user's browser.
  *
  * @param kind what was blocked
- * @param url  the address involved: the target of a navigation or new window, or the page that sent a message or asked for
- *             a permission. May be {@code null} if the platform did not say
+ * @param url  the address involved: the target of a navigation or new window, the file of a download, or the page that sent
+ *             a message or asked for a permission. May be {@code null} if the platform did not say
  */
 public record BlockedEvent(Kind kind, String url) {
 
@@ -18,6 +18,8 @@ public record BlockedEvent(Kind kind, String url) {
         /** A page asked for a permission such as camera or location. */
         PERMISSION,
         /** A message from an origin that is not trusted was ignored. */
-        MESSAGE
+        MESSAGE,
+        /** A download, with no {@link WebWindow#onDownload} handler to decide about it. */
+        DOWNLOAD
     }
 }

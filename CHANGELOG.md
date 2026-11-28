@@ -14,17 +14,40 @@ The latest version is the one on [Maven Central](https://central.sonatype.com/ar
   `@NullUnmarked` cancels it (the closest marker wins). Annotations are still matched by simple name, so there is no new dependency,
   and a type-use `@Nullable` / `@NonNull` (JSpecify's) is read too. Documented in `docs/rpc.md`, including that Lombok's `@NonNull` has
   no effect (it is not kept at run time). Tested: `NullMarkedTypeScriptTest` (4).
+- **Load events:** `WebWindow.onLoad` (`PageLoad`) and `onLoadFailed` (`LoadFailure`: HTTP status 400 or more, host not found,
+  connection, timeout, certificate, other), and `WebWindow.reload()`.
+- **Web process crashes:** `onCrash` (`CrashEvent`) and `setReloadOnCrash` (at most three reloads a minute). Pending `eval`
+  results fail when the page's process ends.
+- **Close requests:** `onCloseRequest` returns a `CloseDecision` (allow, cancel, or a future) when the user, a frameless title
+  bar or `window.close()` asks to close the window; `requestClose()` does the same from Java. `close()` and `quit()` do not ask.
+- **Session end:** `Application.onSessionEnd` for a Windows sign-out or shutdown, and for termination signals.
+- **Downloads:** `onDownload` returns a `DownloadDecision` (deny, save to a path, or a path chosen later). Suggested file names
+  are made safe. New: `BlockedEvent.Kind.DOWNLOAD`, `SecurityPolicy.withBlockDownloads`. Documented in
+  [docs/lifecycle.md](docs/lifecycle.md).
+- **Content-Security-Policy** on your own content: `SecurityPolicy.DEFAULT_APP_CSP` for `loadResources` (both transports) and
+  `DEFAULT_HTML_CSP` for `loadHtml`; `withContentSecurityPolicy`, `withAppContentSecurityPolicy`,
+  `withHtmlContentSecurityPolicy`. A request handler's own header wins. On Linux the source that lets binary channels connect
+  (`ws://127.0.0.1:*`) also lets a page send HTTP requests to 127.0.0.1.
+
+### Changed
+- **Breaking: pages served with `loadResources` can no longer use inline scripts, `onclick="..."` attributes or `eval`**, and
+  neither `loadResources` nor `loadHtml` content can load anything from other hosts, unless the policy is changed.
+- **Breaking: downloads are refused** unless the window has an `onDownload` handler or `blockDownloads` is off. Before, the web
+  view handled them by itself.
+- **Breaking:** `SecurityPolicy` has three more record components and lost its six-argument constructor. `WebWindow` and
+  `Application` have new methods an implementation of your own must provide.
+- The page's `window.close()` now behaves like the close button: with `CloseBehavior.HIDE` it hides the window.
+- **No autofill suggestions on Windows.** The web view no longer offers saved addresses, emails or card data in form fields and no longer
+  offers to save passwords (WebView2 `IsGeneralAutofillEnabled` and `IsPasswordAutosaveEnabled` are off). WebKitGTK has no such feature,
+  so Linux is unchanged. Runtimes older than the setting keep their default. Not covered by a test (the suggestion pop-up is a separate OS
+  window); only that every window still opens and renders.
 
 ### Fixed
 - **Windows: the window opens in front.** If you clicked into another application while an app was starting, Windows refused to
   give the new window the foreground, so it opened behind everything and only its taskbar button flashed. The window now forces itself to
   the front when it first appears (and on `focus()`).
-
-### Changed
-- **No autofill suggestions on Windows.** The web view no longer offers saved addresses, emails or card data in form fields and no longer
-  offers to save passwords (WebView2 `IsGeneralAutofillEnabled` and `IsPasswordAutosaveEnabled` are off). WebKitGTK has no such feature,
-  so Linux is unchanged. Runtimes older than the setting keep their default. Not covered by a test (the suggestion pop-up is a separate OS
-  window); only that every window still opens and renders.
+- `jolt.frame.close()` and the ready-made title bar's close button destroyed a window set to `CloseBehavior.HIDE` instead of
+  hiding it.
 
 ## 0.5.0 - 2026-11-20
 

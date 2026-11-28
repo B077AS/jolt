@@ -65,6 +65,24 @@ class SecurityPolicyTest {
     }
 
     @Test
+    void ownContentGetsAContentSecurityPolicyThatCanBeChangedOrTurnedOff() {
+        SecurityPolicy standard = SecurityPolicy.standard();
+        assertTrue(standard.blockDownloads());
+        assertFalse(standard.appContentSecurityPolicy().contains("script-src 'self' 'unsafe-inline'"));
+        assertTrue(standard.htmlContentSecurityPolicy().contains("script-src 'self' 'unsafe-inline'"));
+        assertNull(SecurityPolicy.permissive().appContentSecurityPolicy());
+        assertNull(SecurityPolicy.permissive().htmlContentSecurityPolicy());
+        assertFalse(SecurityPolicy.permissive().blockDownloads());
+        assertNull(standard.withContentSecurityPolicy("  ").appContentSecurityPolicy());
+        SecurityPolicy changed = standard.withAppContentSecurityPolicy("default-src 'none'").withLockNavigation(false);
+        assertEquals("default-src 'none'", changed.appContentSecurityPolicy());
+        assertEquals(standard.htmlContentSecurityPolicy(), changed.htmlContentSecurityPolicy());
+        assertFalse(standard.withBlockDownloads(false).blockDownloads());
+        // it becomes a header: no line breaks
+        assertThrows(IllegalArgumentException.class, () -> standard.withContentSecurityPolicy("default-src 'self'\r\nX-Evil: 1"));
+    }
+
+    @Test
     void aBadOriginIsRejected() {
         assertThrows(IllegalArgumentException.class, () -> SecurityPolicy.standard().withTrustedOrigins("example.com"));
         assertThrows(IllegalArgumentException.class, () -> SecurityPolicy.standard().withTrustedOrigins("about:blank"));

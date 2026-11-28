@@ -17,7 +17,7 @@ class FrameProtocolTest {
 
         @Override public void minimize() { calls.add("minimize"); }
         @Override public void toggleMaximize() { calls.add("maximize"); }
-        @Override public void close() { calls.add("close"); }
+        @Override public void requestClose() { calls.add("close"); }
         @Override public void beginMove() { calls.add("move"); }
         @Override public void beginResize(int edge) { calls.add("resize " + edge); }
         @Override public void reportState() { calls.add("state"); }

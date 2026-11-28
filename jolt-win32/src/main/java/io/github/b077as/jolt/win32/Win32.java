@@ -49,6 +49,8 @@ final class Win32 {
     static final int DWMWA_CAPTION_COLOR = 35;           // Windows 11
     static final int DWMWA_TEXT_COLOR = 36;              // Windows 11
     static final int WM_QUIT = 0x0012;
+    static final int WM_QUERYENDSESSION = 0x0011;
+    static final int WM_ENDSESSION = 0x0016;
     static final int PM_REMOVE = 0x0001;
     static final int WM_DPICHANGED = 0x02E0;
     static final int WM_APP = 0x8000;

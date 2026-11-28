@@ -170,6 +170,7 @@ Errors, cancellation, progress, streaming results, interceptors, annotated contr
 | Send binary data between the page and Java | [Channels](docs/rpc.md#binary-data-channels) |
 | Set the window's size and position, go frameless with a custom title bar, pick files, accept dropped files, show notifications, open more windows | [docs/windows.md](docs/windows.md) |
 | Add a tray icon, taskbar extras, a menu bar, a context menu, a global hotkey, print to PDF | [docs/desktop-integration.md](docs/desktop-integration.md) |
+| Know when a page fails or crashes, ask before closing, save on shutdown, handle downloads | [docs/lifecycle.md](docs/lifecycle.md) |
 | Use Spring Boot | [docs/spring-boot.md](docs/spring-boot.md) |
 | Package the app, or make installs update themselves | [docs/packaging.md](docs/packaging.md) |
 | Keep passwords and tokens in the OS keystore | [below](#saving-passwords-and-tokens-jolt-credentials) |
@@ -186,11 +187,15 @@ The page can call everything you register with `onMessage`, so each window has a
 | New windows | `window.open` and `target=_blank` are refused | `withBlockNewWindows` |
 | Permissions | Camera, microphone, location and similar are denied | `withDenyPermissions`; allow microphone/camera for your own pages with `withGrantedPermissions(Permission.MICROPHONE)` |
 | Bridge in frames | `window.jolt` exists only in the top-level page | `withBridgeInSubframes` |
+| Downloads | Refused unless the window has an [`onDownload`](docs/lifecycle.md#downloads) handler | `withBlockDownloads` |
+| Content-Security-Policy | Your pages load nothing from other hosts; with `loadResources`, no inline scripts either | [`withContentSecurityPolicy`](docs/frontend.md#content-security-policy) |
 
 ```java
 WindowOptions.defaults().withSecurity(SecurityPolicy.standard().withTrustedOrigins("http://localhost:5173"));
 window.setSecurity(window.security().withLockNavigation(false));       // change it any time
-window.onBlocked(event -> openInSystemBrowser(event.url()));           // called after something was blocked
+window.onBlocked(event -> {                                            // called after something was blocked
+    if (event.kind() == BlockedEvent.Kind.NAVIGATION) openInSystemBrowser(event.url());
+});
 ```
 
 - `loadUrl` to another site is blocked unless you trust its origin.

@@ -18,6 +18,7 @@ Modules (all released with the same version):
 
 - Since 0.4.2: built-in RPC (`Rpc.create().on(...).attach(window)`, page `await jolt.call(method, params, {signal, timeout, onProgress})`, `rpc.emit` + `jolt.onEvent`, `RpcException` codes, `RpcCall` progress/cancellation). JSON through `JsonCodec`: `JsonCodec.basic()` (no dependency, records/collections) or `JsonCodec.of(gson::toJson, gson::fromJson)` for any library.
 - Since 0.5.0: RPC server streaming (a handler returns a `Flow.Publisher` or fills `call.stream()`; the page reads `for await (const x of jolt.stream(method, params, {signal}))`, with back pressure), interceptors (`rpc.before(...)`, `rpc.around(...)`), TypeScript declarations (`rpc.writeTypeScript(path)`: typed `window.jolt`, a type per record/enum), exception handlers by type (`rpc.onException(SQLException.class, (call, e) -> new RpcException(...))`, also `router.onException` for `Router`), and annotated controllers (`rpc.register(controller)` with `@JoltRpc`, an alternative to `on`, not the preferred way). `RpcOptions` and `Router.onError` changed (see CHANGELOG).
+- Not released yet (in the repository only): load events (`WebWindow.onLoad`, `onLoadFailed`, `reload`), crash reports (`onCrash`, `setReloadOnCrash`), close requests (`onCloseRequest` returning a `CloseDecision`, `requestClose`), downloads (refused by default; `onDownload` returning a `DownloadDecision`), `Application.onSessionEnd`, and a default Content-Security-Policy for `loadResources` (no inline scripts, no eval, no other hosts) and `loadHtml` (inline scripts allowed, no other hosts), changed with `SecurityPolicy.withContentSecurityPolicy`. See docs/lifecycle.md.
 
 Run with `--enable-native-access=ALL-UNNAMED` (or set `Enable-Native-Access: ALL-UNNAMED` in the jar manifest).
 
@@ -27,6 +28,7 @@ Run with `--enable-native-access=ALL-UNNAMED` (or set `Enable-Native-Access: ALL
 - [docs/frontend.md](docs/frontend.md): serving a multi-file frontend, request handlers and routing, uploads.
 - [docs/windows.md](docs/windows.md): window size and position, frameless windows and title bar, file dialogs, drag and drop, notifications, pop-out windows.
 - [docs/desktop-integration.md](docs/desktop-integration.md): tray, taskbar, menu bar, context menu, global hotkeys, PDF.
+- [docs/lifecycle.md](docs/lifecycle.md): load events, crashes, close requests, session end, downloads.
 - [docs/spring-boot.md](docs/spring-boot.md): the Spring Boot starter.
 - [docs/packaging.md](docs/packaging.md): jpackage and self-updating installs (jpack).
 - [CHANGELOG](CHANGELOG.md): what changed in each version.
